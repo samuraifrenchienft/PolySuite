@@ -35,7 +35,7 @@ def get_crypto_price_free(symbol: str) -> Optional[str]:
             "doge": "dogecoin",
             "dot": "polkadot",
             "matic": "matic-network",
-            "link": "chainlist",
+            "link": "chainlink",
             "uni": "uniswap",
             "avax": "avalanche-2",
         }
@@ -108,16 +108,14 @@ class BankrClient:
         """Allow users to connect their own Bankr account."""
         self.api_key = api_key
 
-    def send_prompt(self, prompt: str) -> Optional[str]:
+    def send_prompt(self, prompt: str) -> tuple[Optional[str], Optional[str]]:
         """Send a natural language prompt to execute a trade.
 
-        Examples:
-        - "buy $10 of BNKR on base"
-        - "what is the price of ETH?"
-        - "swap 0.1 ETH to USDC"
+        Returns:
+            (job_id, error_msg) - job_id is None on failure; error_msg for 403/429
         """
         if not self.is_configured():
-            return None
+            return None, "Bankr not configured. Add BANKR_API_KEY to .env"
 
         try:
             resp = requests.post(
@@ -128,10 +126,36 @@ class BankrClient:
             )
             if resp.status_code in (200, 202):
                 data = resp.json()
-                return data.get("jobId")  # Fixed: was "job_id" - should be "jobId"
+                return data.get("jobId"), None
+            if resp.status_code == 401:
+                try:
+                    d = resp.json()
+                    return None, d.get("message", "Invalid API key. Check bankr.bot/api")
+                except Exception:
+                    pass
+                return None, "Invalid API key. Check bankr.bot/api"
+            if resp.status_code == 403:
+                try:
+                    d = resp.json()
+                    msg = d.get("message", "Access denied")
+                    if "agent" in msg.lower() or "enable" in msg.lower():
+                        return None, "❌ Agent API not enabled. Enable at bankr.bot/api"
+                except Exception:
+                    pass
+                return None, "❌ Bankr access denied (403). Enable Agent API at bankr.bot/api"
+            if resp.status_code == 429:
+                try:
+                    d = resp.json()
+                    msg = d.get("message", "Rate limit exceeded")
+                    return None, f"❌ {msg}"
+                except Exception:
+                    pass
+                return None, "❌ Daily limit exceeded (100 msg/day free). Upgrade at bankr.bot"
+            return None, f"Bankr error {resp.status_code}"
         except Exception as e:
             print(f"[Bankr] Error: {e}")
-        return None
+            return None, str(e)
+        return None, "Failed to submit"
 
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Check the status of a job."""
@@ -165,16 +189,68 @@ class BankrClient:
             market_id: Polymarket market ID
         """
         prompt = f"bet ${amount} on {outcome} for market {market_id} on Polymarket"
-        return self.send_prompt(prompt)
+        job_id, _ = self.send_prompt(prompt)
+        return job_id
 
     def check_balance(self, chain: str = "base") -> Optional[str]:
         """Check wallet balance on a chain."""
-        prompt = f"what is my balance on {chain}?"
-        return self.send_prompt(prompt)
+        job_id, _ = self.send_prompt(f"what is my balance on {chain}?")
+        return job_id
 
     def get_eth_price(self) -> Optional[str]:
         """Get current ETH price."""
-        return self.send_prompt("what is the price of ETH?")
+        job_id, _ = self.send_prompt("what is the price of ETH?")
+        return job_id
+
+    def deploy_token(
+        self,
+        token_name: str,
+        token_symbol: str = None,
+        description: str = None,
+        fee_recipient: str = None,
+        simulate_only: bool = False,
+    ) -> Optional[Dict]:
+        """Deploy a token via Bankr API.
+
+        Args:
+            token_name: Name of the token (required)
+            token_symbol: Symbol/ticker (optional, auto-generated)
+            description: Token description (optional)
+            fee_recipient: Wallet address to receive fees (optional)
+            simulate_only: Just simulate without deploying
+
+        Returns:
+            Dict with tokenAddress, poolId, txHash, etc.
+        """
+        if not self.is_configured():
+            return None
+
+        try:
+            data = {"tokenName": token_name, "simulateOnly": simulate_only}
+
+            if token_symbol:
+                data["tokenSymbol"] = token_symbol
+            if description:
+                data["description"] = description
+            if fee_recipient:
+                data["feeRecipient"] = {"type": "wallet", "value": fee_recipient}
+
+            resp = requests.post(
+                f"{self.base_url}/token-launches/deploy",
+                headers={"Content-Type": "application/json", "X-API-Key": self.api_key},
+                json=data,
+                timeout=60,
+            )
+
+            if resp.status_code in (200, 201):
+                return resp.json()
+            else:
+                print(f"[Bankr] Deploy error: {resp.status_code} - {resp.text}")
+                return {"error": resp.text, "status": resp.status_code}
+
+        except Exception as e:
+            print(f"[Bankr] Deploy exception: {e}")
+            return None
 
     def read_only_query(self, query: str) -> Optional[str]:
         """Read-only query (for CLI mode).
@@ -209,7 +285,8 @@ class BankrClient:
                 print("[Bankr] Read-only mode: blocking trade command")
                 return None
 
-        return self.send_prompt(query)
+        job_id, _ = self.send_prompt(query)
+        return job_id
 
 
 class BankrCLI:

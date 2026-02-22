@@ -89,7 +89,7 @@ class TradeExecutor:
 
         # Build prompt for Bankr
         prompt = self._build_trade_prompt(signal)
-        job_id = self.bankr.send_prompt(prompt)
+        job_id, _ = self.bankr.send_prompt(prompt)
 
         if job_id:
             print(f"[TradeExecutor] Trade submitted: {job_id}")

@@ -122,7 +122,7 @@ class WalletVetting:
             if ts:
                 try:
                     trade_times.append(datetime.fromisoformat(ts.replace("Z", "")))
-                except:
+                except Exception:
                     pass
 
             size = float(trade.get("size", 0) or 0)

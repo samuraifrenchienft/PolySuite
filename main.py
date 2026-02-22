@@ -41,7 +41,8 @@ def add_wallet(args, storage: WalletStorage, _config: Config):
         return
 
     try:
-        storage.add_wallet(args.address, args.nickname)
+        wallet = Wallet(address=args.address.strip(), nickname=args.nickname.strip())
+        storage.add_wallet(wallet)
         print(f"Added wallet {args.nickname} ({args.address})")
     except sqlite3.IntegrityError:
         print(f"Wallet with address {args.address} already exists.")
@@ -188,6 +189,7 @@ def monitor(
     detector = ConvergenceDetector(
         storage,
         threshold=config.win_rate_threshold,
+        api_factory=api_factory,
         time_window_hours=config.convergence_time_window_hours,
         max_market_age_hours=config.convergence_max_market_age_hours,
         early_entry_minutes=config.convergence_early_entry_minutes,
@@ -297,7 +299,7 @@ def monitor(
                 print("\n[*] Checking tracked wallets for new trades...")
 
                 wallets = storage.list_wallets()
-                pm = api.get_polymarket_api()
+                pm = polymarket_api
 
                 for wallet in wallets:
                     try:
@@ -329,7 +331,7 @@ def monitor(
                             wallet._last_positions = positions
 
                     except Exception as e:
-                        pass
+                        print(f"Whale check error {wallet.address[:12]}...: {e}")
 
                 last_smart_money_import = current_time
 
@@ -504,116 +506,11 @@ def monitor(
                 combined.send_health(msg)
                 print(msg)
 
-            # Check odds movements
+            # Check odds movements (odds_change is 0-1 decimal, convert to %)
             odds_moves = event_alerter.check_odds_movements(limit=10)
             for move in odds_moves[:2]:
                 try:
-                    move_pct = float(move.get("move_pct", 0))
-                except (ValueError, TypeError):
-                    move_pct = 0
-                msg = f"\n📊 ODDS MOVE: {move.get('question', '')[:40]} {move_pct:.1f}%"
-                combined.send_health(msg)
-                print(msg)
-
-            # ===== PRIORITY 2: CRYPTO 15m/5m UP/DOWN - EVERY SCAN =====
-            print("[*] Checking crypto price moves...")
-            crypto_moves = event_alerter.check_crypto_moves()
-            for move in crypto_moves:
-                try:
-                    move_pct = float(move.get("move_pct", 0))
-                    price = float(move.get("price", 0))
-                except (ValueError, TypeError):
-                    move_pct = 0
-                    price = 0
-                msg = f"\n{'🚀' if move.get('direction') == 'up' else '📉'} CRYPTO {move.get('timeframe')}: {move.get('symbol')} {move_pct:.1f}% ${price}"
-                combined.send_health(msg)
-                print(msg)
-
-            # ===== PRIORITY 3: SPORTS/GAMES EXPIRING SOON =====
-            print("[*] Checking expiring events...")
-            expiring = event_alerter.check_expiring_events(hours=2, limit=20)
-            for event in expiring:
-                event_id = event.get("id")
-                try:
-                    hours_left = float(event.get("hours_left", 0))
-                except (ValueError, TypeError):
-                    hours_left = 0
-                msg = f"\n⏰ EXPIRING SOON: {event.get('question', '')[:40]} ({hours_left:.1f}h left)"
-                combined.send_health(msg)
-                print(msg)
-
-            # ===== PRIORITY 4: CONVERGENCE (tracked wallets in same event) =====
-            print("[*] Checking convergence...")
-            convergences = detector.find_convergences(min_wallets=2)
-            new_convergences = [
-                c for c in convergences if c["market_id"] not in alerted_markets
-            ]
-
-            for conv in new_convergences:
-                market = conv.get("market_info") or {}
-                wallets = conv.get("wallets", [])
-
-                urgency = (
-                    "CRITICAL"
-                    if conv.get("has_early_entry") and len(wallets) >= 3
-                    else (
-                        "HIGH"
-                        if conv.get("has_early_entry") or len(wallets) >= 3
-                        else "NORMAL"
-                    )
-                )
-                emoji = (
-                    "🔴"
-                    if urgency == "CRITICAL"
-                    else ("🟠" if urgency == "HIGH" else "🔵")
-                )
-
-                msg = f"\n{emoji} {urgency} CONVERGENCE: {len(wallets)} traders in {market.get('question', 'Unknown')[:40]}..."
-
-                combined.send_convergence(
-                    market=market,
-                    wallets=wallets,
-                    threshold=config.win_rate_threshold,
-                    convergence=conv,
-                )
-                print(msg)
-                alerted_markets.add(conv["market_id"])
-
-            # ===== PRIORITY 5: ARBITRAGE (on any market) =====
-            if current_time - last_arb_check > arb_check_interval:
-                print("[*] Checking arbitrage...")
-                arb_opps = arb_detector.get_top_opportunities(limit=5)
-                for arb in arb_opps:
-                    market_id = arb.get("market_id") or arb.get("condition_id")
-                    if market_id and market_id not in alerted_arbs:
-                        try:
-                            profit = float(arb.get("profit_pct", 0))
-                        except (ValueError, TypeError):
-                            profit = 0
-                        if profit > 0.5:
-                            msg = f"\n💰 ARBITRAGE: {profit:.2f}% - YES: ${arb['yes_price']:.2f} NO: ${arb['no_price']:.2f}"
-                            combined.send_arb(arb)
-                            print(msg)
-                            alerted_arbs.add(market_id)
-                last_arb_check = current_time
-
-            # ===== PRIORITY 6: VOLUME SPIKES =====
-            print("[*] Checking volume spikes...")
-            volume_spikes = event_alerter.check_volume_spikes(limit=10)
-            for spike in volume_spikes[:3]:
-                try:
-                    vol_ratio = float(spike.get("volume_ratio", 0))
-                except (ValueError, TypeError):
-                    vol_ratio = 0
-                msg = f"\n📈 VOLUME SPIKE: {spike.get('question', 'Unknown')[:40]} ({vol_ratio:.1f}x)"
-                combined.send_health(msg)
-                print(msg)
-
-            # ===== PRIORITY 7: ODDS MOVEMENTS =====
-            odds_moves = event_alerter.check_odds_movements(limit=10)
-            for move in odds_moves[:2]:
-                try:
-                    move_pct = float(move.get("move_pct", 0))
+                    move_pct = float(move.get("odds_change", 0)) * 100
                 except (ValueError, TypeError):
                     move_pct = 0
                 msg = f"\n📊 ODDS MOVE: {move.get('question', '')[:40]} {move_pct:.1f}%"
@@ -622,7 +519,9 @@ def monitor(
 
             # Clean old markets from alerted set
             active_markets = {
-                m["id"] for m in polymarket_api.get_active_markets(limit=200) if m
+                m.get("id")
+                for m in (polymarket_api.get_active_markets(limit=200) or [])
+                if m and m.get("id")
             }
             alerted_markets = alerted_markets & active_markets
 
@@ -649,7 +548,7 @@ def monitor(
             error_msg = f"ERROR: {type(e).__name__}: {str(e)[:100]}"
             try:
                 combined.send_health(error_msg)
-            except:
+            except Exception:
                 pass
             time.sleep(30)  # Wait before retry to avoid rapid error loops
 
@@ -806,6 +705,7 @@ def handle_jupiter_command(
             print(
                 "Usage: python main.py jupiter quote --input-mint <mint> --output-mint <mint> --amount <amount>"
             )
+            print("Example: python main.py jupiter quote --input-mint So11111111111111111111111111111111111111112 --output-mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1")
             return
 
         quote = jupiter_client.get_quote(args.input_mint, args.output_mint, args.amount)
@@ -829,6 +729,9 @@ def handle_bot_command(
     args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
 ):
     """Handle bot command."""
+    if not config.telegram_bot_token or not config.telegram_chat_id:
+        print("Telegram not configured. Set telegram_bot_token and telegram_chat_id in .env")
+        return
     bot = TelegramBot(config.telegram_bot_token, storage, config, api_factory)
     bot.run()
 
@@ -837,6 +740,9 @@ def handle_discord_command(
     args, storage: WalletStorage, config: Config, api_factory=None
 ):
     """Handle discord command."""
+    if not config.discord_bot_token:
+        print("Discord not configured. Set discord_bot_token in .env")
+        return
     bot = DiscordBot(config.discord_bot_token, storage, config, api_factory)
     bot.run_bot()
 
@@ -1133,12 +1039,9 @@ def main():
         "vet": [storage, config, api_factory],
     }
 
-    # Execute command
+    # Execute command (single path - no duplicate execution)
     command_func = command_map.get(args.command)
-    if command_func:
-        deps = dependencies.get(args.command, [])
-        command_func(args, *deps)
-    else:
+    if not command_func:
         parser.print_help()
         print("  python main.py add 0x123... BigTrader")
         print("  python main.py list")
@@ -1148,68 +1051,20 @@ def main():
         print("  python main.py history 0x123...")
         return
 
-    # Load config and storage
-    config = Config(args.config)
-    storage = WalletStorage()
-    api_factory = APIClientFactory(config)
+    # Start TaskManager only for long-running commands
     task_manager = None
-
-    try:
-        # Start task manager
+    long_running = {"monitor", "bot", "discord"}
+    if args.command in long_running:
         task_manager = TaskManager(api_factory)
         task_manager.start()
 
-        # Map commands to functions
-        commands = {
-            "add": add_wallet,
-            "remove": remove_wallet,
-            "list": list_wallets,
-            "refresh": refresh_wallet,
-            "monitor": monitor,
-            "check": check_convergence,
-            "markets": list_markets,
-            "import": import_leaderboard,
-            "portfolio": show_portfolio,
-            "history": show_history,
-            "jupiter": handle_jupiter_command,
-            "signals": handle_signals_command,
-            "bot": handle_bot_command,
-            "discord": handle_discord_command,
-            "dashboard": handle_dashboard_command,
-            "check_positions": handle_check_positions_command,
-            "check_odds": handle_check_odds_command,
-        }
-
-        # Commands that require the API factory
-        needs_factory = {
-            "monitor",
-            "check",
-            "markets",
-            "import",
-            "portfolio",
-            "refresh",
-            "jupiter",
-            "signals",
-            "check_positions",
-            "check_odds",
-            "bot",
-            "ask",
-            "vet",
-            "events",
-        }
-
-        # Route commands
-        if args.command == "refresh" and args.address.lower() == "all":
-            refresh_all(args, storage, config, api_factory)
-        elif args.command in commands:
-            if args.command in needs_factory:
-                commands[args.command](args, storage, config, api_factory)
-            else:
-                commands[args.command](args, storage, config)
+    try:
+        deps = dependencies.get(args.command, [])
+        if args.command == "refresh" and getattr(args, "address", "").lower() == "all":
+            refresh_all(args, *deps)
         else:
-            parser.print_help()
+            command_func(args, *deps)
     finally:
-        # Clean up
         if task_manager:
             task_manager.stop()
         api_factory.close()

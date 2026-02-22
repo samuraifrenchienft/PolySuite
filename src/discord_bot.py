@@ -3,6 +3,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from src.wallet import Wallet
 from src.wallet.storage import WalletStorage
 from src.utils import is_valid_address
 from src.agent import Agent
@@ -37,13 +38,19 @@ class DiscordBot(commands.Bot):
         self.agent = Agent(config=config, storage=storage, api_factory=api_factory)
 
         # === SLASH COMMANDS ===
-        @self.tree.command(name="bankr", description="Ask Bankr anything")
+        @self.tree.command(
+            name="bankr",
+            description="Ask Bankr AI (crypto, markets, balances). Max 100 chars; use !bankr for longer.",
+        )
         async def bankr_slash(interaction: discord.Interaction, question: str):
-            await self._handle_ai(interaction, question, "bankr")
+            await self._handle_ai(interaction, question.strip(), "bankr")
 
-        @self.tree.command(name="ask", description="Ask AI anything")
+        @self.tree.command(
+            name="ask",
+            description="Ask AI anything. Max 100 chars; use !ask for longer prompts.",
+        )
         async def ask_slash(interaction: discord.Interaction, question: str):
-            await self._handle_ai(interaction, question, "ask")
+            await self._handle_ai(interaction, question.strip(), "ask")
 
         @self.tree.command(
             name="deploy", description="Deploy a token on Base via Bankr"
@@ -142,7 +149,7 @@ class DiscordBot(commands.Bot):
                 )
                 return
 
-            self.storage.add_wallet(address)
+            self.storage.add_wallet(Wallet(address=address, nickname=address[:12] + "..."))
             await interaction.response.send_message(
                 f"✅ Added `{address[:12]}...` to tracking!\nNow tracking {len(wallets) + 1}/{MAX_WALLETS} wallets.",
                 ephemeral=True,
@@ -288,6 +295,28 @@ class DiscordBot(commands.Bot):
                         name = base.get("name", "N/A")
                         msg += f"🪙 **Token:** {name} ({symbol})\n"
 
+                # Honeypot check
+                hp = result.get("honeypot", {})
+                if hp and hp.get("is_honeypot") is not None:
+                    if hp.get("is_honeypot"):
+                        msg += f"🚨 **Honeypot:** YES - {hp.get('reason', 'Cannot sell')}\n"
+                    else:
+                        msg += f"🛡️ **Honeypot:** No\n"
+                    buy_tax = hp.get("buy_tax")
+                    sell_tax = hp.get("sell_tax")
+                    if buy_tax is not None or sell_tax is not None:
+                        try:
+                            bt = float(buy_tax) if buy_tax is not None else 0
+                            st = float(sell_tax) if sell_tax is not None else 0
+                            msg += f"📊 **Tax:** Buy {bt:.0f}% | Sell {st:.0f}%\n"
+                        except (ValueError, TypeError):
+                            msg += f"📊 **Tax:** Buy {buy_tax or '?'}% | Sell {sell_tax or '?'}%\n"
+                    holders = hp.get("total_holders")
+                    if holders is not None:
+                        msg += f"👥 **Holders:** {holders:,}\n"
+                    if hp.get("risk") and hp.get("risk") != "unknown":
+                        msg += f"⚠️ **Honeypot Risk:** {hp.get('risk', '')}\n"
+
                 # Risk factors
                 factors = safety.get("factors", [])
                 if factors:
@@ -295,10 +324,11 @@ class DiscordBot(commands.Bot):
                     for f in factors[:5]:
                         msg += f"• {f}\n"
 
-                # Links
+                # Links (ensure 0x prefix for URLs)
+                addr_hex = address if address.startswith("0x") else f"0x{address}"
                 msg += "\n**🔗 Links:**\n"
-                msg += f"[DexScreener](https://dexscreener.com/search?q={address}) | "
-                msg += f"[DexTools](https://www.dextools.io/app/en/pair-explorer/{address})"
+                msg += f"[DexScreener](https://dexscreener.com/search?q={addr_hex}) | "
+                msg += f"[DexTools](https://www.dextools.io/app/en/pair-explorer/{addr_hex})"
 
                 await interaction.followup.send(msg[:2000], ephemeral=True)
 
@@ -329,58 +359,84 @@ class DiscordBot(commands.Bot):
 
         @self.command(name="add")
         async def add_msg(ctx, address: str):
+            MAX_WALLETS = 10
             if not is_valid_address(address):
                 await ctx.message.reply("Invalid address.")
                 return
-            self.storage.add_wallet(address)
-            await ctx.message.reply(f"Added: {address}")
+            existing = self.storage.get_wallet(address)
+            if existing:
+                await ctx.message.reply("Already tracking this wallet.")
+                return
+            wallets = self.storage.list_wallets()
+            if len(wallets) >= MAX_WALLETS:
+                await ctx.message.reply(
+                    f"Limit reached ({MAX_WALLETS} wallets). Remove one first."
+                )
+                return
+            self.storage.add_wallet(Wallet(address=address, nickname=address[:12] + "..."))
+            await ctx.message.reply(f"Added: {address[:12]}...")
 
     async def _handle_ai(self, interaction, question: str, command_name: str):
         """Handle AI query via slash command."""
         try:
+            if not self.bankr or not self.bankr.is_configured():
+                await interaction.response.send_message(
+                    "Bankr not configured. Add BANKR_API_KEY to .env", ephemeral=True
+                )
+                return
+
             print(f"Bankr query: {question[:50]}...")
 
-            # MUST respond within 3 seconds - send initial response
-            await interaction.response.send_message("🤔 Thinking...", ephemeral=True)
+            # MUST respond within 3 seconds - defer extends to 15 min
+            await interaction.response.defer(ephemeral=True)
 
-            job_id = self.bankr.send_prompt(question)
+            job_id, error_msg = self.bankr.send_prompt(question)
             print(f"Job ID: {job_id}")
 
             if not job_id:
-                await interaction.followup.send("❌ Failed to submit. Try again.")
+                msg = error_msg or "❌ Failed to submit. Try again."
+                await interaction.edit_original_response(content=msg)
                 return
 
-            # Poll for result
-            for i in range(45):
-                await asyncio.sleep(1.5)
+            # Poll every 2s, max 60 attempts (~2 min) per Bankr recommendation
+            for i in range(60):
+                await asyncio.sleep(2)
                 status = self.bankr.get_job_status(job_id)
                 print(f"Poll {i + 1}: {status.get('status') if status else 'None'}")
 
                 if status and status.get("status") == "completed":
                     result = status.get("result", status.get("response", ""))
                     if result:
-                        await interaction.followup.send(f"✅ {result[:2000]}")
+                        await interaction.edit_original_response(content=f"✅ {result[:2000]}")
                     else:
-                        await interaction.followup.send("Got empty response.")
+                        await interaction.edit_original_response(content="Got empty response.")
+                    return
+                elif status and status.get("status") == "cancelled":
+                    await interaction.edit_original_response(content="Job was cancelled.")
                     return
                 elif status and status.get("status") == "failed":
-                    await interaction.followup.send("❌ Query failed.")
+                    err = status.get("error", "Unknown error")
+                    await interaction.edit_original_response(content=f"❌ Query failed: {err[:200]}")
                     return
 
-            await interaction.followup.send("⏰ Timeout. Try simpler question.")
+            await interaction.edit_original_response(content="⏰ Timeout. Try simpler question.")
         except Exception as e:
             print(f"Bankr error: {e}")
             try:
-                await interaction.followup.send(f"Error: {str(e)[:200]}")
-            except:
+                await interaction.edit_original_response(content=f"Error: {str(e)[:200]}")
+            except Exception:
                 pass
 
     async def _handle_ai_message(self, ctx, question: str, command_name: str):
         """Handle AI query via message command."""
         try:
-            job_id = self.bankr.send_prompt(question)
+            if not self.bankr or not self.bankr.is_configured():
+                await ctx.message.reply("Bankr not configured. Add BANKR_API_KEY to .env")
+                return
+
+            job_id, err = self.bankr.send_prompt(question)
             if not job_id:
-                await ctx.message.reply("Failed to submit. Check API.")
+                await ctx.message.reply(err or "Failed to submit. Check API.")
                 return
 
             for i in range(45):
@@ -391,7 +447,11 @@ class DiscordBot(commands.Bot):
                     await ctx.message.reply(result[:2000] if result else "No result")
                     return
                 elif status and status.get("status") == "failed":
-                    await ctx.message.reply("Query failed.")
+                    err = status.get("error", "Unknown")
+                    await ctx.message.reply(f"Query failed: {err[:100]}")
+                    return
+                elif status and status.get("status") == "cancelled":
+                    await ctx.message.reply("Job was cancelled.")
                     return
 
             await ctx.message.reply("Timeout - try simpler question.")
@@ -437,7 +497,11 @@ class DiscordBot(commands.Bot):
 
             await message.reply("Thinking...")
 
-            job_id = self.bankr.send_prompt(question)
+            if not self.bankr or not self.bankr.is_configured():
+                await message.reply("Bankr not configured. Add BANKR_API_KEY to .env")
+                return
+
+            job_id, _ = self.bankr.send_prompt(question)
             if job_id:
                 # Poll with better timeout and backoff
                 result = await self._wait_for_bankr_job(job_id, timeout_seconds=60)
@@ -447,37 +511,10 @@ class DiscordBot(commands.Bot):
                     await message.reply("Bankr timed out. Try again later.")
             else:
                 await message.reply("Failed to submit to Bankr. Check API key.")
-
-    async def _wait_for_bankr_job(self, job_id: str, timeout_seconds: int = 60) -> str:
-        """Wait for Bankr job with exponential backoff."""
-        import asyncio
-
-        start_time = asyncio.get_event_loop().time()
-        poll_interval = 1.0  # Start at 1 second
-
-        while True:
-            await asyncio.sleep(poll_interval)
-
-            elapsed = asyncio.get_event_loop().time() - start_time
-            if elapsed > timeout_seconds:
-                return None
-
-            status = self.bankr.get_job_status(job_id)
-            if not status:
-                continue
-
-            if status.get("status") == "completed":
-                return status.get("response") or status.get("result", "No result")
-            elif status.get("status") == "failed":
-                return f"Job failed: {status.get('error', 'Unknown error')}"
-
-            # Exponential backoff, max 5 seconds
-            poll_interval = min(poll_interval * 1.5, 5.0)
+            return
 
         # Token Scanner: detect addresses in message
         content = message.content
-
-        # Check for Ethereum/Polygon addresses (0x...)
         import re
 
         addr_pattern = r"0x[a-fA-F0-9]{40}"
@@ -496,6 +533,35 @@ class DiscordBot(commands.Bot):
                 await self._scan_market(message, cond)
 
         await self.process_commands(message)
+
+    async def _wait_for_bankr_job(self, job_id: str, timeout_seconds: int = 60) -> str:
+        """Wait for Bankr job with exponential backoff."""
+        import asyncio
+        import time
+
+        start_time = time.monotonic()
+        poll_interval = 1.0  # Start at 1 second
+
+        while True:
+            await asyncio.sleep(poll_interval)
+
+            elapsed = time.monotonic() - start_time
+            if elapsed > timeout_seconds:
+                return None
+
+            status = self.bankr.get_job_status(job_id)
+            if not status:
+                continue
+
+            if status.get("status") == "completed":
+                return status.get("response") or status.get("result", "No result")
+            elif status.get("status") == "failed":
+                return f"Job failed: {status.get('error', 'Unknown error')}"
+            elif status.get("status") == "cancelled":
+                return "Job was cancelled."
+
+            # Exponential backoff, max 5 seconds
+            poll_interval = min(poll_interval * 1.5, 5.0)
 
     async def _scan_address(self, message, address: str):
         """Scan a wallet address - Lute-style detailed view."""
@@ -541,7 +607,7 @@ class DiscordBot(commands.Bot):
                     timeout=10,
                 )
                 positions = resp.json() if resp.status_code == 200 else []
-            except:
+            except Exception:
                 positions = []
 
             # Build response
@@ -550,12 +616,12 @@ class DiscordBot(commands.Bot):
             # Format
             try:
                 pnl_str = f"${total_pnl:+,.0f}" if total_pnl else "$0"
-            except:
+            except Exception:
                 pnl_str = "$0"
 
             try:
                 vol_str = f"${total_volume:,.0f}" if total_volume else "$0"
-            except:
+            except Exception:
                 vol_str = "$0"
 
             wr_emoji = "🟢" if win_rate >= 60 else ("🟡" if win_rate >= 50 else "🔴")
@@ -573,7 +639,7 @@ class DiscordBot(commands.Bot):
                     size = float(p.get("size", 0) or 0)
                     try:
                         size_str = f"${size:,.0f}"
-                    except:
+                    except Exception:
                         size_str = str(size)
                     emoji = "🟢" if outcome.upper() == "YES" else "🔴"
                     msg += f"{emoji} {outcome}: {q}... ({size_str})\n"
@@ -615,7 +681,7 @@ class DiscordBot(commands.Bot):
                             else float(prices[1].strip('"'))
                         )
                         msg += f"YES: {yes_p * 100:.0f}% | NO: {no_p * 100:.0f}%"
-                    except:
+                    except Exception:
                         pass
 
                 await message.reply(msg)

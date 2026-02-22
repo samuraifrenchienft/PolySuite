@@ -1,15 +1,6 @@
 """Background tasks for PolySuite."""
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from src.market.leaderboard import LeaderboardImporter
-
-
-def refresh_leaderboard():
-    """Refresh the Polymarket leaderboard."""
-    print("Refreshing Polymarket leaderboard...")
-    importer = LeaderboardImporter()
-    importer.fetch_leaderboard()
-    print("Polymarket leaderboard refreshed.")
 
 
 class TaskManager:
@@ -22,7 +13,7 @@ class TaskManager:
 
     def start(self):
         """Start the task manager."""
-        self.scheduler.add_job(refresh_leaderboard, "interval", hours=1)
+        # No scheduled jobs by default (leaderboard import removed per user preference)
         self.scheduler.start()
         print("Task manager started.")
 

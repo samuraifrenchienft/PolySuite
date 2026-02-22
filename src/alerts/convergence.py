@@ -72,7 +72,7 @@ class ConvergenceDetector:
 
             age = datetime.now(timezone.utc) - created_time
             return age.total_seconds() / 3600
-        except:
+        except Exception:
             return None
 
     def _get_wallet_entry_time(self, wallet: str, market_id: str) -> Optional[datetime]:
@@ -88,7 +88,7 @@ class ConvergenceDetector:
                         if ts.endswith("Z"):
                             ts = ts[:-1] + "+00:00"
                         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    except:
+                    except Exception:
                         pass
 
         try:
@@ -106,7 +106,7 @@ class ConvergenceDetector:
                         if ts.endswith("Z"):
                             ts = ts[:-1] + "+00:00"
                         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    except:
+                    except Exception:
                         pass
 
         return None
@@ -132,7 +132,7 @@ class ConvergenceDetector:
                 market_created = datetime.fromtimestamp(
                     created_at / 1000, tz=timezone.utc
                 )
-        except:
+        except Exception:
             return False
 
         entry_time = self._get_wallet_entry_time(wallet, market_id)
@@ -199,7 +199,7 @@ class ConvergenceDetector:
 
                         if pos_time < time_window:
                             continue
-                    except:
+                    except Exception:
                         pass
 
                 if market_id not in market_convergences:

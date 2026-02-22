@@ -158,7 +158,7 @@ class PolymarketAPI:
     def get_event_markets(self, event_id: str) -> List[Dict]:
         """Get markets for a specific event."""
         url = f"{GAMMA_API}/markets"
-        return self._get_list(url, {"eventId": event_id})
+        return self._get_list(url, {"eventId": event_id}, use_cache=True)
 
     def get_market(self, market_id: str) -> Optional[Dict]:
         """Get a specific market by ID."""
@@ -171,12 +171,14 @@ class PolymarketAPI:
         params = {"limit": limit}
         if active:
             params["closed"] = "false"
-        return self._get_list(url, params, use_cache=False)
+        return self._get_list(url, params, use_cache=True)
 
     def get_market_trades(self, market_id: str, limit: int = 100) -> List[Dict]:
         """Get all trades for a specific market."""
         url = f"{DATA_API}/trades"
-        return self._get_list(url, {"market": market_id, "limit": limit})
+        return self._get_list(
+            url, {"market": market_id, "limit": limit}, use_cache=True
+        )
 
     def get_market_wallets(self, market_id: str, limit: int = 100) -> List[str]:
         """Get unique wallet addresses that traded in a market."""

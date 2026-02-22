@@ -22,7 +22,13 @@ class WalletCalculator:
 
         recent_trades = 0
         for trade in trades:
-            trade_time = datetime.fromisoformat(trade["timestamp"].replace("Z", ""))
+            ts = trade.get("timestamp")
+            if not ts:
+                continue
+            try:
+                trade_time = datetime.fromisoformat(str(ts).replace("Z", ""))
+            except (ValueError, TypeError):
+                continue
             if trade_time > datetime.now() - timedelta(days=days):
                 recent_trades += 1
 
@@ -119,13 +125,24 @@ class WalletCalculator:
         if not trades:
             return {}
 
-        category_stats = {}
+        # Deduplicate market_ids to avoid N+1 API calls
+        market_ids = set()
+        trade_market_map = []
         for trade in trades:
             market_id = trade.get("conditionId") or trade.get("market")
-            if not market_id:
-                continue
+            if market_id:
+                market_ids.add(market_id)
+                trade_market_map.append((trade, market_id))
 
-            market = self.api.get_market_details(market_id)
+        market_cache = {}
+        for mid in market_ids:
+            m = self.api.get_market_details(mid)
+            if m:
+                market_cache[mid] = m
+
+        category_stats = {}
+        for trade, market_id in trade_market_map:
+            market = market_cache.get(market_id)
             if not market:
                 continue
 

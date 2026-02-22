@@ -1,8 +1,23 @@
 """Event-based alerts for PolySuite."""
 
+import json
+from collections import OrderedDict
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta, timezone
 from src.market.api import APIClientFactory
+
+
+class _BoundedDict(OrderedDict):
+    """Dict with max size; evicts oldest when full."""
+
+    def __init__(self, *args, maxsize: int = 500, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.maxsize = maxsize
+
+    def __setitem__(self, key, value):
+        if key not in self and len(self) >= self.maxsize:
+            self.popitem(last=False)
+        super().__setitem__(key, value)
 
 
 class EventAlerter:
@@ -27,12 +42,13 @@ class EventAlerter:
         self.new_market_hours = new_market_hours
         self.volume_spike_multiplier = volume_spike_multiplier
         self.odds_move_threshold = odds_move_threshold
-        self._previous_prices = {}
-        self._previous_volumes = {}
+        self._previous_prices = _BoundedDict(maxsize=500)  # market_id -> {yes, no}
+        self._previous_prices_crypto = _BoundedDict(maxsize=50)  # coin_id -> {price, change}
+        self._previous_volumes = _BoundedDict(maxsize=500)
 
     def check_new_markets(self, limit: int = 20) -> List[Dict]:
         """Find newly created markets."""
-        markets = self.api.get_active_markets(limit=limit)
+        markets = self.api.get_active_markets(limit=limit) or []
         new_markets = []
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=self.new_market_hours)
@@ -53,7 +69,7 @@ class EventAlerter:
                 if created > cutoff:
                     m["hours_old"] = (now - created).total_seconds() / 3600
                     new_markets.append(m)
-            except:
+            except Exception:
                 pass
 
         new_markets.sort(key=lambda x: x.get("hours_old", 999))
@@ -61,7 +77,7 @@ class EventAlerter:
 
     def check_volume_spikes(self, limit: int = 30) -> List[Dict]:
         """Find markets with unusual volume."""
-        markets = self.api.get_active_markets(limit=limit)
+        markets = self.api.get_active_markets(limit=limit) or []
         spikes = []
 
         for m in markets:
@@ -89,22 +105,18 @@ class EventAlerter:
 
     def check_odds_movements(self, limit: int = 30) -> List[Dict]:
         """Find markets with big odds movements."""
-        markets = self.api.get_active_markets(limit=limit)
+        markets = self.api.get_active_markets(limit=limit) or []
         movements = []
 
         for m in markets:
             market_id = m.get("id")
-            prices = m.get("outcomePrices", "[]")
+            raw_prices = m.get("outcomePrices")
+            prices = json.loads(raw_prices) if isinstance(raw_prices, str) else (raw_prices or [])
 
             if not market_id or not prices:
                 continue
 
             try:
-                if isinstance(prices, str):
-                    import json
-
-                    prices = json.loads(prices)
-
                 if not prices or len(prices) < 2:
                     continue
 
@@ -125,7 +137,7 @@ class EventAlerter:
                     "yes": current_yes,
                     "timestamp": datetime.now(timezone.utc),
                 }
-            except:
+            except Exception:
                 pass
 
         movements.sort(key=lambda x: x.get("odds_change", 0), reverse=True)
@@ -178,7 +190,7 @@ class EventAlerter:
 
     def check_new_events(self, hours: int = 1, limit: int = 50) -> List[Dict]:
         """Find newly created events/markets within specified hours."""
-        markets = self.api.get_active_markets(limit=limit)
+        markets = self.api.get_active_markets(limit=limit) or []
         new_events = []
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=hours)
@@ -199,7 +211,7 @@ class EventAlerter:
                 if created > cutoff:
                     m["hours_old"] = (now - created).total_seconds() / 3600
                     new_events.append(m)
-            except:
+            except Exception:
                 pass
 
         new_events.sort(key=lambda x: x.get("hours_old", 999))
@@ -207,7 +219,7 @@ class EventAlerter:
 
     def check_expiring_events(self, hours: int = 2, limit: int = 20) -> List[Dict]:
         """Find events ending soon (sports games, etc)."""
-        markets = self.api.get_active_markets(limit=limit)
+        markets = self.api.get_active_markets(limit=limit) or []
         expiring = []
         now = datetime.now(timezone.utc)
 
@@ -228,7 +240,7 @@ class EventAlerter:
                 if 0 < hours_left <= hours:
                     m["hours_left"] = hours_left
                     expiring.append(m)
-            except:
+            except Exception:
                 pass
 
         expiring.sort(key=lambda x: x.get("hours_left", 999))
@@ -243,7 +255,7 @@ class EventAlerter:
 
         try:
             # Get active markets
-            markets = self.api.get_active_markets(limit=100)
+            markets = self.api.get_active_markets(limit=100) or []
 
             # Filter to crypto-related markets
             crypto_keywords = [
@@ -265,7 +277,8 @@ class EventAlerter:
                     continue
 
                 # Get current price
-                prices = m.get("outcomePrices", [])
+                raw_prices = m.get("outcomePrices")
+                prices = json.loads(raw_prices) if isinstance(raw_prices, str) else (raw_prices or [])
                 if not prices or len(prices) < 2:
                     continue
 
@@ -275,7 +288,7 @@ class EventAlerter:
                         if isinstance(prices[0], (int, float))
                         else float(prices[0].strip('"'))
                     )
-                except:
+                except Exception:
                     continue
 
                 # Compare to previous price stored in memory
@@ -343,15 +356,15 @@ class EventAlerter:
                     current_price = info.get("usd", 0)
                     change_24h = info.get("usd_24h_change", 0)
 
-                    # Store and compare
-                    if coin_id not in self._previous_prices:
-                        self._previous_prices[coin_id] = {
+                    # Store and compare (use separate dict to avoid collision with market IDs)
+                    if coin_id not in self._previous_prices_crypto:
+                        self._previous_prices_crypto[coin_id] = {
                             "price": current_price,
                             "change": change_24h,
                         }
                         continue
 
-                    prev = self._previous_prices[coin_id]
+                    prev = self._previous_prices_crypto[coin_id]
                     prev_price = prev.get("price", 0)
 
                     if prev_price > 0:
@@ -377,7 +390,7 @@ class EventAlerter:
                             )
 
                     # Update stored price
-                    self._previous_prices[coin_id] = {
+                    self._previous_prices_crypto[coin_id] = {
                         "price": current_price,
                         "change": change_24h,
                     }
@@ -584,7 +597,7 @@ class EventAlerter:
         }
 
         try:
-            markets = self.api.get_active_markets(limit=100)
+            markets = self.api.get_active_markets(limit=100) or []
             results = {cat: [] for cat in categories}
 
             for m in markets:
@@ -596,5 +609,5 @@ class EventAlerter:
                         break
 
             return results
-        except:
+        except Exception:
             return {cat: [] for cat in categories}

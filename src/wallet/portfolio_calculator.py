@@ -33,7 +33,7 @@ class PortfolioCalculator:
         positions = []
 
         for pos in raw_positions:
-            market_id = pos.get("market_id")
+            market_id = pos.get("market_id") or pos.get("conditionId") or pos.get("market")
             if not market_id:
                 continue
 

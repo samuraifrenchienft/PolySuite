@@ -50,6 +50,7 @@ SECRET_KEYS = [
     "jupiter_api_key",
     "jupiter_id",
     "bankr_api_key",
+    "hashdive_api_key",
 ]
 
 # Backup config defaults
@@ -232,6 +233,10 @@ class Config:
     @property
     def cryptopanic_api_key(self) -> str:
         return self.config.get("cryptopanic_api_key", "")
+
+    @property
+    def hashdive_api_key(self) -> str:
+        return self.config.get("hashdive_api_key", "")
 
     @property
     def bankr_api_key(self) -> str:

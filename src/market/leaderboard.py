@@ -76,7 +76,7 @@ class LeaderboardImporter:
             pnl = t.get("pnl") or t.get("volume") or 0
             try:
                 pnl = float(str(pnl).replace("$", "").replace(",", ""))
-            except:
+            except Exception:
                 pnl = 0
             t["sort_value"] = pnl
             sorted_traders.append(t)
@@ -86,10 +86,12 @@ class LeaderboardImporter:
 
     def get_wallet_stats(self, address: str) -> Optional[Dict]:
         """Get wallet stats."""
-        if self.polymarket_api:
+        if self.polymarket_api and hasattr(self.polymarket_api, "get_wallet_stats"):
             try:
-                return self.polymarket_api.get_wallet_stats(address)
-            except:
+                result = self.polymarket_api.get_wallet_stats(address)
+                if result:
+                    return result
+            except Exception:
                 pass
 
         try:

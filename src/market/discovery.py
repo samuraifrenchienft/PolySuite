@@ -21,7 +21,7 @@ class MarketDiscovery:
 
     def _initialize_known_markets(self):
         """Load known markets on startup."""
-        markets = self.api.get_active_markets(limit=200)
+        markets = self.api.get_active_markets(limit=200) or []
         if self.tracked_categories:
             markets = [
                 m for m in markets if m.get("category") in self.tracked_categories
@@ -36,7 +36,7 @@ class MarketDiscovery:
         Returns:
             List of new market dictionaries
         """
-        current_markets = self.api.get_active_markets(limit=200)
+        current_markets = self.api.get_active_markets(limit=200) or []
         if self.tracked_categories:
             current_markets = [
                 m
@@ -103,7 +103,7 @@ class MarketDiscovery:
 
     def search_markets(self, query: str) -> List[Dict]:
         """Search markets by question text."""
-        markets = self.api.get_active_markets(limit=100)
+        markets = self.api.get_active_markets(limit=100) or []
         if self.tracked_categories:
             markets = [
                 m for m in markets if m.get("category") in self.tracked_categories
@@ -156,7 +156,7 @@ class MarketDiscovery:
         Returns:
             List of matching markets
         """
-        all_markets = self.api.get_active_markets(limit=limit * 2)
+        all_markets = self.api.get_active_markets(limit=limit * 2) or []
         timeframe_lower = timeframe.lower().replace(" ", "")
 
         crypto_keywords = ["btc", "eth", "sol", "bitcoin", "ethereum", "solana"]

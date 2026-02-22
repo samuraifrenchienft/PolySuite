@@ -43,6 +43,17 @@ class AlertDispatcher:
         self.webhook_url = webhook_url
         self.cooldown_seconds = cooldown_seconds
         self._last_alerts: Dict[str, float] = {}
+        self._last_alerts_max = 1000  # Evict oldest when exceeded
+
+    def _prune_alerts_if_needed(self):
+        """Keep _last_alerts bounded to avoid unbounded growth."""
+        if len(self._last_alerts) > self._last_alerts_max:
+            sorted_keys = sorted(
+                self._last_alerts.keys(),
+                key=lambda k: self._last_alerts[k],
+            )
+            for k in sorted_keys[: len(sorted_keys) - self._last_alerts_max]:
+                del self._last_alerts[k]
 
     def is_on_cooldown(self, market_id: str) -> bool:
         if market_id not in self._last_alerts:
@@ -52,6 +63,7 @@ class AlertDispatcher:
 
     def set_cooldown(self, market_id: str):
         self._last_alerts[market_id] = time.time()
+        self._prune_alerts_if_needed()
 
     def set_cooldown_seconds(self, seconds: int):
         self.cooldown_seconds = seconds
@@ -280,7 +292,7 @@ class AlertDispatcher:
 
             try:
                 outcome_prices = json.loads(outcome_prices)
-            except:
+            except Exception:
                 outcome_prices = []
 
         odds_text = "N/A"
@@ -289,7 +301,7 @@ class AlertDispatcher:
                 yes_odds = float(outcome_prices[0])
                 no_odds = float(outcome_prices[1])
                 odds_text = f"YES {yes_odds * 100:.0f}% | NO {no_odds * 100:.0f}%"
-            except:
+            except Exception:
                 pass
 
         embed = {

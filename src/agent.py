@@ -38,7 +38,7 @@ class Agent:
             if self.api_factory:
                 pm = self.api_factory.get_polymarket_api()
                 return pm.get_wallet_positions(address) or []
-        except:
+        except Exception:
             pass
         return []
 
@@ -48,7 +48,7 @@ class Agent:
             if self.api_factory:
                 pm = self.api_factory.get_polymarket_api()
                 return pm.get_market(condition_id)
-        except:
+        except Exception:
             pass
         return None
 
@@ -81,7 +81,7 @@ class Agent:
                 return self._handle_volume_query(message)
             elif "arbitrage" in message_lower:
                 return self._handle_arbitrage_query(message)
-            elif "jupiter" in message_lower:
+            elif "jupiter" in message_lower or "solana" in message_lower:
                 return self._handle_jupiter_query(message)
             elif (
                 "event" in message_lower
@@ -89,8 +89,6 @@ class Agent:
                 or "odds move" in message_lower
             ):
                 return self._handle_event_query(message)
-            elif "jupiter" in message_lower or "solana" in message_lower:
-                return self._handle_jupiter_query(message)
             elif (
                 "price" in message_lower
                 or "balance" in message_lower
@@ -382,7 +380,7 @@ class Agent:
         """Submit prompt and wait for result."""
         import time
 
-        job_id = self.bankr.send_prompt(prompt)
+        job_id, _ = self.bankr.send_prompt(prompt)
         if not job_id:
             return "Failed to submit Bankr query. Check API key."
 

@@ -134,7 +134,7 @@ class TelegramDispatcher:
                 yes_odds = float(outcome_prices[0])
                 no_odds = float(outcome_prices[1])
                 odds_text = f"YES {yes_odds * 100:.0f}% | NO {no_odds * 100:.0f}%"
-            except:
+            except Exception:
                 pass
 
         lines = [

@@ -40,7 +40,7 @@ class InsiderDetector:
                         if len(data) < 10
                         else "LOW",
                     }
-        except:
+        except Exception:
             pass
         return {"is_fresh": None, "total_trades": 0, "risk": "UNKNOWN"}
 

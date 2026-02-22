@@ -91,6 +91,19 @@ class CombinedDispatcher:
             print(f"[Discord] Error: {e}")
             return False
 
+    def _send_discord_webhook(self, payload: dict) -> bool:
+        """Send full webhook payload to Discord (e.g. embeds)."""
+        if not self.has_discord:
+            return False
+        try:
+            self._wait_for_rate_limit("discord")
+            url = self.config.discord_webhook_url
+            resp = requests.post(url, json=payload, timeout=10)
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            print(f"[Discord] Error: {e}")
+            return False
+
     def _send_telegram(self, message: str, chat_id: Optional[str] = None) -> bool:
         """Send to Telegram."""
         if not self.has_telegram:
@@ -121,7 +134,7 @@ class CombinedDispatcher:
         # Convert has_early_entry to boolean safely
         try:
             has_early = bool(convergence.get("has_early_entry"))
-        except:
+        except Exception:
             has_early = False
 
         # Format message with full details
@@ -373,8 +386,8 @@ class CombinedDispatcher:
         dispatcher = AlertDispatcher(self.config.discord_webhook_url)
         payload = dispatcher.format_smart_money_alert(wallets)
 
-        # Send rich embed to Discord
-        t1 = threading.Thread(target=self._send_discord, args=(payload,))
+        # Send rich embed to Discord via webhook payload
+        t1 = threading.Thread(target=self._send_discord_webhook, args=(payload,))
         t2 = threading.Thread(
             target=self._send_telegram,
             args=(

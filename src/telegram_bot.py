@@ -1,6 +1,7 @@
 """Telegram bot for interacting with PolySuite."""
 
 import telebot
+from src.wallet import Wallet
 from src.wallet.storage import WalletStorage
 from src.utils import is_valid_address
 from src.agent import Agent
@@ -71,7 +72,7 @@ class TelegramBot:
                 if not is_valid_address(address):
                     self.bot.reply_to(message, "Invalid wallet address format.")
                     return
-                self.storage.add_wallet(address)
+                self.storage.add_wallet(Wallet(address=address, nickname=address[:12] + "..."))
                 self.bot.reply_to(message, f"Added wallet: {address}")
             except IndexError:
                 self.bot.reply_to(message, "Usage: /add <address>")

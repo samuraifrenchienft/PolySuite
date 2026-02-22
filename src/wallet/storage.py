@@ -58,13 +58,13 @@ class WalletStorage:
                 conn.execute(
                     "ALTER TABLE wallets ADD COLUMN is_smart_money BOOLEAN DEFAULT FALSE"
                 )
-            except:
+            except Exception:
                 pass
             try:
                 conn.execute(
                     "ALTER TABLE wallets ADD COLUMN trade_volume INTEGER DEFAULT 0"
                 )
-            except:
+            except Exception:
                 pass
 
             conn.execute("""
@@ -245,6 +245,7 @@ class WalletStorage:
                     last_updated=row["last_updated"],
                     created_at=row["created_at"],
                     is_smart_money=row["is_smart_money"],
+                    trade_volume=row.get("trade_volume", 0),
                 )
                 for row in rows
             ]

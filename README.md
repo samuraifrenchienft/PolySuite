@@ -60,6 +60,8 @@ TELEGRAM_CHAT_ID=your_id
 BANKR_API_KEY=your_key
 ```
 
+**Bankr:** Enable Agent API at [bankr.bot/api](https://bankr.bot/api). Free tier: 100 messages/day.
+
 ## Requirements
 
 - Python 3.10+
