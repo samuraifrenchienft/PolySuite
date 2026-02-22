@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PolySuite Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <h1>Tracked Wallets</h1>
+    <ul>
+        {% for wallet in wallets %}
+            <li>{{ wallet.address }}</li>
+        {% endfor %}
+    </ul>
+
+    <div style="width: 75%;">
+        <canvas id="walletChart"></canvas>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('walletChart');
+
+        const walletChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: [{% for wallet in wallets %}'{{ wallet.nickname }}',{% endfor %}],
+                datasets: [{
+                    label: 'Trade Volume',
+                    data: [{% for wallet in wallets %}{{ wallet.trade_volume }},{% endfor %}],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        const socket = io();
+        socket.on('connect', function() {
+            console.log('Connected to server');
+        });
+
+        socket.on('update', function(data) {
+            console.log('Received update:', data);
+            // Here you would update the chart data
+            // For example:
+            // walletChart.data.datasets[0].data = data.volumes;
+            // walletChart.update();
+        });
+    </script>
+</body>
+</html>

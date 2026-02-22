@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local config (contains secrets)
+config.json
+.env
+*.env
+.env.*
+
+# Credentials log (DO NOT COMMIT - contains sensitive info)
+CREDENTIALS.md
+credentials.md
+
+# Cursor / Claude (local dev artifacts)
+.cursor/
+.claude/
+
+# Project planning (local context)
+MAIN_ISSUES.md
+FUTURE_IDEAS.md
+FEATURES_BACKLOG.md
+
+# Data
+data/
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db

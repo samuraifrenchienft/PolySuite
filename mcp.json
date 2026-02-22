@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "Sequential Thinking": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "env": {}
+    },
+    "supabase-mcp": {},
+    "sentry": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-sentry",
+        "--auth-token",
+        "sntrys_eyJpYXQiOjE3NzE1ODc3MzguMzI0MjM4LCJ1cmwiOiJodHRwczovL3NlbnRyeS5pbyIsInJlZ2lvbl91cmwiOiJodHRwczovL3VzLnNlbnRyeS5pbyIsIm9yZyI6ImFscGhhLWtpbmdzIn0=_FP9zRSQiWBAlzTTKaHC97zcCfPEznFaQV9MkIYuCsacOKEN"
+      ]
+    }
+  }
+}
