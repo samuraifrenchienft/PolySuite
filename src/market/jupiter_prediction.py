@@ -3,6 +3,7 @@
 import requests
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
+from src.config import Config
 
 
 JUPITER_PREDICTION_API = "https://api.jup.ag/prediction/v1"
@@ -14,9 +15,10 @@ class JupiterPredictionAPI:
     def __init__(self, api_key: str = None):
         """Initialize API client."""
         self.session = requests.Session()
-        self.api_key = api_key
-        if api_key:
-            self.session.headers["x-api-key"] = api_key
+        config = Config()
+        self.api_key = api_key or config.jupiter_id
+        if self.api_key:
+            self.session.headers["x-api-key"] = self.api_key
 
     def close(self):
         """Close the session."""

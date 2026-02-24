@@ -363,10 +363,21 @@ def monitor(
 
                 def _norm_pos(p):
                     """Normalize position from API (conditionId, title, outcome, avgPrice) to canonical fields."""
-                    mid = str(p.get("market_id") or p.get("conditionId") or p.get("market") or "")
+                    mid = str(
+                        p.get("market_id")
+                        or p.get("conditionId")
+                        or p.get("market")
+                        or ""
+                    )
                     q = p.get("question") or p.get("title") or "Unknown"
                     side = p.get("side") or p.get("outcome") or "?"
-                    return {"market_id": mid, "question": q, "side": side, "size": p.get("size"), "entry_price": p.get("entry_price") or p.get("avgPrice")}
+                    return {
+                        "market_id": mid,
+                        "question": q,
+                        "side": side,
+                        "size": p.get("size"),
+                        "entry_price": p.get("entry_price") or p.get("avgPrice"),
+                    }
 
                 for wallet in wallets:
                     try:
@@ -457,7 +468,7 @@ def monitor(
 
             # ===== PRIORITY 1: NEW EVENTS (1hr) - ALWAYS ALERT, CHECK ARB FIRST =====
             print("\n[*] Checking for new events...")
-            new_events = event_alerter.check_new_events(hours=1, limit=50)
+            new_events = event_alerter.check_new_events(hours=1, limit=200)
             for event in new_events:
                 event_id = event.get("id")
                 if not event_id:
@@ -537,10 +548,53 @@ def monitor(
                 except Exception as e:
                     pass
 
-            # ===== PRIORITY 2: CRYPTO REAL PRICES (CoinGecko) - EVERY SCAN =====
-            # REMOVED - too noisy, not actionable for prediction markets
-            # ===== PRIORITY 2: POLY CRYPTO MOVES =====
-            # REMOVED - too noisy
+            # ===== PRIORITY 2: CRYPTO 5MIN/15MIN MARKETS =====
+            print("[*] Checking crypto markets...")
+            crypto_markets = event_alerter.check_crypto_markets(limit=100)
+            # Also get sports and politics sorted by volume
+            sports_markets = event_alerter.check_sports_markets(limit=50)
+            politics_markets = event_alerter.check_politics_markets(limit=50)
+
+            # Print top actionable markets
+            print(
+                f"   Crypto: {len(crypto_markets)} | Sports: {len(sports_markets)} | Politics: {len(politics_markets)}"
+            )
+
+            # Show top crypto by volume
+            if crypto_markets:
+                print("\n   === TOP CRYPTO MARKETS ===")
+                for m in sorted(
+                    crypto_markets,
+                    key=lambda x: float(x.get("volume", 0) or 0),
+                    reverse=True,
+                )[:5]:
+                    q = m.get("question", "")[:50]
+                    v = float(m.get("volume", 0) or 0)
+                    print(f"   ${v:>10,.0f} - {q}")
+
+            # Show top sports by volume
+            if sports_markets:
+                print("\n   === TOP SPORTS MARKETS ===")
+                for m in sorted(
+                    sports_markets,
+                    key=lambda x: float(x.get("volume", 0) or 0),
+                    reverse=True,
+                )[:5]:
+                    q = m.get("question", "")[:50]
+                    v = float(m.get("volume", 0) or 0)
+                    print(f"   ${v:>10,.0f} - {q}")
+
+            # Show top politics by volume
+            if politics_markets:
+                print("\n   === TOP POLITICS MARKETS ===")
+                for m in sorted(
+                    politics_markets,
+                    key=lambda x: float(x.get("volume", 0) or 0),
+                    reverse=True,
+                )[:5]:
+                    q = m.get("question", "")[:50]
+                    v = float(m.get("volume", 0) or 0)
+                    print(f"   ${v:>10,.0f} - {q}")
 
             # ===== PRIORITY 3: SPORTS/GAMES EXPIRING SOON =====
             # Only alert if < 1 hour left (was 2 hours)

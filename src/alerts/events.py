@@ -54,6 +54,37 @@ class EventAlerter:
             "altcoin",
             "token",
             "defi",
+            "solana",
+            "sol",
+            "megaeth",
+            "hyperliquid",
+            "hype",
+            "dogecoin",
+            "shiba",
+            "pepe",
+            "sui",
+            "aptos",
+            "arbitrum",
+            "optimism",
+            "base",
+            "sei",
+            "injective",
+            "raydium",
+            "orca",
+            "jupiter",
+            "pyth",
+            "fetch",
+            "render",
+            "imag",
+            "bonk",
+            "wif",
+            "popcat",
+            "goat",
+            "fartcoin",
+            "ai16z",
+            "vitalik",
+            "sbf",
+            "加密",
         ],
         "sports": [
             # NFL
@@ -328,13 +359,30 @@ class EventAlerter:
 
         q = question.lower()
 
-        # Use word boundaries for more accurate matching
-        for category, keywords in self.CATEGORY_KEYWORDS.items():
-            for kw in keywords:
-                # Match whole words only
-                pattern = r"\b" + re.escape(kw) + r"\b"
-                if re.search(pattern, q):
-                    return category
+        # Check sports FIRST to avoid false positives like "Avalanche" (NHL team)
+        sports_keywords = self.CATEGORY_KEYWORDS.get("sports", [])
+        for kw in sports_keywords:
+            pattern = r"\b" + re.escape(kw) + r"\b"
+            if re.search(pattern, q):
+                return "sports"
+
+        # Check politics
+        politics_keywords = self.CATEGORY_KEYWORDS.get("politics", [])
+        for kw in politics_keywords:
+            pattern = r"\b" + re.escape(kw) + r"\b"
+            if re.search(pattern, q):
+                return "politics"
+
+        # Check crypto LAST - more specific
+        crypto_keywords = self.CATEGORY_KEYWORDS.get("crypto", [])
+        for kw in crypto_keywords:
+            # Skip single words that might be sports teams
+            if kw in ["avalanche", "nhl", "flames", "ducks", "jets", "wings"]:
+                continue
+            pattern = r"\b" + re.escape(kw) + r"\b"
+            if re.search(pattern, q):
+                return "crypto"
+
         return "other"
 
     def filter_by_category(
@@ -384,17 +432,17 @@ class EventAlerter:
         new_markets.sort(key=lambda x: x.get("hours_old", 999))
         return new_markets
 
-    def check_crypto_markets(self, limit: int = 50) -> List[Dict]:
+    def check_crypto_markets(self, limit: int = 200) -> List[Dict]:
         """Get only crypto-related markets."""
         markets = self.api.get_active_markets(limit=limit) or []
         return self.filter_by_category(markets, ["crypto"])
 
-    def check_sports_markets(self, limit: int = 50) -> List[Dict]:
+    def check_sports_markets(self, limit: int = 200) -> List[Dict]:
         """Get only sports-related markets."""
         markets = self.api.get_active_markets(limit=limit) or []
         return self.filter_by_category(markets, ["sports"])
 
-    def check_politics_markets(self, limit: int = 50) -> List[Dict]:
+    def check_politics_markets(self, limit: int = 200) -> List[Dict]:
         """Get only politics-related markets."""
         markets = self.api.get_active_markets(limit=limit) or []
         return self.filter_by_category(markets, ["politics"])
@@ -580,7 +628,9 @@ class EventAlerter:
                         try:
                             yes_pct = float(prices[0])
                             m["yes_pct"] = yes_pct
-                            m["no_pct"] = float(prices[1]) if len(prices) > 1 else 1 - yes_pct
+                            m["no_pct"] = (
+                                float(prices[1]) if len(prices) > 1 else 1 - yes_pct
+                            )
                         except (ValueError, TypeError):
                             pass
                     expiring.append(m)
