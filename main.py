@@ -513,7 +513,7 @@ def monitor(
 
                 # Send batched whale alerts (to alerts channel)
                 if whale_trades:
-                    print(f"    → Sending {len(whale_trades)} whale trades in batch")
+                    print(f"    -> Sending {len(whale_trades)} whale trades in batch")
 
                     # AI summary with triggers
                     ai_summary = ""
@@ -938,7 +938,7 @@ def monitor(
                                 + (fee_risk and " ⚠️ FEE RISK" or "")
                             )
                             if analysis.get("analysis"):
-                                print(f"   → {analysis.get('analysis', '')[:80]}")
+                                print(f"   -> {analysis.get('analysis', '')[:80]}")
                     except Exception as e:
                         pass
 
