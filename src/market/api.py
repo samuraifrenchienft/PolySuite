@@ -14,6 +14,11 @@ CLOB_API = "https://clob.polymarket.com"
 
 # Rate limiting
 MIN_REQUEST_INTERVAL = 0.1  # 100ms between requests
+MAX_RETRIES = 3
+RETRY_BACKOFF = 1.0  # seconds, doubles each retry
+
+
+from src.market.polymarket_clob import PolymarketCLOB
 
 
 class RateLimiter:
@@ -75,7 +80,7 @@ class PolymarketAPI:
     def _get(
         self, url: str, params: Dict = None, use_cache: bool = False
     ) -> Optional[Dict]:
-        """Make rate-limited GET request with optional caching."""
+        """Make rate-limited GET request with retry logic and optional caching."""
         cache_key = f"{url}:{str(params)}"
 
         if use_cache:
@@ -83,24 +88,47 @@ class PolymarketAPI:
             if cached is not None:
                 return cached
 
-        self.rate_limiter.wait()
-
-        try:
-            resp = self.session.get(url, params=params, timeout=30)
-            resp.raise_for_status()
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            self.rate_limiter.wait()
             try:
-                data = resp.json()
-            except requests.exceptions.JSONDecodeError as e:
-                print(f"Error decoding JSON from Polymarket API: {e}")
+                resp = self.session.get(url, params=params, timeout=30)
+                if resp.status_code == 429:
+                    retry_after = int(
+                        resp.headers.get("Retry-After", RETRY_BACKOFF * (2**attempt))
+                    )
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(min(retry_after, 30))
+                        continue
+                    print(
+                        f"[API] Rate limited (429) after {MAX_RETRIES} attempts: {url}"
+                    )
+                    return None
+                if resp.status_code in (502, 503, 504):
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(RETRY_BACKOFF * (2**attempt))
+                        continue
+                    print(
+                        f"[API] Server error ({resp.status_code}) after retries: {url}"
+                    )
+                    return None
+                resp.raise_for_status()
+                try:
+                    data = resp.json()
+                except requests.exceptions.JSONDecodeError as e:
+                    print(f"Error decoding JSON from Polymarket API: {e}")
+                    return None
+                if use_cache:
+                    self.cache.set(cache_key, data)
+                return data
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_BACKOFF * (2**attempt))
+                    continue
+                print(f"Error fetching {url}: {e}")
                 return None
-
-            if use_cache:
-                self.cache.set(cache_key, data)
-
-            return data
-        except requests.RequestException as e:
-            print(f"Error fetching {url}: {e}")
-            return None
+        return None
 
     def _get_list(self, url: str, params: Dict = None, use_cache: bool = False) -> List:
         """Make rate-limited GET request for list response."""
@@ -186,7 +214,7 @@ class PolymarketAPI:
         order: str = None,
         tag_id: str = None,
     ) -> List[Dict]:
-        """Get markets with optional filtering."""
+        """Get markets with optional filtering. order: volume, liquidity, start_date, end_date."""
         url = f"{GAMMA_API}/markets"
         params = {"limit": limit}
         if active:
@@ -202,9 +230,47 @@ class PolymarketAPI:
         """Get markets filtered by Polymarket tag_id."""
         return self.get_markets(limit=limit, active=True, tag_id=tag_id)
 
+    def get_sports_markets_from_events(self, limit: int = 200) -> List[Dict]:
+        """Get sports markets via /sports tag. Tag 1 = sports/competitive (from Polymarket /sports API).
+        Extracts markets from events, fallback to keyword filter if empty."""
+        events = (
+            self.get_events(limit=100, active=True, order="volume", tag_id="1") or []
+        )
+        result = []
+        seen = set()
+        for ev in events:
+            for m in ev.get("markets") or []:
+                mid = m.get("conditionId") or m.get("id")
+                if mid and mid in seen:
+                    continue
+                if mid:
+                    seen.add(mid)
+                m = dict(m)
+                m["id"] = mid or m.get("conditionId")
+                result.append(m)
+                if len(result) >= limit:
+                    return result
+        return result
+
     def get_crypto_short_term_markets(self, limit: int = 100) -> List[Dict]:
         """Get crypto 5M/15M/hourly markets. Falls back to top crypto when strict filter yields 0."""
-        timeframe_kw = ["5 min", "15 min", "5m", "15m", "hourly", "up or down"]
+        timeframe_kw = [
+            "5 min",
+            "15 min",
+            "5m",
+            "15m",
+            "hourly",
+            "up or down",
+            "intraday",
+            "rolling",
+            "candle",
+            "close",
+            "open",
+            "utc",
+            "11:50",
+            "11:55",
+            "minute",
+        ]
 
         def _extract(events: List, strict: bool = True) -> List[Dict]:
             result = []
@@ -289,9 +355,11 @@ class PolymarketAPI:
                 wallets.add(addr)
         return list(wallets)
 
-    def get_active_markets(self, limit: int = 500) -> List[Dict]:
-        """Get currently active markets with key info."""
-        markets = self.get_markets(limit=limit, active=True)
+    def get_active_markets(self, limit: int = 500, order: str = "volume") -> List[Dict]:
+        """Get currently active markets with key info. Ordered by volume by default for better sports/crypto coverage."""
+        markets = self.get_markets(limit=limit, active=True, order=order)
+        if not markets and order:
+            markets = self.get_markets(limit=limit, active=True)
         return [
             {
                 "id": m.get("id") or m.get("conditionId"),
@@ -384,6 +452,7 @@ class APIClientFactory:
         self._jupiter_recurring_client = None
         self._predictfolio_client = None
         self._polyscope_client = None
+        self._clob_client = None
         self.clients = []
 
     def close(self):
@@ -438,6 +507,13 @@ class APIClientFactory:
             self._polyscope_client = PolyScopeClient()
             self.clients.append(self._polyscope_client)
         return self._polyscope_client
+
+    def get_clob_client(self) -> PolymarketCLOB:
+        """Get a singleton instance of the PolymarketCLOB client."""
+        if self._clob_client is None:
+            self._clob_client = PolymarketCLOB()
+            self.clients.append(self._clob_client)
+        return self._clob_client
 
     def get_jupiter_prediction_client(
         self, provider: str = "polymarket"

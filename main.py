@@ -1,6 +1,7 @@
 """Main entry point for PolySuite CLI."""
 
 import argparse
+import json
 import os
 import sqlite3
 import sys
@@ -32,6 +33,7 @@ from src.wallet import Wallet
 from src.wallet.calculator import WalletCalculator
 from src.wallet.storage import WalletStorage
 from src.ai.engine import ai_filter
+from src.alerts.formatter import formatter
 from src.alerts.trendscanner import trendscanner
 
 
@@ -229,7 +231,10 @@ def monitor(
     last_trend_scan = 0  # Trend scanner
     trend_scan_interval = 900  # 15 minutes
     ai_report_interval = 1800  # 30 minutes - AI optimal entry report
-    whale_min_size = 50000  # Only alert on trades >= $50k (raised from $10k)
+    whale_min_size = config.whale_min_size
+    whale_check_interval = config.whale_check_interval
+    whale_alert_cooldown = config.whale_alert_cooldown
+    last_whale_alert_time = 0
     health_check_interval = 9000  # Every 2.5 hours (only if no alerts)
 
     # Database backup
@@ -241,10 +246,16 @@ def monitor(
     volume_check_interval = 30  # Check volume every 30 seconds
     odds_check_interval = 60  # Check odds every 1 min
     crypto_short_term_interval = config.crypto_short_term_interval
+    sports_alert_interval = config.sports_alert_interval
+    politics_alert_interval = config.politics_alert_interval
     last_new_market_check = 0
     last_volume_check = 0
     last_odds_check = 0
     last_crypto_short_term_check = 0
+    last_sports_alert_check = 0
+    last_politics_alert_check = 0
+    kalshi_jupiter_interval = config.kalshi_jupiter_interval
+    last_kalshi_jupiter_check = 0
 
     # Start Telegram bot in background for interactive commands
     telegram_bot = None
@@ -329,9 +340,6 @@ def monitor(
                         symbol = token.get("symbol", "?")
                         mint = token.get("mint", "")[:20]
 
-                        # Use formatter
-                        from src.alerts.formatter import formatter
-
                         msg = formatter.format_trend(token, "")
 
                         combined.send_to_trends(msg)  # Send to trends channel
@@ -378,8 +386,6 @@ def monitor(
                         odds_info = {}
                         if prices:
                             try:
-                                import json
-
                                 p = (
                                     json.loads(prices)
                                     if isinstance(prices, str)
@@ -485,7 +491,7 @@ def monitor(
 
             # Simple whale trade alerts - check tracked wallets for new positions
             # No leaderboard import - users add wallets they want to track
-            if current_time - last_smart_money_import > 60:  # Check every minute
+            if current_time - last_smart_money_import > whale_check_interval:
                 print("\n[*] Checking tracked wallets for new trades...")
 
                 wallets = storage.list_wallets()
@@ -559,26 +565,28 @@ def monitor(
                     except Exception as e:
                         print(f"Whale check error {wallet.address[:12]}...: {e}")
 
-                # Send batched whale alerts (to alerts channel)
-                if whale_trades:
+                # Send batched whale alerts (to alerts channel) - respect cooldown
+                if whale_trades and (current_time - last_whale_alert_time) >= whale_alert_cooldown:
                     print(f"    -> Sending {len(whale_trades)} whale trades in batch")
 
-                    # AI summary with triggers
+                    # AI summary with triggers (skip for small batches to reduce API calls)
                     ai_summary = ""
-                    try:
-                        ai_summary = ai_filter.analyze_whale_trades(whale_trades[:10])
-                        if ai_summary and "TRIGGER:" in ai_summary:
-                            trig = (
-                                ai_summary.split("TRIGGER:")[1].split("\n")[0].strip()
-                            )
-                            print(f"   🐋 Trigger: {trig}")
-                    except:
-                        pass
-
-                    from src.alerts.formatter import formatter
+                    if len(whale_trades) >= 2:
+                        try:
+                            ai_summary = ai_filter.analyze_whale_trades(whale_trades[:10])
+                            if ai_summary and "TRIGGER:" in ai_summary:
+                                trig = (
+                                    ai_summary.split("TRIGGER:")[1].split("\n")[0].strip()
+                                )
+                                print(f"   🐋 Trigger: {trig}")
+                        except Exception:
+                            pass
 
                     msg = formatter.format_whale_batch(whale_trades, ai_summary)
                     combined.send_to_alerts(msg)
+                    last_whale_alert_time = current_time
+                elif whale_trades and (current_time - last_whale_alert_time) < whale_alert_cooldown:
+                    print(f"    -> Skipping whale alert (cooldown: {whale_alert_cooldown}s)")
 
                 last_smart_money_import = current_time
 
@@ -618,6 +626,7 @@ def monitor(
                 sentiment = ""
                 ai_insight = ""
                 category = ""
+                nm_analysis = {}
                 try:
                     sentiment = ai_filter.analyze_sentiment(
                         event.get("question", ""),
@@ -629,9 +638,17 @@ def monitor(
                 except Exception:
                     pass
 
-                # Use formatter - crypto 5M/15M get distinct formatting
-                from src.alerts.formatter import formatter
+                # Optional: skip low-value alerts when ai_filter_low_value_alerts is True
+                if config.ai_filter_low_value_alerts:
+                    vol = float(event.get("volume", 0) or 0)
+                    if (
+                        nm_analysis.get("opportunity") == "LOW"
+                        and vol < 5000
+                        and profit < 0.5
+                    ):
+                        continue
 
+                # Use formatter - crypto 5M/15M get distinct formatting
                 is_crypto_st = event_alerter.is_crypto_short_term(
                     event.get("question", "")
                 )
@@ -640,7 +657,6 @@ def monitor(
                     raw_p = event.get("outcomePrices")
                     if raw_p:
                         try:
-                            import json
                             p = json.loads(raw_p) if isinstance(raw_p, str) else raw_p
                             if p and len(p) >= 2:
                                 event = dict(event)
@@ -699,17 +715,20 @@ def monitor(
                                 print(f"   ⭐ HIGH: {analysis.get('reason', '')[:70]}")
                         elif analysis.get("opportunity") == "LOW":
                             print(f"   ⚠️ LOW: {analysis.get('reason', '')[:60]}")
-                except Exception as e:
+                except Exception:
                     pass
 
             # ===== PRIORITY 2: CRYPTO 5MIN/15MIN MARKETS =====
+            # Batch fetch: 1 API call for crypto/sports/politics instead of 3
             print("[*] Checking crypto markets...")
-            crypto_markets = event_alerter.check_crypto_markets(limit=100)
+            category_markets = event_alerter.fetch_markets_for_categories(limit=500)
+            crypto_markets = category_markets.get("crypto", [])
+            sports_markets = category_markets.get("sports", [])
+            politics_markets = category_markets.get("politics", [])
+            all_market_ids = category_markets.get("all_market_ids", set())
             crypto_short_term_markets = event_alerter.check_crypto_short_term_markets(
                 limit=50
             )
-            sports_markets = event_alerter.check_sports_markets(limit=50)
-            politics_markets = event_alerter.check_politics_markets(limit=50)
 
             # Crypto 5M/15M dedicated check - run every 1-2 min, send to alerts
             if current_time - last_crypto_short_term_check >= crypto_short_term_interval:
@@ -720,11 +739,65 @@ def monitor(
                         key=lambda x: float(x.get("volume", 0) or 0),
                         reverse=True,
                     )[:5]
-                    from src.alerts.formatter import formatter
-
                     for m in top_short_term:
                         msg = formatter.format_crypto_short_term(m)
                         combined.send_to_alerts(msg, category="crypto")
+
+            # Sports dedicated check - HIGH PRIORITY, send top sports to alerts
+            if current_time - last_sports_alert_check >= sports_alert_interval:
+                last_sports_alert_check = current_time
+                if sports_markets:
+                    top_sports = sorted(
+                        sports_markets,
+                        key=lambda x: float(x.get("volume", 0) or 0),
+                        reverse=True,
+                    )[:3]
+                    for m in top_sports:
+                        vol = float(m.get("volume", 0) or 0)
+                        if vol >= 5000:  # Only liquid sports
+                            msg = formatter.format_sports_market(m)
+                            combined.send_to_alerts(msg, category="sports")
+
+            # Politics dedicated check - send top politics to alerts
+            if current_time - last_politics_alert_check >= politics_alert_interval:
+                last_politics_alert_check = current_time
+                if politics_markets:
+                    top_politics = sorted(
+                        politics_markets,
+                        key=lambda x: float(x.get("volume", 0) or 0),
+                        reverse=True,
+                    )[:3]
+                    for m in top_politics:
+                        vol = float(m.get("volume", 0) or 0)
+                        if vol >= 10000:  # Higher bar for politics
+                            msg = formatter.format_politics_market(m)
+                            combined.send_to_alerts(msg, category="politics")
+
+            # Kalshi & Jupiter - multi-source alerts (HIGH PRIORITY)
+            if current_time - last_kalshi_jupiter_check >= kalshi_jupiter_interval:
+                last_kalshi_jupiter_check = current_time
+                try:
+                    print("[*] Fetching Kalshi & Jupiter markets...")
+                    kalshi_markets = aggregator.get_kalshi_markets(limit=50)
+                    jupiter_markets = aggregator.get_jupiter_markets()
+                    # Kalshi: top 2 by volume (min $500)
+                    for m in sorted(
+                        kalshi_markets,
+                        key=lambda x: float(getattr(x, "volume", 0) or 0),
+                        reverse=True,
+                    )[:2]:
+                        vol = float(getattr(m, "volume", 0) or 0)
+                        if vol >= 500:
+                            msg = formatter.format_kalshi_market(m)
+                            combined.send_to_alerts(msg, category="kalshi")
+                            print(f"   📊 Kalshi: {getattr(m, 'question', '')[:40]}...")
+                    # Jupiter: top 2 (often Polymarket-sourced)
+                    for m in jupiter_markets[:2]:
+                        msg = formatter.format_jupiter_market(m)
+                        combined.send_to_alerts(msg, category="jupiter")
+                        print(f"   🪐 Jupiter: {getattr(m, 'question', '')[:40]}...")
+                except Exception as e:
+                    print(f"[Kalshi/Jupiter] Error: {e}")
 
             # Print top actionable markets
             print(
@@ -767,15 +840,13 @@ def monitor(
                         odds_str = ""
                         if prices:
                             try:
-                                import json
-
                                 if isinstance(prices, str):
                                     p = json.loads(prices)
                                 else:
                                     p = prices
                                 if p and len(p) >= 2:
                                     odds_str = f" YES:{float(p[0]) * 100:.0f}% NO:{float(p[1]) * 100:.0f}%"
-                            except:
+                            except Exception:
                                 pass
 
                         opp = analysis.get("opportunity", "LOW")
@@ -878,8 +949,6 @@ def monitor(
                     hours_left = 0
                 # Only alert if < 30 mins left
                 if hours_left < 0.5:
-                    from src.alerts.formatter import formatter
-
                     event_title = event.get("event_title", "") or ""
                     yes_pct = event.get("yes_pct")
                     spread = None
@@ -938,14 +1007,12 @@ def monitor(
                         if wallet_analysis and wallet_analysis.get("analysis"):
                             ai_analysis = wallet_analysis["analysis"][:100]
                             print(f"   🤖 Strategy: {ai_analysis[:60]}")
-                except:
+                except Exception:
                     pass
 
                 # Format and send with AI reasoning
-                from src.alerts.formatter import formatter
-
                 msg = formatter.format_convergence(market, wallets, conv, ai_analysis)
-                combined.send_to_alerts(msg)
+                combined.send_to_alerts(msg, category="convergence")
                 print(
                     f"{emoji} CONVERGENCE: {len(wallets)} traders in {market.get('question', 'Unknown')[:40]}..."
                 )
@@ -1017,11 +1084,8 @@ def monitor(
                         if ai_reasoning:
                             print(f"   🤖 {ai_reasoning[:60]}...")
 
-                        # Use formatter
-                        from src.alerts.formatter import formatter
-
                         msg = formatter.format_arb(arb, ai_reasoning)
-                        combined.send_to_alerts(msg)
+                        combined.send_to_alerts(msg, category="arb")
 
                         print(
                             f"{emoji}💰 ARB ({profit:.2f}%): {arb.get('question', '')[:40]}..."
@@ -1058,13 +1122,9 @@ def monitor(
 
             # Check volume spikes - REMOVED, too noisy
 
-            # Clean old markets from alerted set
-            active_markets = {
-                m.get("id")
-                for m in (polymarket_api.get_active_markets(limit=200) or [])
-                if m and m.get("id")
-            }
-            alerted_markets = alerted_markets & active_markets
+            # Clean old markets from alerted set - reuse IDs from batch fetch
+            if all_market_ids:
+                alerted_markets = alerted_markets & all_market_ids
 
             print(
                 f"\rMonitoring {len(high_performers)} wallets | {len(convergences)} convergences",

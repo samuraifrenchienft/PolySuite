@@ -19,7 +19,7 @@ def test_get_quote_success(client):
         quote = client.get_quote("input_mint", "output_mint", 100)
         assert quote == {"data": "test_quote"}
         mock_get.assert_called_once_with(
-            f"{client.api_url}/quote",
+            f"{client.api_url}/swap/v1/quote",
             params={
                 "inputMint": "input_mint",
                 "outputMint": "output_mint",
@@ -27,6 +27,7 @@ def test_get_quote_success(client):
                 "slippageBps": 50,
             },
             headers=client.headers,
+            timeout=30,
         )
 
 import requests
@@ -54,6 +55,7 @@ def test_get_swap_instructions_success(client):
                 "wrapAndUnwrapSol": True,
             },
             headers=client.headers,
+            timeout=30,
         )
 
 def test_get_swap_instructions_error(client):

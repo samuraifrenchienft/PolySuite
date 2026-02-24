@@ -14,12 +14,10 @@ class TestWinRateByCategory(unittest.TestCase):
             {"conditionId": "market2", "side": "BUY", "price": 0.7},
             {"conditionId": "market2", "side": "SELL", "price": 0.3},
         ]
-        mock_api_instance.get_market_details.side_effect = [
-            {"category": "Sports"},
-            {"category": "Sports"},
-            {"category": "Politics"},
-            {"category": "Politics"},
-        ]
+        # Code deduplicates market_ids, so get_market_details is called once per market
+        def market_details(market_id):
+            return {"category": "Sports"} if market_id == "market1" else {"category": "Politics"}
+        mock_api_instance.get_market_details.side_effect = market_details
 
         # Create an instance of the calculator
         mock_api_factory = MagicMock()

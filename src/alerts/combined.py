@@ -105,18 +105,31 @@ class CombinedDispatcher:
             print(f"[Discord] Error: {e}")
             return False
 
-    def _send_discord_webhook(self, payload: dict) -> bool:
-        """Send full webhook payload to Discord (e.g. embeds)."""
-        if not self.has_discord:
+    def _send_discord_webhook(self, payload: dict, url: Optional[str] = None) -> bool:
+        """Send full webhook payload to Discord (e.g. embeds). Optional url override."""
+        target = url or self.config.discord_webhook_url
+        if not target:
             return False
         try:
             self._wait_for_rate_limit("discord")
-            url = self.config.discord_webhook_url
-            resp = requests.post(url, json=payload, timeout=10)
+            resp = requests.post(target, json=payload, timeout=10)
             return resp.status_code in (200, 204)
         except Exception as e:
             print(f"[Discord] Error: {e}")
             return False
+
+    # Discord embed colors per alert type (left edge bar)
+    EMBED_COLORS = {
+        "crypto": 0x3498DB,   # Blue
+        "sports": 0x2ECC71,   # Green
+        "politics": 0x9B59B6, # Purple
+        "arb": 0xF1C40F,     # Gold
+        "convergence": 0xE67E22,  # Orange
+        "whale": 0xE67E22,   # Orange
+        "kalshi": 0x1ABC9C,  # Teal
+        "jupiter": 0x9B59B6, # Purple (Jupiter brand)
+        "default": 0x5865F2,  # Discord blurple
+    }
 
     def _send_telegram(self, message: str, chat_id: Optional[str] = None) -> bool:
         """Send to Telegram."""
@@ -194,8 +207,26 @@ class CombinedDispatcher:
 
         msg = "\n".join(lines)
 
-        # Send to both simultaneously
-        t1 = threading.Thread(target=self._send_discord, args=(msg,))
+        # Discord: colored embed (orange for convergence)
+        webhook = (
+            getattr(self.config, "discord_alerts_webhook_url", None)
+            or self.config.discord_webhook_url
+        )
+        if webhook:
+            payload = {
+                "embeds": [{
+                    "title": f"👥 Convergence {urgency}",
+                    "description": msg,
+                    "color": self.EMBED_COLORS["convergence"],
+                    "url": self._get_market_link(market_id) if market_id else None,
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }]
+            }
+            t1 = threading.Thread(
+                target=lambda: self._send_discord_webhook(payload, url=webhook)
+            )
+        else:
+            t1 = threading.Thread(target=self._send_discord, args=(msg,))
         t2 = threading.Thread(target=self._send_telegram, args=(msg,))
         t1.start()
         t2.start()
@@ -203,7 +234,7 @@ class CombinedDispatcher:
         t2.join()
 
     def _send_arb(self, arb: dict):
-        """Send arbitrage alert to all channels."""
+        """Send arbitrage alert to all channels. Discord: gold embed edge."""
         market_id = arb.get("market_id") or arb.get("condition_id") or ""
 
         yes_ask = arb.get("yes_ask", arb.get("yes_price", 0))
@@ -242,7 +273,26 @@ class CombinedDispatcher:
 
         msg = "\n".join(lines)
 
-        t1 = threading.Thread(target=self._send_discord, args=(msg,))
+        # Discord: colored embed (gold for arb)
+        webhook = (
+            getattr(self.config, "discord_alerts_webhook_url", None)
+            or self.config.discord_webhook_url
+        )
+        if webhook:
+            payload = {
+                "embeds": [{
+                    "title": "💰 Arbitrage",
+                    "description": msg,
+                    "color": self.EMBED_COLORS["arb"],
+                    "url": self._get_market_link(market_id) if market_id else None,
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }]
+            }
+            t1 = threading.Thread(
+                target=lambda: self._send_discord_webhook(payload, url=webhook)
+            )
+        else:
+            t1 = threading.Thread(target=self._send_discord, args=(msg,))
         t2 = threading.Thread(target=self._send_telegram, args=(msg,))
         t1.start()
         t2.start()
@@ -416,13 +466,14 @@ class CombinedDispatcher:
                 by_wallet[wallet] = []
             by_wallet[wallet].append(t)
 
-        # Build embed
+        # Build embed - color per type
         embed = {
             "title": "🐋 Whale Activity",
             "description": f"**{len(trades)} new trades detected from {len(by_wallet)} wallet(s)**",
-            "color": 0xFF6B6B,
+            "color": 0xE67E22,
             "fields": [],
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "footer": {"text": "PolySuite • " + time.strftime("%H:%M UTC", time.gmtime())},
         }
 
         for wallet, wallet_trades in by_wallet.items():
@@ -485,7 +536,8 @@ class CombinedDispatcher:
         t2.join()
 
     def send_to_alerts(self, message: str, category: Optional[str] = None):
-        """Send to alerts channel. Use channel_overrides when category (e.g. 'crypto') has a dedicated channel."""
+        """Send to alerts channel. Use channel_overrides when category has a dedicated channel.
+        Discord: uses colored embed when category is provided (crypto=blue, sports=green, politics=purple)."""
         overrides = getattr(self.config, "channel_overrides", {}) or {}
         override = overrides.get(category, {}) if category else {}
 
@@ -503,7 +555,15 @@ class CombinedDispatcher:
         if webhook:
             try:
                 self._wait_for_rate_limit("discord")
-                requests.post(webhook, json={"content": message}, timeout=10)
+                color = self.EMBED_COLORS.get(category, self.EMBED_COLORS["default"])
+                payload = {
+                    "embeds": [{
+                        "description": message,
+                        "color": color,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    }]
+                }
+                self._send_discord_webhook(payload, url=webhook)
             except Exception as e:
                 print(f"[Alerts-Discord] Error: {e}")
 

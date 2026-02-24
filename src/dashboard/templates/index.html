@@ -1,19 +1,103 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PolySuite Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        :root {
+            --bg: #0f0f14;
+            --card: #1a1a24;
+            --accent: #3498db;
+            --accent-alt: #2ecc71;
+            --text: #e8e8ed;
+            --muted: #8888a0;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 2rem;
+            min-height: 100vh;
+        }
+        h1 {
+            font-size: 1.75rem;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(90deg, var(--accent), var(--accent-alt));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 1.25rem;
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .card h3 {
+            font-size: 0.85rem;
+            color: var(--muted);
+            margin: 0 0 0.5rem 0;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .card .value {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        .card .address {
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: var(--muted);
+            word-break: break-all;
+        }
+        .badge {
+            display: inline-block;
+            padding: 0.2em 0.5em;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            margin-top: 0.5rem;
+        }
+        .badge-volume { background: rgba(52,152,219,0.2); color: var(--accent); }
+        .badge-rate { background: rgba(46,204,113,0.2); color: var(--accent-alt); }
+        .chart-card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            max-width: 800px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Tracked Wallets</h1>
-    <ul>
-        {% for wallet in wallets %}
-            <li>{{ wallet.address }}</li>
-        {% endfor %}
-    </ul>
+    <h1>PolySuite Dashboard</h1>
 
-    <div style="width: 75%;">
+    <div class="cards">
+        {% for wallet in wallets or [] %}
+        <div class="card">
+            <h3>{{ wallet.nickname or 'Wallet' }}</h3>
+            <div class="value">${{ "{:,.0f}".format(wallet.trade_volume or 0) }}</div>
+            <div class="address">{{ wallet.address }}</div>
+            <span class="badge badge-volume">{{ wallet.total_trades or 0 }} trades</span>
+            <span class="badge badge-rate">{{ "%.1f"|format(wallet.win_rate or 0) }}% win</span>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="chart-card">
+        <h3 style="margin:0 0 1rem 0; color: var(--muted);">Trade Volume</h3>
         <canvas id="walletChart"></canvas>
     </div>
 
@@ -23,17 +107,29 @@
         const walletChart = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: [{% for wallet in wallets %}'{{ wallet.nickname }}',{% endfor %}],
+                labels: [{% for wallet in (wallets or []) %}'{{ wallet.nickname or "Wallet" }}',{% endfor %}],
                 datasets: [{
                     label: 'Trade Volume',
-                    data: [{% for wallet in wallets %}{{ wallet.trade_volume }},{% endfor %}],
+                    data: [{% for wallet in (wallets or []) %}{{ wallet.trade_volume or 0 }},{% endfor %}],
+                    backgroundColor: 'rgba(52, 152, 219, 0.5)',
+                    borderColor: 'rgba(52, 152, 219, 0.8)',
                     borderWidth: 1
                 }]
             },
             options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false }
+                },
                 scales: {
                     y: {
-                        beginAtZero: true
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255,255,255,0.06)' },
+                        ticks: { color: '#8888a0' }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#8888a0' }
                     }
                 }
             }

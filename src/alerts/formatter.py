@@ -29,6 +29,7 @@ class AlertFormatter:
         link = f"https://polymarket.com/market/{event.get('id', '')}"
 
         lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
             f"🆕 **NEW MARKET**",
             f"_{question}_",
             f"💰 Volume: ${volume:,.0f}" if volume else "",
@@ -61,6 +62,7 @@ class AlertFormatter:
         emoji = "🟢" if profit >= 1.5 else ("🔵" if profit >= 1.0 else "🟠")
 
         lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
             f"{emoji} **ARBITRAGE: {profit:.2f}%**",
             f"_{question}_",
             f"YES: ${yes_price:.2f} | NO: ${no_price:.2f}",
@@ -91,6 +93,7 @@ class AlertFormatter:
         emoji = "🔴" if urgency == "CRITICAL" else ("🟠" if urgency == "HIGH" else "🔵")
 
         lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
             f"{emoji} **CONVERGENCE - {urgency}**",
             f"_{question}_",
             f"👥 **{len(wallets)} traders** | Early: {'Yes' if has_early else 'No'}",
@@ -142,6 +145,7 @@ class AlertFormatter:
         )
 
         lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
             f"🐋 **WHALE ACTIVITY**",
             f"_{len(trades)} trades from {len(by_wallet)} wallets_",
             "",
@@ -192,6 +196,7 @@ class AlertFormatter:
         link = f"https://polymarket.com/market/{market.get('id', '')}"
 
         lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
             f"⏱️ **CRYPTO 5M/15M**",
             f"_{question}_",
             f"💰 Volume: ${volume:,.0f}" if volume else "",
@@ -216,6 +221,68 @@ class AlertFormatter:
         return "\n".join(lines)
 
     @staticmethod
+    def format_sports_market(market: dict) -> str:
+        """Format sports market alert."""
+        question = market.get("question", "Unknown")[:80]
+        volume = float(market.get("volume", 0) or 0)
+        link = f"https://polymarket.com/market/{market.get('id', '')}"
+        lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
+            "🏀 **SPORTS**",
+            f"_{question}_",
+            f"💰 Volume: ${volume:,.0f}" if volume else "",
+            f"[View]({link})",
+        ]
+        return "\n".join([l for l in lines if l])
+
+    @staticmethod
+    def format_kalshi_market(alert) -> str:
+        """Format Kalshi market alert (MarketAlert from aggregator)."""
+        q = getattr(alert, "question", alert.get("question", "Unknown"))[:80]
+        vol = getattr(alert, "volume", alert.get("volume", 0)) or 0
+        price = getattr(alert, "price", alert.get("price", 0.5)) or 0.5
+        url = getattr(alert, "url", alert.get("url", ""))
+        lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
+            "📊 **KALSHI**",
+            f"_{q}_",
+            f"💰 Vol: ${vol:,.0f}" if vol else "",
+            f"📈 YES: {price*100:.0f}%" if price else "",
+            f"[View]({url})" if url else "",
+        ]
+        return "\n".join([l for l in lines if l])
+
+    @staticmethod
+    def format_jupiter_market(alert) -> str:
+        """Format Jupiter market alert (MarketAlert from aggregator)."""
+        q = getattr(alert, "question", alert.get("question", "Unknown"))[:80]
+        price = getattr(alert, "price", alert.get("price", 0.5)) or 0.5
+        url = getattr(alert, "url", alert.get("url", ""))
+        lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
+            "🪐 **JUPITER**",
+            f"_{q}_",
+            f"📈 YES: {price*100:.0f}%" if price else "",
+            f"[View]({url})" if url else "",
+        ]
+        return "\n".join([l for l in lines if l])
+
+    @staticmethod
+    def format_politics_market(market: dict) -> str:
+        """Format politics market alert."""
+        question = market.get("question", "Unknown")[:80]
+        volume = float(market.get("volume", 0) or 0)
+        link = f"https://polymarket.com/market/{market.get('id', '')}"
+        lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
+            "🗳️ **POLITICS**",
+            f"_{question}_",
+            f"💰 Volume: ${volume:,.0f}" if volume else "",
+            f"[View]({link})",
+        ]
+        return "\n".join([l for l in lines if l])
+
+    @staticmethod
     def format_expiring(
         event: dict,
         event_title: str = "",
@@ -230,6 +297,7 @@ class AlertFormatter:
         emoji = "🔴" if hours < 0.5 else ("🟠" if hours < 1 else "🔵")
 
         lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
             f"{emoji} **EXPIRING** ({mins:.0f}m left)",
             f"_{question}_",
         ]

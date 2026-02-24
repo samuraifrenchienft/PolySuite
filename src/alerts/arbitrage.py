@@ -10,6 +10,17 @@ class ArbitrageDetector:
     # Minimum spread after fees (need profit margin)
     MIN_SPREAD = 0.99  # If YES + NO < 0.99, ~1%+ profit
 
+    # Priority keywords - only alert on these categories (crypto, sports, politics)
+    # Skip random/low-value markets; empty = allow all
+    ARB_PRIORITY_KEYWORDS = [
+        "bitcoin", "btc", "ethereum", "eth", "solana", "crypto", "5 min", "15 min",
+        "nfl", "nba", "mlb", "nhl", "super bowl", "playoffs", "ufc", "boxing",
+        "cfb", "college football", "college basketball", "college baseball",
+        "march madness", "final four", "college world series", "sec", "big ten",
+        "alabama", "georgia", "ohio state", "michigan", "texas", "duke", "kansas",
+        "president", "election", "trump", "biden", "congress", "senate", "fed",
+    ]
+
     def __init__(self, api_factory: APIClientFactory, min_spread: float = MIN_SPREAD):
         """Initialize detector.
 
@@ -150,13 +161,27 @@ class ArbitrageDetector:
         opportunities.sort(key=lambda x: x["profit_pct"], reverse=True)
         return opportunities
 
-    def get_top_opportunities(self, limit: int = 5) -> List[Dict]:
+    def _matches_priority(self, question: str) -> bool:
+        """Check if market matches priority keywords (crypto, sports, politics)."""
+        if not question or not self.ARB_PRIORITY_KEYWORDS:
+            return True
+        q = question.lower()
+        return any(kw in q for kw in self.ARB_PRIORITY_KEYWORDS)
+
+    def get_top_opportunities(
+        self, limit: int = 5, min_volume: float = 2000, priority_only: bool = True
+    ) -> List[Dict]:
         """Get top arbitrage opportunities.
 
         Args:
             limit: Number to return
+            min_volume: Minimum volume (default 2000 - filter low-liquidity)
+            priority_only: If True, only return markets matching ARB_PRIORITY_KEYWORDS
 
         Returns:
             List of best opportunities
         """
-        return self.scan_markets(limit=100, min_volume=500)[:limit]
+        opps = self.scan_markets(limit=150, min_volume=min_volume)
+        if priority_only:
+            opps = [o for o in opps if self._matches_priority(o.get("question", ""))]
+        return opps[:limit]

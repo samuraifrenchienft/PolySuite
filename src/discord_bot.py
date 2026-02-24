@@ -118,6 +118,106 @@ class DiscordBot(commands.Bot):
                 )
 
         @self.tree.command(
+            name="bankr",
+            description="Ask Bankr AI (balance, prices, trades) - may take up to 2 min",
+        )
+        async def bankr_slash(interaction: discord.Interaction, question: str):
+            """Bankr AI query with defer + poll. Runs sync Bankr calls in thread to avoid blocking Discord."""
+            await interaction.response.defer(ephemeral=True)
+            try:
+                from src.config import get_bankr_client
+
+                bankr = get_bankr_client(self.config.bankr_api_key)
+                if not bankr or not bankr.is_configured():
+                    await interaction.edit_original_response(
+                        content="❌ Bankr not configured. Add BANKR_API_KEY to .env"
+                    )
+                    return
+
+                await interaction.edit_original_response(content="⏳ Sending to Bankr...")
+
+                # Run blocking send_prompt in thread (avoids blocking Discord event loop)
+                job_id, err = await asyncio.to_thread(
+                    bankr.send_prompt, question.strip()
+                )
+                if err:
+                    await interaction.edit_original_response(content=f"❌ {err}")
+                    return
+                if not job_id:
+                    await interaction.edit_original_response(
+                        content="❌ Failed to submit. Check API key."
+                    )
+                    return
+
+                # Poll 2s, max 60 attempts (2 min)
+                for attempt in range(60):
+                    await asyncio.sleep(2)
+                    status = await asyncio.to_thread(bankr.get_job_status, job_id)
+                    if status:
+                        if status.get("status") == "completed":
+                            result = (
+                                status.get("response")
+                                or status.get("result")
+                                or ""
+                            ).strip()
+                            if not result:
+                                result = "Bankr returned empty response."
+                            await interaction.edit_original_response(
+                                content=f"🤖 **Bankr:** {result[:1900]}"
+                            )
+                            return
+                        if status.get("status") == "failed":
+                            await interaction.edit_original_response(
+                                content="❌ Bankr query failed."
+                            )
+                            return
+                    if attempt % 5 == 4:
+                        await interaction.edit_original_response(
+                            content=f"⏳ Waiting for Bankr... ({(attempt + 1) * 2}s)"
+                        )
+
+                await interaction.edit_original_response(
+                    content="❌ Timed out after 2 min. Try a simpler question."
+                )
+            except discord.errors.NotFound:
+                pass  # Interaction expired or was deleted
+            except Exception as e:
+                try:
+                    await interaction.edit_original_response(
+                        content=f"Error: {str(e)[:200]}"
+                    )
+                except discord.errors.NotFound:
+                    pass
+
+        @self.tree.command(
+            name="markets",
+            description="Show top active markets by volume",
+        )
+        @app_commands.describe(limit="Number of markets to show (1-15)")
+        async def markets_slash(interaction: discord.Interaction, limit: int = 5):
+            """Show top Polymarket markets."""
+            await interaction.response.defer(ephemeral=True)
+            try:
+                api = self.api_factory.get_polymarket_api()
+                markets = api.get_active_markets(limit=min(limit, 15))
+                if not markets:
+                    await interaction.edit_original_response(
+                        content="No markets found."
+                    )
+                    return
+                msg = "**📊 Top Markets**\n\n"
+                for m in markets[:limit]:
+                    q = (m.get("question") or "Unknown")[:50]
+                    vol = float(m.get("volume") or 0)
+                    msg += f"• ${vol:,.0f} - {q}...\n"
+                msg += "\n[Polymarket](https://polymarket.com)"
+                await interaction.edit_original_response(content=msg[:2000])
+            except Exception as e:
+                await interaction.edit_original_response(
+                    content=f"Error: {str(e)[:200]}"
+                )
+
+        @self.tree.command(
             name="scan", description="Scan wallet for suspicious activity"
         )
         async def scan_slash(interaction: discord.Interaction, address: str):
@@ -151,7 +251,24 @@ class DiscordBot(commands.Bot):
                 msg += f"{risk_emoji} **Risk Level:** {risk}\n"
                 msg += f"📊 **Total Trades:** {result.get('freshness', {}).get('total_trades', 'N/A')}\n"
                 msg += f"📈 **Open Positions:** {result.get('positions_count', 0)}\n"
-                msg += f"📋 **Closed Trades:** {result.get('closed_count', 0)}\n\n"
+                msg += f"📋 **Closed Trades:** {result.get('closed_count', 0)}\n"
+
+                # Categories breakdown
+                cats = result.get("categories", {})
+                if cats:
+                    cat_str = ", ".join(f"{k}: {v}" for k, v in sorted(cats.items(), key=lambda x: -x[1])[:5])
+                    msg += f"🏷️ **Categories:** {cat_str}\n"
+
+                # Recent trades
+                recent = result.get("recent_trades", [])
+                if recent:
+                    msg += "\n**Recent Trades:**\n"
+                    for t in recent[:3]:
+                        q = t.get("question", "?")[:35]
+                        side = t.get("side", "?")
+                        size = t.get("size", 0)
+                        msg += f"• {side} ${size:,.0f} → {q}...\n"
+                msg += "\n"
 
                 if risk == "HIGH":
                     msg += (

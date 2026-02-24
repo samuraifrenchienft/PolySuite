@@ -18,7 +18,14 @@ DEFAULT_CONFIG = {
     "tracked_categories": [],
     "priority_categories": ["crypto", "politics"],
     "crypto_short_term_interval": 90,
+    "sports_alert_interval": 120,
+    "politics_alert_interval": 180,
+    "kalshi_jupiter_interval": 180,
     "channel_overrides": {},
+    "whale_alert_cooldown": 1200,
+    "whale_check_interval": 300,
+    "whale_min_size": 50000,
+    "ai_filter_low_value_alerts": False,
     "trade_volume_threshold": 1000,
     "position_size_threshold": 1000,
     "leaderboard_import_interval": 3600,  # 1 hour
@@ -203,9 +210,41 @@ class Config:
         return self.config.get("crypto_short_term_interval", 90)
 
     @property
+    def sports_alert_interval(self) -> int:
+        return self.config.get("sports_alert_interval", 120)
+
+    @property
+    def politics_alert_interval(self) -> int:
+        return self.config.get("politics_alert_interval", 180)
+
+    @property
+    def kalshi_jupiter_interval(self) -> int:
+        return self.config.get("kalshi_jupiter_interval", 180)
+
+    @property
     def channel_overrides(self) -> dict:
         """Override channels per category, e.g. {'crypto': {'discord_webhook_url': '...', 'telegram_chat_id': '...'}}."""
         return self.config.get("channel_overrides", {})
+
+    @property
+    def whale_alert_cooldown(self) -> int:
+        """Seconds between whale alerts (default 20 min)."""
+        return self.config.get("whale_alert_cooldown", 1200)
+
+    @property
+    def whale_check_interval(self) -> int:
+        """Seconds between whale position checks (default 5 min)."""
+        return self.config.get("whale_check_interval", 300)
+
+    @property
+    def whale_min_size(self) -> float:
+        """Minimum trade size ($) to count as whale (default 50k)."""
+        return self.config.get("whale_min_size", 50000)
+
+    @property
+    def ai_filter_low_value_alerts(self) -> bool:
+        """Skip new market alerts when AI scores opportunity as LOW and volume < 5k."""
+        return self.config.get("ai_filter_low_value_alerts", False)
 
     @property
     def telegram_bot_token(self) -> str:

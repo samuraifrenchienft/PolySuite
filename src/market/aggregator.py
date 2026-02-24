@@ -116,6 +116,35 @@ class MarketAggregator:
             "49ers",
             "packers",
             "eagles",
+            # College sports
+            "cfb",
+            "college football",
+            "college basketball",
+            "college baseball",
+            "ncaa",
+            "march madness",
+            "final four",
+            "college world series",
+            "cws",
+            "sec",
+            "big ten",
+            "acc",
+            "big 12",
+            "alabama",
+            "georgia",
+            "ohio state",
+            "michigan",
+            "texas",
+            "lsu",
+            "clemson",
+            "notre dame",
+            "duke",
+            "kansas",
+            "kentucky",
+            "gonzaga",
+            "villanova",
+            "vanderbilt",
+            "oregon state",
         ],
         "politics": [
             "president",
@@ -301,7 +330,7 @@ class MarketAggregator:
             # Use the correct endpoint: api.elections.kalshi.com
             resp = self.session.get(
                 "https://api.elections.kalshi.com/trade-api/v2/markets",
-                params={"limit": limit},
+                params={"limit": limit, "status": "open"},
                 timeout=15,
             )
 
@@ -317,18 +346,24 @@ class MarketAggregator:
                 title = m.get("title", m.get("question", ""))
                 ticker = m.get("ticker", "")
 
-                # Get current price
-                try:
-                    price_resp = self.session.get(
-                        f"https://api.elections.kalshi.com/trade-api/v2/markets/{ticker}",
-                        timeout=10,
-                    )
-                    if price_resp.status_code == 200:
-                        market_data = price_resp.json()
-                        yes_price = market_data.get("yes_ask", 0.5)
-                    else:
+                # Use last_price/yes_ask from list if available (avoid N+1 requests)
+                yes_price = m.get("last_price") or m.get("yes_ask") or m.get("yes_bid")
+                if yes_price is None:
+                    try:
+                        price_resp = self.session.get(
+                            f"https://api.elections.kalshi.com/trade-api/v2/markets/{ticker}",
+                            timeout=5,
+                        )
+                        if price_resp.status_code == 200:
+                            market_data = price_resp.json()
+                            yes_price = market_data.get("yes_ask") or market_data.get("last_price", 0.5)
+                        else:
+                            yes_price = 0.5
+                    except Exception:
                         yes_price = 0.5
-                except Exception:
+                try:
+                    yes_price = float(yes_price) if yes_price is not None else 0.5
+                except (ValueError, TypeError):
                     yes_price = 0.5
 
                 # Determine category
@@ -352,7 +387,11 @@ class MarketAggregator:
                     )
                 elif any(
                     k in title_lower
-                    for k in ["game", "match", "win", "score", "nfl", "nba", "sport"]
+                    for k in [
+                        "game", "match", "win", "score", "nfl", "nba", "sport",
+                        "cfb", "college football", "college basketball", "college baseball",
+                        "march madness", "final four", "ncaa", "sec", "big ten",
+                    ]
                 ):
                     category = "sports"
                 elif any(

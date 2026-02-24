@@ -20,6 +20,14 @@ class AuthenticatedPolymarketAPI:
         self.session.headers.update(
             {"Content-Type": "application/json", "Accept": "application/json"}
         )
+        self._public_api = None
+
+    def _get_public_api(self):
+        """Lazy-init PolymarketAPI for public endpoints (events, markets, crypto)."""
+        if self._public_api is None:
+            from src.market.api import PolymarketAPI
+            self._public_api = PolymarketAPI()
+        return self._public_api
 
     def _generate_signature(self, method: str, path: str, body: str = "") -> str:
         """Generate authentication signature."""
@@ -217,9 +225,37 @@ class AuthenticatedPolymarketAPI:
             print(f"Error fetching markets: {e}")
         return []
 
-    def get_active_markets(self, limit: int = 50) -> List[Dict]:
-        """Get active markets."""
-        return self.get_markets(limit=limit, active=True)
+    def get_active_markets(self, limit: int = 500, order: str = "volume") -> List[Dict]:
+        """Get active markets. Delegates to public API for order/volume support."""
+        return self._get_public_api().get_active_markets(limit=limit, order=order)
+
+    def get_crypto_short_term_markets(self, limit: int = 100) -> List[Dict]:
+        """Get crypto 5M/15M/hourly markets. Delegates to public API."""
+        return self._get_public_api().get_crypto_short_term_markets(limit=limit)
+
+    def get_sports_markets_from_events(self, limit: int = 200) -> List[Dict]:
+        """Get sports markets via events tag. Delegates to public API."""
+        return self._get_public_api().get_sports_markets_from_events(limit=limit)
+
+    def get_events(self, limit: int = 50, active: bool = True, order: str = None, tag_id: str = None, slug_contains: str = None) -> List[Dict]:
+        """Get events. Delegates to public API."""
+        return self._get_public_api().get_events(limit=limit, active=active, order=order, tag_id=tag_id, slug_contains=slug_contains)
+
+    def get_event_markets(self, event_id: str) -> List[Dict]:
+        """Get markets for an event. Delegates to public API."""
+        return self._get_public_api().get_event_markets(event_id)
+
+    def get_market_trades(self, market_id: str, limit: int = 100) -> List[Dict]:
+        """Get trades for a market. Delegates to public API."""
+        return self._get_public_api().get_market_trades(market_id, limit=limit)
+
+    def get_market_details(self, market_id: str) -> Optional[Dict]:
+        """Get full market details. Delegates to public API."""
+        return self._get_public_api().get_market_details(market_id)
+
+    def get_market_spread(self, token_id: str) -> Optional[float]:
+        """Get market spread. Delegates to public API."""
+        return self._get_public_api().get_market_spread(token_id)
 
     def get_wallet_positions(self, address: str) -> List[Dict]:
         """Get current positions for a wallet."""

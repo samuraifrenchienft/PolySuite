@@ -18,28 +18,36 @@ class InsiderDetector:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "Mozilla/5.0"})
 
-    def check_wallet_freshness(self, address: str) -> Dict:
-        """Check if wallet is new (created recently)."""
+    def check_wallet_freshness(self, address: str, closed_count: int = None) -> Dict:
+        """Check if wallet is new (created recently). Pass closed_count to avoid extra API call."""
+        if closed_count is not None:
+            return {
+                "is_fresh": closed_count < 10,
+                "total_trades": closed_count,
+                "risk": "HIGH"
+                if closed_count < 5
+                else "MEDIUM"
+                if closed_count < 10
+                else "LOW",
+            }
         try:
-            # Get closed positions to estimate wallet age
             resp = self.session.get(
                 "https://data-api.polymarket.com/closed-positions",
-                params={"user": address, "limit": 1},
+                params={"user": address, "limit": 50},
                 timeout=10,
             )
             if resp.status_code == 200:
                 data = resp.json()
-                if data and len(data) > 0:
-                    # If only 1-5 total trades, likely new
-                    return {
-                        "is_fresh": len(data) < 10,
-                        "total_trades": len(data),
-                        "risk": "HIGH"
-                        if len(data) < 5
-                        else "MEDIUM"
-                        if len(data) < 10
-                        else "LOW",
-                    }
+                count = len(data) if data else 0
+                return {
+                    "is_fresh": count < 10,
+                    "total_trades": count,
+                    "risk": "HIGH"
+                    if count < 5
+                    else "MEDIUM"
+                    if count < 10
+                    else "LOW",
+                }
         except Exception:
             pass
         return {"is_fresh": None, "total_trades": 0, "risk": "UNKNOWN"}
@@ -147,8 +155,21 @@ class InsiderDetector:
 
         return alerts
 
+    def _categorize_question(self, question: str) -> str:
+        """Simple category from question text."""
+        q = (question or "").lower()
+        if any(k in q for k in ["bitcoin", "btc", "ethereum", "eth", "solana", "crypto"]):
+            return "crypto"
+        if any(k in q for k in ["nfl", "nba", "mlb", "nhl", "cfb", "college", "game", "match"]):
+            return "sports"
+        if any(k in q for k in ["president", "election", "trump", "biden", "congress"]):
+            return "politics"
+        if any(k in q for k in ["fed", "rate", "inflation", "gdp"]):
+            return "economy"
+        return "other"
+
     def scan_wallet_for_anomalies(self, address: str) -> Dict:
-        """Scan a wallet for suspicious activity patterns."""
+        """Scan a wallet for suspicious activity patterns. Includes recent trades and categories."""
         try:
             # Get current positions
             resp = self.session.get(
@@ -158,16 +179,46 @@ class InsiderDetector:
             )
             positions = resp.json() if resp.status_code == 200 else []
 
-            # Get closed positions for trade history
+            # Get closed positions for trade history (recent trades)
             resp2 = self.session.get(
                 "https://data-api.polymarket.com/closed-positions",
-                params={"user": address, "limit": 20},
+                params={"user": address, "limit": 50},
                 timeout=10,
             )
             closed = resp2.json() if resp2.status_code == 200 else []
 
-            # Analyze
-            freshness = self.check_wallet_freshness(address)
+            # Get activity/trades for recent trades list
+            resp3 = self.session.get(
+                "https://data-api.polymarket.com/activity",
+                params={"user": address, "limit": 20},
+                timeout=10,
+            )
+            activity = resp3.json() if resp3.status_code == 200 else []
+
+            # Build recent trades (from activity or closed positions)
+            recent_trades = []
+            source = activity if activity else closed[:5]
+            for a in source[:5]:
+                title = (a.get("title") or a.get("question") or a.get("marketQuestion") or "Unknown")[:50]
+                side = a.get("side") or a.get("outcome") or "?"
+                size = float(a.get("usdcSize") or a.get("size") or a.get("totalBought") or 0)
+                pnl = a.get("realizedPnl")
+                recent_trades.append({
+                    "question": title,
+                    "side": str(side).upper()[:3] if side else "?",
+                    "size": size,
+                    "pnl": pnl,
+                })
+
+            # Category breakdown from closed positions
+            categories: Dict[str, int] = {}
+            for p in closed:
+                q = p.get("question") or p.get("marketQuestion") or p.get("title") or ""
+                cat = self._categorize_question(q)
+                categories[cat] = categories.get(cat, 0) + 1
+
+            # Analyze (pass closed_count to avoid extra API call)
+            freshness = self.check_wallet_freshness(address, closed_count=len(closed))
 
             return {
                 "address": address,
@@ -175,6 +226,8 @@ class InsiderDetector:
                 "freshness": freshness,
                 "positions_count": len(positions),
                 "closed_count": len(closed),
+                "recent_trades": recent_trades,
+                "categories": categories,
                 "recommendation": "MONITOR"
                 if freshness.get("risk") == "HIGH"
                 else "OK",

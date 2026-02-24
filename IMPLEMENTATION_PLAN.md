@@ -25,15 +25,16 @@
 - [x] Config: `priority_categories`, `crypto_short_term_interval`, `channel_overrides`
 - [ ] Test whale, convergence, expiring alerts
 - [ ] Test `/ca`, `/scan`, `/add` commands
-- [ ] Rate limit handling + retry logic
+- [x] Rate limit handling + retry logic (Polymarket API: 429/502/503/504 retry with backoff)
 
 ### Phase 2: Scanner Upgrades
-- [ ] Meme scanner (`/ca`) – Honeypot API, top holders
-- [ ] Wallet scanner (`/scan`) – Recent trades, categories
+- [x] Meme scanner (`/ca`) – Honeypot API (top holders in honeypot display)
+- [x] Wallet scanner (`/scan`) – Recent trades, categories
 
 ### Phase 3: Bankr Discord
-- [ ] `defer()` + `edit_original_response()` for long Bankr polls
-- [ ] Poll 2s, max 60 attempts; surface 403/429 errors
+- [x] `defer()` + `edit_original_response()` for long Bankr polls
+- [x] Poll 2s, max 60 attempts; surface 403/429 errors
+- [x] `/bankr` and `/markets` slash commands
 
 ### Phase 4: Future (FUTURE_PLANS.md)
 - Copy trading (py-clob-client, WebSocket)

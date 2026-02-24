@@ -259,7 +259,7 @@ class EventAlerter:
             "blue jackets",
             "blues",
             "predators",
-            " Senators",
+            "senators",
             "capitals",
             "golden knights",
             "islanders",
@@ -361,6 +361,7 @@ class EventAlerter:
             "us open",
             "british open",
             "pga championship",
+            "liv golf",
             " LIV",
             "ryder cup",
             "seppi",
@@ -390,6 +391,242 @@ class EventAlerter:
             "england",
             "pakistan",
             "south africa",
+            # College Football (CFB)
+            "cfb",
+            "college football",
+            "ncaa football",
+            "sec",
+            "big ten",
+            "big 12",
+            "acc",
+            "pac-12",
+            "pac12",
+            "alabama",
+            "crimson tide",
+            "georgia",
+            "bulldogs",
+            "ohio state",
+            "buckeyes",
+            "michigan",
+            "wolverines",
+            "texas",
+            "longhorns",
+            "oregon",
+            "ducks",
+            "lsu",
+            "tigers",
+            "clemson",
+            "tigers",
+            "notre dame",
+            "fighting irish",
+            "penn state",
+            "nittany lions",
+            "tennessee",
+            "volunteers",
+            "florida",
+            "gators",
+            "auburn",
+            "war eagles",
+            "oklahoma",
+            "sooners",
+            "usc",
+            "trojans",
+            "ucla",
+            "bruins",
+            "florida state",
+            "seminoles",
+            "miami",
+            "hurricanes",
+            "texas a&m",
+            "aggies",
+            "ole miss",
+            "rebels",
+            "arkansas",
+            "razorbacks",
+            "kentucky",
+            "wildcats",
+            "south carolina",
+            "gamecocks",
+            "missouri",
+            "tigers",
+            "iowa",
+            "hawkeyes",
+            "wisconsin",
+            "badgers",
+            "nebraska",
+            "cornhuskers",
+            "michigan state",
+            "spartans",
+            "washington",
+            "huskies",
+            "utah",
+            "utes",
+            "colorado",
+            "buffaloes",
+            "baylor",
+            "bears",
+            "oklahoma state",
+            "cowboys",
+            "kansas state",
+            "wildcats",
+            "tcu",
+            "horned frogs",
+            "west virginia",
+            "mountaineers",
+            "iowa state",
+            "cyclones",
+            "north carolina",
+            "tar heels",
+            "virginia tech",
+            "hokies",
+            "louisville",
+            "cardinals",
+            "nc state",
+            "wolfpack",
+            "syracuse",
+            "orange",
+            "pitt",
+            "panthers",
+            "boston college",
+            "eagles",
+            "wake forest",
+            "demon deacons",
+            "duke",
+            "blue devils",
+            "georgia tech",
+            "yellow jackets",
+            "virginia",
+            "cavaliers",
+            "miami hurricanes",
+            "bowl game",
+            "college playoff",
+            "cfp",
+            # College Basketball
+            "college basketball",
+            "ncaa basketball",
+            "march madness",
+            "final four",
+            "ncaa tournament",
+            "duke blue devils",
+            "kansas",
+            "jayhawks",
+            "kentucky wildcats",
+            "north carolina tar heels",
+            "ucla bruins",
+            "villanova",
+            "wildcats",
+            "gonzaga",
+            "bulldogs",
+            "arizona",
+            "wildcats",
+            "houston",
+            "cougars",
+            "purdue",
+            "boilermakers",
+            "uconn",
+            "huskies",
+            "creighton",
+            "bluejays",
+            "marquette",
+            "golden eagles",
+            "tennessee volunteers",
+            "alabama crimson tide",
+            "arkansas razorbacks",
+            "baylor bears",
+            "iowa hawkeyes",
+            "illinois",
+            "fighting illini",
+            "michigan state spartans",
+            "wisconsin badgers",
+            "indiana",
+            "hoosiers",
+            "maryland",
+            "terrapins",
+            "ohio state buckeyes",
+            "michigan wolverines",
+            "penn state nittany lions",
+            "syracuse orange",
+            "louisville cardinals",
+            "virginia cavaliers",
+            "florida state seminoles",
+            "miami hurricanes",
+            "nc state wolfpack",
+            "wake forest demon deacons",
+            "georgia tech yellow jackets",
+            "clemson tigers",
+            "virginia tech hokies",
+            "texas longhorns",
+            "kansas jayhawks",
+            "texas tech",
+            "red raiders",
+            "oklahoma sooners",
+            "oklahoma state cowboys",
+            "west virginia mountaineers",
+            "iowa state cyclones",
+            "kansas state wildcats",
+            "tcu horned frogs",
+            "baylor bears",
+            "san diego state",
+            "aztecs",
+            "st. john's",
+            "red storm",
+            "georgetown",
+            "hoyas",
+            "xavier",
+            "musketeers",
+            "butler",
+            "bulldogs",
+            "providence",
+            "friars",
+            "seton hall",
+            "pirates",
+            "depaul",
+            "blue demons",
+            # College Baseball
+            "college baseball",
+            "ncaa baseball",
+            "college world series",
+            "cws",
+            "omaha",
+            "sec baseball",
+            "acc baseball",
+            "big 12 baseball",
+            "tennessee volunteers",
+            "arkansas razorbacks",
+            "lsu tigers",
+            "texas a&m aggies",
+            "vanderbilt",
+            "commodores",
+            "florida gators",
+            "ole miss rebels",
+            "auburn tigers",
+            "alabama crimson tide",
+            "georgia bulldogs",
+            "south carolina gamecocks",
+            "kentucky wildcats",
+            "mississippi state",
+            "bulldogs",
+            "clemson tigers",
+            "florida state seminoles",
+            "north carolina tar heels",
+            "virginia cavaliers",
+            "duke blue devils",
+            "nc state wolfpack",
+            "miami hurricanes",
+            "louisville cardinals",
+            "wake forest demon deacons",
+            "georgia tech yellow jackets",
+            "boston college eagles",
+            "oregon state",
+            "beavers",
+            "stanford",
+            "cardinal",
+            "ucla bruins",
+            "arizona wildcats",
+            "oregon ducks",
+            "washington huskies",
+            "super regional",
+            "regionals",
             # Other Sports
             "f1",
             "formula 1",
@@ -549,6 +786,19 @@ class EventAlerter:
             "sanction",
             "nuclear",
             "weapon",
+            # Cabinet / Legislative
+            "cabinet",
+            "veto",
+            "executive order",
+            "nomination",
+            "confirmation",
+            "mcconnell",
+            "schumer",
+            "pelosi",
+            "mccarthy",
+            "jeffries",
+            "johnson",
+            "speaker",
             # Kalshi/Polymarket overlap
             "cfb",
             "kalshi",
@@ -840,14 +1090,58 @@ class EventAlerter:
         new_markets.sort(key=lambda x: x.get("hours_old", 999))
         return new_markets
 
-    def check_crypto_markets(self, limit: int = 200) -> List[Dict]:
-        """Get only crypto-related markets."""
+    def fetch_markets_for_categories(
+        self, limit: int = 500
+    ) -> Dict[str, List[Dict]]:
+        """Fetch markets once and return crypto, sports, politics + all_market_ids for cleanup.
+        Sports: merge tag-based fetch (Polymarket /sports) with keyword filter for better coverage."""
         markets = self.api.get_active_markets(limit=limit) or []
-        return self.filter_by_category(markets, ["crypto"])
+        crypto = self.filter_by_category(markets, ["crypto"])
+        politics = self.filter_by_category(markets, ["politics"])
+        sports_from_active = self.filter_by_category(markets, ["sports"])
+
+        # Sports: also fetch via events API (tag 1 = sports) - often has more sports than top 500 by volume
+        sports = list(sports_from_active)
+        seen_sports = {m.get("id") or m.get("conditionId") for m in sports if m}
+        if hasattr(self.api, "get_sports_markets_from_events"):
+            try:
+                tag_sports = self.api.get_sports_markets_from_events(limit=200) or []
+                for m in tag_sports:
+                    mid = m.get("id") or m.get("conditionId")
+                    if mid and mid not in seen_sports:
+                        seen_sports.add(mid)
+                        sports.append(m)
+            except Exception:
+                pass
+
+        all_ids = {m.get("id") or m.get("conditionId") for m in markets if m}
+        for m in sports:
+            mid = m.get("id") or m.get("conditionId")
+            if mid:
+                all_ids.add(mid)
+
+        return {
+            "crypto": crypto,
+            "sports": sports,
+            "politics": politics,
+            "all_market_ids": all_ids,
+        }
+
+    def check_crypto_markets(
+        self, limit: int = 200, markets: List[Dict] = None
+    ) -> List[Dict]:
+        """Get only crypto-related markets. Pass pre-fetched markets to avoid extra API call."""
+        if markets is not None:
+            return self.filter_by_category(markets, ["crypto"])
+        m = self.api.get_active_markets(limit=limit) or []
+        return self.filter_by_category(m, ["crypto"])
 
     def check_crypto_short_term_markets(self, limit: int = 100) -> List[Dict]:
         """Fetch crypto 5M/15M/hourly markets ordered by volume, enriched for alerts."""
-        markets = self.api.get_crypto_short_term_markets(limit=limit) or []
+        try:
+            markets = self.api.get_crypto_short_term_markets(limit=limit) or []
+        except Exception:
+            markets = []
         enriched = []
         for m in markets:
             raw_prices = m.get("outcomePrices")
@@ -867,15 +1161,28 @@ class EventAlerter:
             enriched.append(m)
         return enriched
 
-    def check_sports_markets(self, limit: int = 200) -> List[Dict]:
-        """Get only sports-related markets."""
-        markets = self.api.get_active_markets(limit=limit) or []
-        return self.filter_by_category(markets, ["sports"])
+    def check_sports_markets(
+        self, limit: int = 400, markets: List[Dict] = None
+    ) -> List[Dict]:
+        """Get sports markets. Pass pre-fetched markets to avoid extra API call."""
+        if markets is not None:
+            return self.filter_by_category(markets, ["sports"])
+        tag_markets = []
+        if hasattr(self.api, "get_sports_markets_from_events"):
+            tag_markets = self.api.get_sports_markets_from_events(limit=limit) or []
+        if tag_markets:
+            return self.filter_by_category(tag_markets, ["sports"])
+        m = self.api.get_active_markets(limit=limit) or []
+        return self.filter_by_category(m, ["sports"])
 
-    def check_politics_markets(self, limit: int = 200) -> List[Dict]:
-        """Get only politics-related markets."""
-        markets = self.api.get_active_markets(limit=limit) or []
-        return self.filter_by_category(markets, ["politics"])
+    def check_politics_markets(
+        self, limit: int = 400, markets: List[Dict] = None
+    ) -> List[Dict]:
+        """Get only politics-related markets. Pass pre-fetched markets to avoid extra API call."""
+        if markets is not None:
+            return self.filter_by_category(markets, ["politics"])
+        m = self.api.get_active_markets(limit=limit) or []
+        return self.filter_by_category(m, ["politics"])
 
     def check_volume_spikes(self, limit: int = 30) -> List[Dict]:
         """Find markets with unusual volume."""
