@@ -7,7 +7,7 @@ from src.wallet import Wallet
 from src.wallet.storage import WalletStorage
 from src.utils import is_valid_address
 from src.agent import Agent
-from src.config import Config, get_bankr_client
+from src.config import Config
 import asyncio
 import os
 import requests
@@ -34,82 +34,22 @@ class DiscordBot(commands.Bot):
         self.storage = storage
         self.config = config
         self.api_factory = api_factory
-        self.bankr = get_bankr_client(config.bankr_api_key if config else "")
         self.agent = Agent(config=config, storage=storage, api_factory=api_factory)
+
+        # Groq AI for chat (primary)
+        self.groq_key = os.getenv("Groq_api_key") or os.getenv("GROQ_API_KEY")
+        # OpenRouter (backup)
+        self.openrouter_key = os.getenv("Openrouter_api_key") or os.getenv(
+            "OPENROUTER_API_KEY"
+        )
 
         # === SLASH COMMANDS ===
         @self.tree.command(
-            name="bankr",
-            description="Ask Bankr AI (crypto, markets, balances). Max 100 chars; use !bankr for longer.",
-        )
-        async def bankr_slash(interaction: discord.Interaction, question: str):
-            await self._handle_ai(interaction, question.strip(), "bankr")
-
-        @self.tree.command(
             name="ask",
-            description="Ask AI anything. Max 100 chars; use !ask for longer prompts.",
+            description="Ask AI about markets, crypto, or anything",
         )
         async def ask_slash(interaction: discord.Interaction, question: str):
-            await self._handle_ai(interaction, question.strip(), "ask")
-
-        @self.tree.command(
-            name="deploy", description="Deploy a token on Base via Bankr"
-        )
-        async def deploy_slash(
-            interaction: discord.Interaction,
-            name: str,
-            symbol: str = None,
-            description: str = None,
-            fee_recipient: str = None,
-            simulate: bool = False,
-        ):
-            """Deploy a token on Base blockchain via Bankr."""
-            if not self.bankr or not self.bankr.is_configured():
-                await interaction.response.send_message(
-                    "Bankr not configured. Add BANKR_API_KEY to .env", ephemeral=True
-                )
-                return
-
-            await interaction.response.send_message(
-                f"Deploying token '{name}' on Base...", ephemeral=True
-            )
-
-            try:
-                result = self.bankr.deploy_token(
-                    token_name=name,
-                    token_symbol=symbol,
-                    description=description,
-                    fee_recipient=fee_recipient,
-                    simulate_only=simulate,
-                )
-
-                if result and not result.get("error"):
-                    token_addr = result.get("tokenAddress", "Unknown")
-                    pool_id = result.get("poolId", "Unknown")
-                    chain = result.get("chain", "base")
-
-                    msg = f"✅ **Token Deployed!**\n\n"
-                    msg += f"**Name:** {name}\n"
-                    if symbol:
-                        msg += f"**Symbol:** {symbol}\n"
-                    msg += f"**Chain:** {chain}\n"
-                    msg += f"**Token:** `{token_addr}`\n"
-                    msg += f"**Pool:** `{pool_id}`"
-
-                    if result.get("simulated"):
-                        msg += "\n\n_(This was a simulation)_"
-
-                    await interaction.followup.send(msg)
-                else:
-                    err = (
-                        result.get("error", "Unknown error")
-                        if result
-                        else "Failed to deploy"
-                    )
-                    await interaction.followup.send(f"❌ Deploy failed: {err}")
-
-            except Exception as e:
-                await interaction.followup.send(f"❌ Error: {str(e)[:200]}")
+            await self._handle_ai(interaction, question.strip())
 
         @self.tree.command(name="status", description="Check wallets")
         async def status_slash(interaction: discord.Interaction):
@@ -149,7 +89,9 @@ class DiscordBot(commands.Bot):
                 )
                 return
 
-            self.storage.add_wallet(Wallet(address=address, nickname=address[:12] + "..."))
+            self.storage.add_wallet(
+                Wallet(address=address, nickname=address[:12] + "...")
+            )
             await interaction.response.send_message(
                 f"✅ Added `{address[:12]}...` to tracking!\nNow tracking {len(wallets) + 1}/{MAX_WALLETS} wallets.",
                 ephemeral=True,
@@ -336,15 +278,15 @@ class DiscordBot(commands.Bot):
                 await interaction.followup.send(f"Error: {str(e)[:200]}")
 
         # === MESSAGE COMMANDS (fallback) ===
-        @self.command(name="bankr")
-        async def bankr_msg(ctx, *, question: str):
-            await ctx.message.reply("Thinking...")
-            await self._handle_ai_message(ctx, question, "bankr")
-
         @self.command(name="ask")
         async def ask_msg(ctx, *, question: str):
-            await ctx.message.reply("Thinking...")
-            await self._handle_ai_message(ctx, question, "ask")
+            await ctx.message.reply("🤔 Thinking...")
+            await self._handle_ai_message(ctx, question)
+
+        @self.command(name="ai")
+        async def ai_msg(ctx, *, question: str):
+            await ctx.message.reply("🤔 Thinking...")
+            await self._handle_ai_message(ctx, question)
 
         @self.command(name="status")
         async def status_msg(ctx):
@@ -373,90 +315,98 @@ class DiscordBot(commands.Bot):
                     f"Limit reached ({MAX_WALLETS} wallets). Remove one first."
                 )
                 return
-            self.storage.add_wallet(Wallet(address=address, nickname=address[:12] + "..."))
+            self.storage.add_wallet(
+                Wallet(address=address, nickname=address[:12] + "...")
+            )
             await ctx.message.reply(f"Added: {address[:12]}...")
 
-    async def _handle_ai(self, interaction, question: str, command_name: str):
-        """Handle AI query via slash command."""
+    async def _handle_ai(self, interaction, question: str):
+        """Handle AI query via slash command - uses Groq."""
         try:
-            if not self.bankr or not self.bankr.is_configured():
-                await interaction.response.send_message(
-                    "Bankr not configured. Add BANKR_API_KEY to .env", ephemeral=True
-                )
-                return
-
-            print(f"Bankr query: {question[:50]}...")
-
-            # MUST respond within 3 seconds - defer extends to 15 min
             await interaction.response.defer(ephemeral=True)
 
-            job_id, error_msg = self.bankr.send_prompt(question)
-            print(f"Job ID: {job_id}")
+            # Use Groq AI
+            response = self._call_groq(question)
 
-            if not job_id:
-                msg = error_msg or "❌ Failed to submit. Try again."
-                await interaction.edit_original_response(content=msg)
-                return
+            if response:
+                await interaction.edit_original_response(
+                    content=f"🤖 {response[:2000]}"
+                )
+            else:
+                await interaction.edit_original_response(
+                    content="AI temporarily unavailable. Try again later."
+                )
 
-            # Poll every 2s, max 60 attempts (~2 min) per Bankr recommendation
-            for i in range(60):
-                await asyncio.sleep(2)
-                status = self.bankr.get_job_status(job_id)
-                print(f"Poll {i + 1}: {status.get('status') if status else 'None'}")
-
-                if status and status.get("status") == "completed":
-                    result = status.get("result", status.get("response", ""))
-                    if result:
-                        await interaction.edit_original_response(content=f"✅ {result[:2000]}")
-                    else:
-                        await interaction.edit_original_response(content="Got empty response.")
-                    return
-                elif status and status.get("status") == "cancelled":
-                    await interaction.edit_original_response(content="Job was cancelled.")
-                    return
-                elif status and status.get("status") == "failed":
-                    err = status.get("error", "Unknown error")
-                    await interaction.edit_original_response(content=f"❌ Query failed: {err[:200]}")
-                    return
-
-            await interaction.edit_original_response(content="⏰ Timeout. Try simpler question.")
         except Exception as e:
-            print(f"Bankr error: {e}")
+            print(f"AI error: {e}")
+            await interaction.edit_original_response(content=f"Error: {str(e)[:200]}")
+
+    def _call_groq(self, message: str) -> str:
+        """Call Groq AI."""
+        # System prompt
+        system_prompt = """You are Prediction Suite AI Assistant. Help users understand prediction markets (Polymarket, Kalshi, Jupiter). Be concise, friendly, no financial advice."""
+
+        # Try Groq
+        if self.groq_key:
             try:
-                await interaction.edit_original_response(content=f"Error: {str(e)[:200]}")
-            except Exception:
-                pass
+                resp = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.groq_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "llama-3.3-70b-versatile",
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": message},
+                        ],
+                        "temperature": 0.7,
+                        "max_tokens": 500,
+                    },
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    return resp.json()["choices"][0]["message"]["content"]
+            except Exception as e:
+                print(f"[Discord-Groq] Error: {e}")
+
+        # Fallback to OpenRouter
+        if self.openrouter_key:
+            try:
+                resp = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.openrouter_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "qwen/qwen3-vl-30b-a3b-thinking",
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": message},
+                        ],
+                    },
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    return resp.json()["choices"][0]["message"]["content"]
+            except Exception as e:
+                print(f"[Discord-OpenRouter] Error: {e}")
+
+        return None
 
     async def _handle_ai_message(self, ctx, question: str, command_name: str):
-        """Handle AI query via message command."""
+        """Handle AI query via message command - uses Groq now."""
         try:
-            if not self.bankr or not self.bankr.is_configured():
-                await ctx.message.reply("Bankr not configured. Add BANKR_API_KEY to .env")
-                return
-
-            job_id, err = self.bankr.send_prompt(question)
-            if not job_id:
-                await ctx.message.reply(err or "Failed to submit. Check API.")
-                return
-
-            for i in range(45):
-                await asyncio.sleep(1.5)
-                status = self.bankr.get_job_status(job_id)
-                if status and status.get("status") == "completed":
-                    result = status.get("result", status.get("response", ""))
-                    await ctx.message.reply(result[:2000] if result else "No result")
-                    return
-                elif status and status.get("status") == "failed":
-                    err = status.get("error", "Unknown")
-                    await ctx.message.reply(f"Query failed: {err[:100]}")
-                    return
-                elif status and status.get("status") == "cancelled":
-                    await ctx.message.reply("Job was cancelled.")
-                    return
-
-            await ctx.message.reply("Timeout - try simpler question.")
+            response = self._call_groq(question)
+            if response:
+                await ctx.message.reply(f"🤖 {response[:2000]}")
+            else:
+                await ctx.message.reply("AI unavailable. Try again later.")
         except Exception as e:
-            await ctx.message.reply(f"Error: {str(e)[:200]}")
+            print(f"AI error: {e}")
+            await ctx.message.reply(f"Error: {str(e)[:100]}")
 
     async def setup_hook(self):
         """Sync commands on startup."""
@@ -490,27 +440,17 @@ class DiscordBot(commands.Bot):
             question = question.replace("@predictionsuite", "").strip()
 
             if not question:
-                await message.reply(
-                    "Hi! Use /bankr or ask me anything about crypto/markets."
-                )
+                await message.reply("Hi! Use /ask or /ai to chat with me.")
                 return
 
-            await message.reply("Thinking...")
+            await message.reply("🤔 Thinking...")
 
-            if not self.bankr or not self.bankr.is_configured():
-                await message.reply("Bankr not configured. Add BANKR_API_KEY to .env")
-                return
-
-            job_id, _ = self.bankr.send_prompt(question)
-            if job_id:
-                # Poll with better timeout and backoff
-                result = await self._wait_for_bankr_job(job_id, timeout_seconds=60)
-                if result:
-                    await message.reply(result[:2000] if len(result) > 2000 else result)
-                else:
-                    await message.reply("Bankr timed out. Try again later.")
+            # Use Groq AI
+            response = self._call_groq(question)
+            if response:
+                await message.reply(f"🤖 {response[:2000]}")
             else:
-                await message.reply("Failed to submit to Bankr. Check API key.")
+                await message.reply("AI unavailable. Try again later.")
             return
 
         # Token Scanner: detect addresses in message
@@ -533,35 +473,6 @@ class DiscordBot(commands.Bot):
                 await self._scan_market(message, cond)
 
         await self.process_commands(message)
-
-    async def _wait_for_bankr_job(self, job_id: str, timeout_seconds: int = 60) -> str:
-        """Wait for Bankr job with exponential backoff."""
-        import asyncio
-        import time
-
-        start_time = time.monotonic()
-        poll_interval = 1.0  # Start at 1 second
-
-        while True:
-            await asyncio.sleep(poll_interval)
-
-            elapsed = time.monotonic() - start_time
-            if elapsed > timeout_seconds:
-                return None
-
-            status = self.bankr.get_job_status(job_id)
-            if not status:
-                continue
-
-            if status.get("status") == "completed":
-                return status.get("response") or status.get("result", "No result")
-            elif status.get("status") == "failed":
-                return f"Job failed: {status.get('error', 'Unknown error')}"
-            elif status.get("status") == "cancelled":
-                return "Job was cancelled."
-
-            # Exponential backoff, max 5 seconds
-            poll_interval = min(poll_interval * 1.5, 5.0)
 
     async def _scan_address(self, message, address: str):
         """Scan a wallet address - Lute-style detailed view."""

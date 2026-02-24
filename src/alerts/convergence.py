@@ -216,6 +216,9 @@ class ConvergenceDetector:
                     w["address"] for w in market_convergences[market_id]["wallets"]
                 ]
                 if wallet.address not in wallet_ids:
+                    side = pos.get("outcome") or pos.get("side") or "?"
+                    entry_price = pos.get("avgPrice") or pos.get("entry_price")
+                    size = float(pos.get("size", 0) or 0)
                     entry_info = {
                         "address": wallet.address,
                         "nickname": wallet.nickname,
@@ -223,6 +226,9 @@ class ConvergenceDetector:
                         "total_trades": wallet.total_trades,
                         "wins": wallet.wins,
                         "is_early_entry": False,
+                        "side": side,
+                        "entry_price": entry_price,
+                        "size": size,
                     }
 
                     if self._is_early_entry(wallet.address, market_id):

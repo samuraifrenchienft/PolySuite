@@ -219,7 +219,6 @@ client.create_order(OrderArgs(
 #### Referral System
 
 - Unique 8-char code per user
-- Share: `predictionsuite.com/r/{code}`
 - Track: who referred whom
 - Tiers:
   - Level 1: Referrer gets 25% of points from referred

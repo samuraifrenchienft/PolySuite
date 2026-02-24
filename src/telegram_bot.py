@@ -1,13 +1,14 @@
-"""Telegram bot for interacting with PolySuite."""
+"""Telegram bot for Prediction Suite."""
 
 import telebot
+import os
+import requests
 from src.wallet import Wallet
 from src.wallet.storage import WalletStorage
 from src.utils import is_valid_address
 from src.agent import Agent
-from src.config import Config, get_bankr_client
+from src.config import Config
 from src.market.api import APIClientFactory
-from src.market.bankr import BankrClient
 
 
 import time
@@ -27,12 +28,15 @@ class TelegramBot:
         self.bot = telebot.TeleBot(token)
         self.storage = storage
         self.config = config
-        # Use shared Bankr client
-        self.bankr = get_bankr_client(config.bankr_api_key if config else "")
         self.agent = Agent(config=config, storage=storage, api_factory=api_factory)
         self.user_timestamps = {}
-        self.user_bankr_keys = {}  # user_id -> Bankr API key
-        self.rate_limit_seconds = 5  # 5 seconds between commands
+
+        # Groq AI (primary)
+        self.groq_key = os.getenv("Groq_api_key") or os.getenv("GROQ_API_KEY")
+        # OpenRouter (backup)
+        self.openrouter_key = os.getenv("Openrouter_api_key") or os.getenv(
+            "OPENROUTER_API_KEY"
+        )
 
         def rate_limited(handler):
             def wrapper(message):
@@ -72,137 +76,33 @@ class TelegramBot:
                 if not is_valid_address(address):
                     self.bot.reply_to(message, "Invalid wallet address format.")
                     return
-                self.storage.add_wallet(Wallet(address=address, nickname=address[:12] + "..."))
+                self.storage.add_wallet(
+                    Wallet(address=address, nickname=address[:12] + "...")
+                )
                 self.bot.reply_to(message, f"Added wallet: {address}")
             except IndexError:
                 self.bot.reply_to(message, "Usage: /add <address>")
 
-        @self.bot.message_handler(commands=["connectbankr"])
-        @rate_limited
-        def connect_bankr(message):
-            """Connect user's own Bankr API key."""
-            try:
-                api_key = message.text.split()[1].strip()
-                if not api_key.startswith("bk_"):
-                    self.bot.reply_to(
-                        message, "Invalid Bankr API key format. Should start with 'bk_'"
-                    )
-                    return
-
-                # Validate the key works
-                test_client = BankrClient(api_key=api_key)
-                if not test_client.is_configured():
-                    self.bot.reply_to(message, "Invalid API key.")
-                    return
-
-                # Store the user's key
-                user_id = message.from_user.id
-                self.user_bankr_keys[user_id] = api_key
-
-                self.bot.reply_to(
-                    message,
-                    "Bankr connected! Your API key is now linked to your account. Use /ask for prices, balances, etc.",
-                )
-            except IndexError:
-                self.bot.reply_to(
-                    message,
-                    "Usage: /connectbankr <your_bankr_api_key>\n\nGet your key at: https://bankr.bot/api",
-                )
-
-        @self.bot.message_handler(commands=["bankrstatus"])
-        @rate_limited
-        def bankr_status(message):
-            """Check Bankr connection status."""
-            user_id = message.from_user.id
-            if user_id in self.user_bankr_keys:
-                self.bot.reply_to(
-                    message, "Bankr: Connected ✅\nYour own API key is in use."
-                )
-            elif self.bankr and self.bankr.is_configured():
-                self.bot.reply_to(
-                    message,
-                    "Bankr: Using default key\nConnect your own with /connectbankr <key>",
-                )
-            else:
-                self.bot.reply_to(
-                    message, "Bankr: Not connected\nConnect with /connectbankr <key>"
-                )
-
-        @self.bot.message_handler(commands=["ai", "bankr"])
-        @rate_limited
-        def ai_bankr(message):
-            """AI/Bankr command - ask anything via Bankr."""
+        @self.bot.message_handler(commands=["ai", "ask"])
+        def ask_ai(message):
+            """AI command - no rate limit, Groq handles long questions."""
             try:
                 user_input = message.text
-                # Remove both /ai and /bankr prefixes
-                for prefix in ["/ai", "/bankr"]:
+                for prefix in ["/ai", "/ask"]:
                     user_input = user_input.replace(prefix, "").strip()
 
                 if not user_input:
-                    self.bot.reply_to(
-                        message,
-                        "Usage: /ai <your question>\nExample: /ai what's the price of SOL?",
-                    )
+                    self.bot.reply_to(message, "Usage: /ai <your question>")
                     return
 
-                self.bot.reply_to(message, "Thinking...")
+                self.bot.reply_to(message, "🤔 Thinking...")
 
-                # Check if user has their own Bankr key
-                user_id = message.from_user.id
-                if user_id in self.user_bankr_keys:
-                    from src.agent import Agent
+                # Use Groq AI
+                response = self._call_ai(user_input)
+                self.bot.reply_to(message, f"🤖 {response[:2000]}")
 
-                    user_agent = Agent(
-                        config=self.agent.config,
-                        storage=self.agent.storage,
-                        api_factory=self.agent.api_factory,
-                    )
-                    user_agent.bankr = BankrClient(
-                        api_key=self.agent.config.bankr_api_key
-                        if self.agent.config
-                        else "",
-                        user_api_key=self.user_bankr_keys[user_id],
-                    )
-                    response = user_agent.chat(user_input)
-                else:
-                    response = self.agent.chat(user_input)
-
-                self.bot.reply_to(message, response)
             except Exception as e:
                 self.bot.reply_to(message, f"Error: {str(e)[:200]}")
-
-        @self.bot.message_handler(commands=["ask"])
-        @rate_limited
-        def ask(message):
-            user_input = message.text.replace("/ask", "").strip()
-            if not user_input:
-                self.bot.reply_to(message, "Usage: /ask <your question>")
-                return
-
-            self.bot.reply_to(message, "Thinking...")
-
-            # Check if user has their own Bankr key
-            user_id = message.from_user.id
-            if user_id in self.user_bankr_keys:
-                # Use user's own Bankr key
-                from src.agent import Agent
-
-                user_agent = Agent(
-                    config=self.agent.config,
-                    storage=self.agent.storage,
-                    api_factory=self.agent.api_factory,
-                )
-                user_agent.bankr = BankrClient(
-                    api_key=self.agent.config.bankr_api_key
-                    if self.agent.config
-                    else "",
-                    user_api_key=self.user_bankr_keys[user_id],
-                )
-                response = user_agent.chat(user_input)
-            else:
-                response = self.agent.chat(user_input)
-
-            self.bot.reply_to(message, response)
 
     def run(self):
         """Run the bot."""

@@ -8,7 +8,26 @@
 - Meme coin scanner (`/ca`) - Lute-style
 - Insider detection (`/scan`)
 - Discord + Telegram alerts
-- Bankr AI integration
+- Groq AI chat (replaced Bankr)
+
+---
+
+## Future: Bankr Integration
+
+### Why Bankr Later
+Bankr offers real trading execution on Polymarket. Currently we use Groq for AI chat which is free/unlimited.
+
+### Planned Integration
+- Add optional `/trade` command for users with Bankr accounts
+- Separate from AI chat - users can use both
+- No conflict with current Groq setup
+- Streamlined: users connect their Bankr key only when they want to trade
+- Keep Groq as default for all AI queries
+
+### Implementation
+- Add `/connect` command to link Bankr API key
+- Add `/trade` command for execution (optional, opt-in)
+- Keep `/ask` and `/ai` using Groq
 
 ---
 

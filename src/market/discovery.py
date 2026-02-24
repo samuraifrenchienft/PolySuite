@@ -159,7 +159,7 @@ class MarketDiscovery:
         all_markets = self.api.get_active_markets(limit=limit * 2) or []
         timeframe_lower = timeframe.lower().replace(" ", "")
 
-        crypto_keywords = ["btc", "eth", "sol", "bitcoin", "ethereum", "solana"]
+        crypto_keywords = ["btc", "eth", "bitcoin", "ethereum"]
 
         matches = []
         for m in all_markets:

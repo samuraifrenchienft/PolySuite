@@ -23,6 +23,280 @@ class _BoundedDict(OrderedDict):
 class EventAlerter:
     """Detect interesting events in prediction markets."""
 
+    # Category keywords - comprehensive matching
+    CATEGORY_KEYWORDS = {
+        "crypto": [
+            "bitcoin",
+            "btc",
+            "ethereum",
+            "eth",
+            "dogecoin",
+            "xrp",
+            "cardano",
+            "chainlink",
+            "ada",
+            "crypto",
+            "ether",
+            "avalanche",
+            "matic",
+            "dot",
+            "link",
+            "uni",
+            "aave",
+            "bnb",
+            "pol",
+            "gmx",
+            "synthetix",
+            "snx",
+            "coinbase",
+            "binance",
+            "cryptocurrency",
+            "altcoin",
+            "token",
+            "defi",
+        ],
+        "sports": [
+            # NFL
+            "nfl",
+            "super bowl",
+            "nfc",
+            "afc",
+            "football",
+            "falcons",
+            "panthers",
+            "49ers",
+            "packers",
+            "eagles",
+            "cowboys",
+            "lakers",
+            "celtics",
+            "warriors",
+            "bulls",
+            "heat",
+            "nets",
+            "knicks",
+            "mavericks",
+            "grizzlies",
+            "suns",
+            "clippers",
+            "nuggets",
+            "cavaliers",
+            # NBA
+            "nba",
+            "nba finals",
+            "playoffs",
+            "draft",
+            # MLB
+            "mlb",
+            "world series",
+            "yankees",
+            "dodgers",
+            "red sox",
+            "baseball",
+            # NHL
+            "nhl",
+            "stanley cup",
+            "hockey",
+            "hurricanes",
+            "bruins",
+            "sabres",
+            "flames",
+            "ducks",
+            "blackhawks",
+            # Soccer
+            "soccer",
+            "football",
+            "premier league",
+            "la liga",
+            "champions league",
+            "world cup",
+            "fifa",
+            "euro",
+            "liverpool",
+            "leicester",
+            # UFC/Boxing
+            "ufc",
+            "boxing",
+            "mma",
+            "wrestling",
+            # Tennis
+            "tennis",
+            "wimbledon",
+            "us open",
+            "french open",
+            "australian open",
+            # Golf
+            "golf",
+            "pga",
+            "masters",
+            " LIV",
+            # Esports
+            "esports",
+            "valorant",
+            "league of legends",
+            "lol",
+            "dota",
+            "csgo",
+            "counter-strike",
+            "overwatch",
+            "cod",
+            "call of duty",
+            "fortnite",
+            "twitch",
+            "streamer",
+            # Other
+            "nascar",
+            "f1",
+            "formula",
+            "olympics",
+            "nba playoffs",
+            "tennis",
+            "golf",
+            "boxing",
+            "ufc",
+        ],
+        "tech": [
+            "ai",
+            "artificial intelligence",
+            "openai",
+            "chatgpt",
+            "gpt",
+            "llm",
+            "machine learning",
+            "nvidia",
+            "amd",
+            "intel",
+            "quantum",
+            "cybersecurity",
+            "robotics",
+            "software",
+            "startup",
+            "tech",
+        ],
+        "politics": [
+            "president",
+            "election",
+            "trump",
+            "biden",
+            "congress",
+            "senate",
+            "parliament",
+            "prime minister",
+            "governor",
+            "republican",
+            "democrat",
+            "voting",
+            "nominee",
+            "political",
+            "policy",
+            "approval rating",
+            "inaugurated",
+            "impeach",
+            "senate",
+            "house",
+            "liberal",
+            "democrat",
+            "republican",
+            "election",
+            "vote",
+            "campaign",
+        ],
+        "economy": [
+            "inflation",
+            "gdp",
+            "unemployment",
+            "interest rate",
+            "fed",
+            "recession",
+            "tariff",
+            "revenue",
+            "market cap",
+            "stock",
+            "nasdaq",
+            "sp500",
+            "dow",
+            "s&p",
+            "treasury",
+            "bond",
+            "natural gas",
+            "oil",
+            "gold",
+            "silver",
+            "commodity",
+        ],
+        "science": [
+            "earthquake",
+            "hurricane",
+            "weather",
+            "climate",
+            "science",
+            "nasa",
+            "space",
+            "moon",
+            "mars",
+            "vaccine",
+            "covid",
+            "pandemic",
+            "coronavirus",
+            "covid-19",
+            "covid",
+        ],
+        "business": [
+            "market cap",
+            "ipo",
+            "stock",
+            "revenue",
+            "profit",
+            "earnings",
+            "tesla",
+            "apple",
+            "amazon",
+            "google",
+            "microsoft",
+            "meta",
+            "tesla",
+            "coinbase",
+            "spacex",
+            "twitter",
+            "x.com",
+        ],
+        "entertainment": [
+            "grammy",
+            "oscar",
+            "emmy",
+            "tony",
+            "movie",
+            "film",
+            "netflix",
+            "disney",
+            "hbo",
+            "streaming",
+            "box office",
+            "album",
+            "song",
+            "music",
+            "chart",
+            "billboard",
+        ],
+        "chess": [
+            "chess",
+            "carlsen",
+            "nakamura",
+            "nepomniachtchi",
+            "firouzja",
+            "caruana",
+            "giri",
+            "dubov",
+            "so",
+            "mvl",
+            "grischuk",
+            "norway chess",
+            "ftx crypto cup",
+            "chess.com",
+            "titled tuesday",
+        ],
+    }
+
     def __init__(
         self,
         api_factory: APIClientFactory,
@@ -43,12 +317,46 @@ class EventAlerter:
         self.volume_spike_multiplier = volume_spike_multiplier
         self.odds_move_threshold = odds_move_threshold
         self._previous_prices = _BoundedDict(maxsize=500)  # market_id -> {yes, no}
-        self._previous_prices_crypto = _BoundedDict(maxsize=50)  # coin_id -> {price, change}
+        self._previous_prices_crypto = _BoundedDict(
+            maxsize=50
+        )  # coin_id -> {price, change}
         self._previous_volumes = _BoundedDict(maxsize=500)
 
-    def check_new_markets(self, limit: int = 20) -> List[Dict]:
+    def get_category(self, question: str) -> Optional[str]:
+        """Determine market category from question."""
+        import re
+
+        q = question.lower()
+
+        # Use word boundaries for more accurate matching
+        for category, keywords in self.CATEGORY_KEYWORDS.items():
+            for kw in keywords:
+                # Match whole words only
+                pattern = r"\b" + re.escape(kw) + r"\b"
+                if re.search(pattern, q):
+                    return category
+        return "other"
+
+    def filter_by_category(
+        self, markets: List[Dict], categories: List[str]
+    ) -> List[Dict]:
+        """Filter markets by category."""
+        if not categories:
+            return markets
+        return [
+            m for m in markets if self.get_category(m.get("question", "")) in categories
+        ]
+
+    def check_new_markets(
+        self, limit: int = 20, categories: List[str] = None
+    ) -> List[Dict]:
         """Find newly created markets."""
         markets = self.api.get_active_markets(limit=limit) or []
+
+        # Apply category filter
+        if categories:
+            markets = self.filter_by_category(markets, categories)
+
         new_markets = []
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=self.new_market_hours)
@@ -68,12 +376,28 @@ class EventAlerter:
 
                 if created > cutoff:
                     m["hours_old"] = (now - created).total_seconds() / 3600
+                    m["category"] = self.get_category(m.get("question", ""))
                     new_markets.append(m)
             except Exception:
                 pass
 
         new_markets.sort(key=lambda x: x.get("hours_old", 999))
         return new_markets
+
+    def check_crypto_markets(self, limit: int = 50) -> List[Dict]:
+        """Get only crypto-related markets."""
+        markets = self.api.get_active_markets(limit=limit) or []
+        return self.filter_by_category(markets, ["crypto"])
+
+    def check_sports_markets(self, limit: int = 50) -> List[Dict]:
+        """Get only sports-related markets."""
+        markets = self.api.get_active_markets(limit=limit) or []
+        return self.filter_by_category(markets, ["sports"])
+
+    def check_politics_markets(self, limit: int = 50) -> List[Dict]:
+        """Get only politics-related markets."""
+        markets = self.api.get_active_markets(limit=limit) or []
+        return self.filter_by_category(markets, ["politics"])
 
     def check_volume_spikes(self, limit: int = 30) -> List[Dict]:
         """Find markets with unusual volume."""
@@ -111,7 +435,11 @@ class EventAlerter:
         for m in markets:
             market_id = m.get("id")
             raw_prices = m.get("outcomePrices")
-            prices = json.loads(raw_prices) if isinstance(raw_prices, str) else (raw_prices or [])
+            prices = (
+                json.loads(raw_prices)
+                if isinstance(raw_prices, str)
+                else (raw_prices or [])
+            )
 
             if not market_id or not prices:
                 continue
@@ -239,6 +567,22 @@ class EventAlerter:
                 hours_left = (end_dt - now).total_seconds() / 3600
                 if 0 < hours_left <= hours:
                     m["hours_left"] = hours_left
+                    # Enrich with event/game context
+                    m["event_title"] = m.get("groupItemTitle") or ""
+                    # Market consensus from outcomePrices (YES %)
+                    raw_prices = m.get("outcomePrices")
+                    prices = (
+                        json.loads(raw_prices)
+                        if isinstance(raw_prices, str)
+                        else (raw_prices or [])
+                    )
+                    if prices and len(prices) >= 2:
+                        try:
+                            yes_pct = float(prices[0])
+                            m["yes_pct"] = yes_pct
+                            m["no_pct"] = float(prices[1]) if len(prices) > 1 else 1 - yes_pct
+                        except (ValueError, TypeError):
+                            pass
                     expiring.append(m)
             except Exception:
                 pass
@@ -254,31 +598,25 @@ class EventAlerter:
         moves = []
 
         try:
-            # Get active markets
-            markets = self.api.get_active_markets(limit=100) or []
+            # Get active markets - fetch more for better coverage
+            markets = self.api.get_active_markets(limit=200) or []
 
-            # Filter to crypto-related markets
-            crypto_keywords = [
-                "bitcoin",
-                "btc",
-                "ethereum",
-                "eth",
-                "solana",
-                "sol",
-                "crypto",
-                "dogecoin",
-                "xrp",
-                "cardano",
-            ]
+            # Use proper category filtering
+            crypto_markets = self.filter_by_category(markets, ["crypto"])
 
-            for m in markets:
-                q = m.get("question", "").lower()
-                if not any(kw in q for kw in crypto_keywords):
-                    continue
+            for m in crypto_markets:
+                q = m.get("question", "")
 
                 # Get current price
                 raw_prices = m.get("outcomePrices")
-                prices = json.loads(raw_prices) if isinstance(raw_prices, str) else (raw_prices or [])
+                if not raw_prices:
+                    continue
+
+                prices = (
+                    json.loads(raw_prices)
+                    if isinstance(raw_prices, str)
+                    else (raw_prices or [])
+                )
                 if not prices or len(prices) < 2:
                     continue
 
@@ -319,7 +657,7 @@ class EventAlerter:
                 }
 
         except Exception as e:
-            pass
+            print(f"[check_crypto_moves] Error: {e}")
 
         return moves
 
@@ -330,7 +668,6 @@ class EventAlerter:
         coins = [
             "bitcoin",
             "ethereum",
-            "solana",
             "dogecoin",
             "cardano",
             "ripple",
@@ -584,7 +921,6 @@ class EventAlerter:
                 "btc",
                 "ethereum",
                 "eth",
-                "solana",
                 "crypto",
                 "token",
                 "blockchain",
