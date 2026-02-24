@@ -563,38 +563,62 @@ def monitor(
             # Show top crypto by volume
             if crypto_markets:
                 print("\n   === TOP CRYPTO MARKETS ===")
-                for m in sorted(
+                top_crypto = sorted(
                     crypto_markets,
                     key=lambda x: float(x.get("volume", 0) or 0),
                     reverse=True,
-                )[:5]:
+                )[:5]
+                for m in top_crypto:
                     q = m.get("question", "")[:50]
                     v = float(m.get("volume", 0) or 0)
                     print(f"   ${v:>10,.0f} - {q}")
+                    # AI analysis
+                    try:
+                        analysis = ai_filter.analyze_new_market(m)
+                        if analysis.get("opportunity") == "HIGH":
+                            print(f"      -> {analysis.get('reason', '')[:60]}")
+                    except:
+                        pass
 
             # Show top sports by volume
             if sports_markets:
                 print("\n   === TOP SPORTS MARKETS ===")
-                for m in sorted(
+                top_sports = sorted(
                     sports_markets,
                     key=lambda x: float(x.get("volume", 0) or 0),
                     reverse=True,
-                )[:5]:
+                )[:5]
+                for m in top_sports:
                     q = m.get("question", "")[:50]
                     v = float(m.get("volume", 0) or 0)
                     print(f"   ${v:>10,.0f} - {q}")
+                    # AI analysis
+                    try:
+                        analysis = ai_filter.analyze_new_market(m)
+                        if analysis.get("opportunity") == "HIGH":
+                            print(f"      -> {analysis.get('reason', '')[:60]}")
+                    except:
+                        pass
 
             # Show top politics by volume
             if politics_markets:
                 print("\n   === TOP POLITICS MARKETS ===")
-                for m in sorted(
+                top_politics = sorted(
                     politics_markets,
                     key=lambda x: float(x.get("volume", 0) or 0),
                     reverse=True,
-                )[:5]:
+                )[:5]
+                for m in top_politics:
                     q = m.get("question", "")[:50]
                     v = float(m.get("volume", 0) or 0)
                     print(f"   ${v:>10,.0f} - {q}")
+                    # AI analysis
+                    try:
+                        analysis = ai_filter.analyze_new_market(m)
+                        if analysis.get("opportunity") == "HIGH":
+                            print(f"      -> {analysis.get('reason', '')[:60]}")
+                    except:
+                        pass
 
             # ===== PRIORITY 3: SPORTS/GAMES EXPIRING SOON =====
             # Only alert if < 1 hour left (was 2 hours)
