@@ -147,12 +147,26 @@ class PolymarketAPI:
 
     # ============ MARKET METHODS ============
 
-    def get_events(self, limit: int = 50, active: bool = True) -> List[Dict]:
-        """Get events from Polymarket."""
+    def get_events(
+        self,
+        limit: int = 50,
+        active: bool = True,
+        order: str = None,
+        tag_id: str = None,
+        slug_contains: str = None,
+    ) -> List[Dict]:
+        """Get events from Polymarket. slug_contains finds crypto 5M/15M (e.g. '5m')."""
         url = f"{GAMMA_API}/events"
         params = {"limit": limit}
         if active:
             params["closed"] = "false"
+        if order:
+            params["order"] = order
+            params["ascending"] = "false"
+        if tag_id:
+            params["tag_id"] = tag_id
+        if slug_contains:
+            params["slug_contains"] = slug_contains
         return self._get_list(url, params, use_cache=True)
 
     def get_event_markets(self, event_id: str) -> List[Dict]:
@@ -165,13 +179,98 @@ class PolymarketAPI:
         url = f"{GAMMA_API}/markets/{market_id}"
         return self._get(url, use_cache=True)
 
-    def get_markets(self, limit: int = 100, active: bool = True) -> List[Dict]:
+    def get_markets(
+        self,
+        limit: int = 100,
+        active: bool = True,
+        order: str = None,
+        tag_id: str = None,
+    ) -> List[Dict]:
         """Get markets with optional filtering."""
         url = f"{GAMMA_API}/markets"
         params = {"limit": limit}
         if active:
             params["closed"] = "false"
+        if order:
+            params["order"] = order
+            params["ascending"] = "false"
+        if tag_id:
+            params["tag_id"] = tag_id
         return self._get_list(url, params, use_cache=True)
+
+    def get_markets_by_tag(self, tag_id: str, limit: int = 100) -> List[Dict]:
+        """Get markets filtered by Polymarket tag_id."""
+        return self.get_markets(limit=limit, active=True, tag_id=tag_id)
+
+    def get_crypto_short_term_markets(self, limit: int = 100) -> List[Dict]:
+        """Get crypto 5M/15M/hourly markets. Falls back to top crypto when strict filter yields 0."""
+        timeframe_kw = ["5 min", "15 min", "5m", "15m", "hourly", "up or down"]
+
+        def _extract(events: List, strict: bool = True) -> List[Dict]:
+            result = []
+            seen = set()
+            for ev in events or []:
+                for m in ev.get("markets") or []:
+                    mid = m.get("conditionId") or m.get("id")
+                    if mid and mid in seen:
+                        continue
+                    if mid:
+                        seen.add(mid)
+                    q = (m.get("question", "") or "").lower()
+                    if strict and not any(kw in q for kw in timeframe_kw):
+                        continue
+                    if not strict and not any(
+                        k in q
+                        for k in [
+                            "bitcoin",
+                            "btc ",
+                            "ethereum",
+                            "solana",
+                            "crypto",
+                            "megaeth",
+                        ]
+                    ):
+                        continue
+                    m = dict(m)
+                    m["id"] = mid or m.get("conditionId")
+                    result.append(m)
+                    if len(result) >= limit:
+                        return result
+            return result
+
+        # Crypto tag 744 - strict 5M/15M first
+        for tag_id in ("744", "1256", None):
+            events = self.get_events(limit=200, active=True, tag_id=tag_id) or []
+            result = _extract(events, strict=True)
+            if result:
+                return result
+
+        # Markets endpoint
+        result = []
+        for m in self.get_markets(limit=500, active=True) or []:
+            q = (m.get("question", "") or "").lower()
+            if any(kw in q for kw in timeframe_kw):
+                result.append(m)
+                if len(result) >= limit:
+                    return result
+        if result:
+            return result
+
+        # Fallback: top crypto when no 5M/15M found (API may not expose them)
+        events = self.get_events(limit=200, active=True, tag_id="744") or []
+        fallback = _extract(events, strict=False)
+        if fallback:
+            return fallback
+        # Last resort: markets with crypto keywords (avoid "sol" in "soliciting")
+        result = []
+        crypto_kw = ["bitcoin", "btc ", "ethereum", "solana", " crypto", "megaeth"]
+        for m in self.get_markets(limit=500, active=True) or []:
+            q = (m.get("question", "") or "").lower()
+            if any(k in q for k in crypto_kw):
+                result.append(m)
+                if len(result) >= limit:
+                    break
+        return result
 
     def get_market_trades(self, market_id: str, limit: int = 100) -> List[Dict]:
         """Get all trades for a specific market."""

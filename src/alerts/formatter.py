@@ -184,6 +184,24 @@ class AlertFormatter:
         return "\n".join(lines)
 
     @staticmethod
+    def format_crypto_short_term(market: dict) -> str:
+        """Format crypto 5M/15M/hourly market alert with question, time window, YES%, volume, link."""
+        question = market.get("question", "Unknown")[:80]
+        volume = float(market.get("volume", 0) or 0)
+        yes_pct = market.get("yes_pct")
+        link = f"https://polymarket.com/market/{market.get('id', '')}"
+
+        lines = [
+            f"⏱️ **CRYPTO 5M/15M**",
+            f"_{question}_",
+            f"💰 Volume: ${volume:,.0f}" if volume else "",
+        ]
+        if yes_pct is not None:
+            lines.append(f"📊 YES: {yes_pct * 100:.0f}% | NO: {(1 - yes_pct) * 100:.0f}%")
+        lines.append(f"[View]({link})")
+        return "\n".join([l for l in lines if l])
+
+    @staticmethod
     def format_crypto_alert(
         symbol: str, price: float, change: float, source: str = ""
     ) -> str:

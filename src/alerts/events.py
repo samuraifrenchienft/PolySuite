@@ -129,6 +129,20 @@ class EventAlerter:
             "memecoin",
             "meme coin",
             "加密",
+            # Crypto 5M/15M short-term
+            "5 min",
+            "15 min",
+            "5m",
+            "15m",
+            "hourly",
+            "up or down",
+            "candle",
+            "close",
+            "open",
+            "et",
+            "utc",
+            "11:50",
+            "11:55",
         ],
         "sports": [
             # NFL
@@ -386,6 +400,13 @@ class EventAlerter:
             "all star game",
             "mvp",
             "roty",
+            # Esports
+            "valorant",
+            "league of legends",
+            "lol",
+            "dota",
+            "csgo",
+            "overwatch",
         ],
         "politics": [
             # US Politics
@@ -528,6 +549,14 @@ class EventAlerter:
             "sanction",
             "nuclear",
             "weapon",
+            # Kalshi/Polymarket overlap
+            "cfb",
+            "kalshi",
+            "daily",
+            "fed",
+            "rate cut",
+            "rate hike",
+            "fomc",
             # World Leaders
             "macron",
             "le pen",
@@ -557,6 +586,9 @@ class EventAlerter:
             "llm",
             "machine learning",
             "nvidia",
+            "meta",
+            "earnings",
+            "ipo",
             "amd",
             "intel",
             "quantum",
@@ -573,6 +605,10 @@ class EventAlerter:
             "interest rate",
             "fed",
             "recession",
+            # Kalshi
+            "cfb",
+            "cpi",
+            "jobs report",
             "tariff",
             "tariffs",
             "revenue",
@@ -663,6 +699,15 @@ class EventAlerter:
         ],
     }
 
+    CRYPTO_SHORT_TERM_KEYWORDS = [
+        "5 min",
+        "15 min",
+        "5m",
+        "15m",
+        "hourly",
+        "up or down",
+    ]
+
     def __init__(
         self,
         api_factory: APIClientFactory,
@@ -687,6 +732,13 @@ class EventAlerter:
             maxsize=50
         )  # coin_id -> {price, change}
         self._previous_volumes = _BoundedDict(maxsize=500)
+
+    def is_crypto_short_term(self, question: str) -> bool:
+        """Check if question describes a crypto 5M/15M/hourly short-term market."""
+        if not question:
+            return False
+        q = question.lower()
+        return any(kw in q for kw in self.CRYPTO_SHORT_TERM_KEYWORDS)
 
     def get_category(self, question: str) -> Optional[str]:
         """Determine market category from question."""
@@ -792,6 +844,28 @@ class EventAlerter:
         """Get only crypto-related markets."""
         markets = self.api.get_active_markets(limit=limit) or []
         return self.filter_by_category(markets, ["crypto"])
+
+    def check_crypto_short_term_markets(self, limit: int = 100) -> List[Dict]:
+        """Fetch crypto 5M/15M/hourly markets ordered by volume, enriched for alerts."""
+        markets = self.api.get_crypto_short_term_markets(limit=limit) or []
+        enriched = []
+        for m in markets:
+            raw_prices = m.get("outcomePrices")
+            prices = (
+                json.loads(raw_prices)
+                if isinstance(raw_prices, str)
+                else (raw_prices or [])
+            )
+            m = dict(m)
+            if prices and len(prices) >= 2:
+                try:
+                    m["yes_pct"] = float(prices[0])
+                    m["no_pct"] = float(prices[1]) if len(prices) > 1 else 1 - float(prices[0])
+                except (ValueError, TypeError):
+                    pass
+            m["is_crypto_short_term"] = True
+            enriched.append(m)
+        return enriched
 
     def check_sports_markets(self, limit: int = 200) -> List[Dict]:
         """Get only sports-related markets."""

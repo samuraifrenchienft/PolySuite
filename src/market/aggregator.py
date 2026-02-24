@@ -268,7 +268,7 @@ class MarketAggregator:
                         price = float(outcome_prices[0])
                     else:
                         price = 0.5
-                except:
+                except (ValueError, TypeError, json.JSONDecodeError):
                     price = 0.5
 
                 alerts.append(
@@ -328,7 +328,7 @@ class MarketAggregator:
                         yes_price = market_data.get("yes_ask", 0.5)
                     else:
                         yes_price = 0.5
-                except:
+                except Exception:
                     yes_price = 0.5
 
                 # Determine category
@@ -462,7 +462,7 @@ class MarketAggregator:
             )
             if resp.status_code == 200:
                 providers.append("polymarket")
-        except:
+        except Exception:
             pass
 
         # Test Kalshi
@@ -474,7 +474,7 @@ class MarketAggregator:
             )
             if resp.status_code == 200:
                 providers.append("kalshi")
-        except:
+        except Exception:
             pass
 
         # Test Jupiter
@@ -486,7 +486,7 @@ class MarketAggregator:
             )
             if resp.status_code == 200:
                 providers.append("jupiter")
-        except:
+        except Exception:
             pass
 
         return providers

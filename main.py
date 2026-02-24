@@ -240,9 +240,11 @@ def monitor(
     new_market_check_interval = 60  # Check for new markets every 1 min
     volume_check_interval = 30  # Check volume every 30 seconds
     odds_check_interval = 60  # Check odds every 1 min
+    crypto_short_term_interval = config.crypto_short_term_interval
     last_new_market_check = 0
     last_volume_check = 0
     last_odds_check = 0
+    last_crypto_short_term_check = 0
 
     # Start Telegram bot in background for interactive commands
     telegram_bot = None
@@ -352,12 +354,15 @@ def monitor(
                 storage.cleanup_old_backups(keep_days=7)
                 last_backup = current_time
 
-            # AI Report every 30 minutes - optimal entry points
+            # AI Report every 30 minutes - optimal entry points with entry-zone analysis
             if current_time - last_ai_report > ai_report_interval:
                 print("\n[*] Generating AI market report...")
                 try:
-                    # Fetch fresh markets
-                    all_markets = polymarket_api.get_markets(limit=200) or []
+                    # Fetch fresh markets (sort by volume client-side)
+                    all_markets = polymarket_api.get_markets(limit=200, active=True) or []
+                    all_markets.sort(
+                        key=lambda x: float(x.get("volume", 0) or 0), reverse=True
+                    )
 
                     # Get prices for analysis
                     scored = []
@@ -387,7 +392,7 @@ def monitor(
                                         "no": float(p[1]),
                                         "spread": abs((yes_odds + float(p[1])) - 1.0),
                                     }
-                            except:
+                            except Exception:
                                 pass
 
                         # AI analyze
@@ -408,6 +413,35 @@ def monitor(
                     scored.sort(key=lambda x: x["score"], reverse=True)
                     top_5 = scored[:5]
 
+                    # Fetch recent trades for top markets for entry-zone analysis
+                    markets_for_entry = []
+                    for item in top_5:
+                        m = dict(item["market"])
+                        mid = m.get("id")
+                        if mid:
+                            try:
+                                trades = polymarket_api.get_market_trades(
+                                    mid, limit=20
+                                ) or []
+                                m["recent_trades"] = trades
+                            except Exception:
+                                m["recent_trades"] = []
+                        else:
+                            m["recent_trades"] = []
+                        markets_for_entry.append(m)
+
+                    # Entry zone analysis
+                    entry_zones = []
+                    if markets_for_entry:
+                        try:
+                            entry_zones = ai_filter.analyze_entry_zones(
+                                markets_for_entry
+                            )
+                        except Exception:
+                            entry_zones = [
+                                {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                            ] * len(markets_for_entry)
+
                     if top_5:
                         report = "📊 AI MARKET REPORT - Optimal Entry Points\n\n"
                         for i, item in enumerate(top_5, 1):
@@ -416,15 +450,29 @@ def monitor(
                             v = item["volume"]
                             odds = item["odds"]
                             ana = item["analysis"]
+                            ez = (
+                                entry_zones[i - 1]
+                                if i <= len(entry_zones)
+                                else {}
+                            )
 
                             report += f"{i}. {q}\n"
                             report += f"   Vol: ${v:,.0f} | "
                             if odds:
                                 report += f"YES: {odds.get('yes', 0) * 100:.0f}% | NO: {odds.get('no', 0) * 100:.0f}%"
-                            report += f"\n"
+                            report += "\n"
 
-                            if ana.get("reason"):
-                                report += f"   -> {ana.get('reason', '')[:50]}\n"
+                            # Entry zone from AI
+                            zone = ez.get("entry_zone", "")
+                            reason = ez.get("reason", "") or ana.get("analysis", "") or ana.get("trigger", "")
+                            conf = ez.get("confidence", "")
+                            if zone:
+                                report += f"   ENTRY: {zone}"
+                                if conf:
+                                    report += f" ({conf})"
+                                report += "\n"
+                            if reason:
+                                report += f"   -> {reason[:80]}\n"
                             report += "\n"
 
                         # Send report
@@ -581,23 +629,44 @@ def monitor(
                 except Exception:
                     pass
 
-                # Use formatter
+                # Use formatter - crypto 5M/15M get distinct formatting
                 from src.alerts.formatter import formatter
 
-                msg = formatter.format_new_market(
-                    event,
-                    profit >= 0.5,
-                    profit,
-                    sentiment=sentiment,
-                    ai_insight=ai_insight,
-                    category=category,
+                is_crypto_st = event_alerter.is_crypto_short_term(
+                    event.get("question", "")
                 )
+                if is_crypto_st:
+                    # Enrich with yes_pct for crypto short-term
+                    raw_p = event.get("outcomePrices")
+                    if raw_p:
+                        try:
+                            import json
+                            p = json.loads(raw_p) if isinstance(raw_p, str) else raw_p
+                            if p and len(p) >= 2:
+                                event = dict(event)
+                                event["yes_pct"] = float(p[0])
+                        except Exception:
+                            pass
+                    msg = formatter.format_crypto_short_term(event)
+                else:
+                    msg = formatter.format_new_market(
+                        event,
+                        has_arb=profit >= 0.5,
+                        arb_profit=profit,
+                        sentiment=sentiment,
+                        ai_insight=ai_insight,
+                        category=category,
+                    )
 
                 if profit >= 0.5:
-                    combined.send_to_alerts(msg)
+                    combined.send_to_alerts(
+                        msg, category="crypto" if is_crypto_st else None
+                    )
                     combined.send_arb(arb)  # Also send arb alert
                 else:
-                    combined.send_to_alerts(msg)
+                    combined.send_to_alerts(
+                        msg, category="crypto" if is_crypto_st else None
+                    )
 
                 if sentiment and sentiment != "neutral":
                     print(f"   🤖 AI: {sentiment.upper()}")
@@ -636,17 +705,46 @@ def monitor(
             # ===== PRIORITY 2: CRYPTO 5MIN/15MIN MARKETS =====
             print("[*] Checking crypto markets...")
             crypto_markets = event_alerter.check_crypto_markets(limit=100)
+            crypto_short_term_markets = event_alerter.check_crypto_short_term_markets(
+                limit=50
+            )
             sports_markets = event_alerter.check_sports_markets(limit=50)
             politics_markets = event_alerter.check_politics_markets(limit=50)
 
+            # Crypto 5M/15M dedicated check - run every 1-2 min, send to alerts
+            if current_time - last_crypto_short_term_check >= crypto_short_term_interval:
+                last_crypto_short_term_check = current_time
+                if crypto_short_term_markets:
+                    top_short_term = sorted(
+                        crypto_short_term_markets,
+                        key=lambda x: float(x.get("volume", 0) or 0),
+                        reverse=True,
+                    )[:5]
+                    from src.alerts.formatter import formatter
+
+                    for m in top_short_term:
+                        msg = formatter.format_crypto_short_term(m)
+                        combined.send_to_alerts(msg, category="crypto")
+
             # Print top actionable markets
             print(
-                f"   Crypto: {len(crypto_markets)} | Sports: {len(sports_markets)} | Politics: {len(politics_markets)}"
+                f"   Crypto: {len(crypto_markets)} | 5M/15M: {len(crypto_short_term_markets)} | Sports: {len(sports_markets)} | Politics: {len(politics_markets)}"
             )
 
-            # AI picks best opportunities across all categories
+            # AI picks best opportunities across all categories (include crypto 5M/15M)
+            seen_ids = set()
             all_markets = []
-            for m in crypto_markets + sports_markets + politics_markets:
+            for m in (
+                crypto_short_term_markets
+                + crypto_markets
+                + sports_markets
+                + politics_markets
+            ):
+                mid = m.get("id")
+                if mid and mid in seen_ids:
+                    continue
+                if mid:
+                    seen_ids.add(mid)
                 v = float(m.get("volume", 0) or 0)
                 if v > 10000:  # Only liquid markets
                     all_markets.append(m)
@@ -692,6 +790,20 @@ def monitor(
                             print(f"      -> {analysis.get('reason', '')[:50]}")
                     except:
                         pass
+
+            # Show top crypto 5M/15M by volume
+            if crypto_short_term_markets:
+                print("\n   === TOP CRYPTO 5M/15M ===")
+                for m in sorted(
+                    crypto_short_term_markets,
+                    key=lambda x: float(x.get("volume", 0) or 0),
+                    reverse=True,
+                )[:5]:
+                    q = m.get("question", "")[:50]
+                    v = float(m.get("volume", 0) or 0)
+                    yes_pct = m.get("yes_pct")
+                    yes_str = f" YES:{yes_pct*100:.0f}%" if yes_pct is not None else ""
+                    print(f"   ${v:>10,.0f}{yes_str} - {q}")
 
             # Show top crypto by volume
             if crypto_markets:

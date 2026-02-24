@@ -16,6 +16,9 @@ DEFAULT_CONFIG = {
     "alert_cooldown": 300,
     "tracked_wallets": [],
     "tracked_categories": [],
+    "priority_categories": ["crypto", "politics"],
+    "crypto_short_term_interval": 90,
+    "channel_overrides": {},
     "trade_volume_threshold": 1000,
     "position_size_threshold": 1000,
     "leaderboard_import_interval": 3600,  # 1 hour
@@ -190,6 +193,19 @@ class Config:
     @property
     def tracked_categories(self) -> list:
         return self.config.get("tracked_categories", [])
+
+    @property
+    def priority_categories(self) -> list:
+        return self.config.get("priority_categories", ["crypto", "politics"])
+
+    @property
+    def crypto_short_term_interval(self) -> int:
+        return self.config.get("crypto_short_term_interval", 90)
+
+    @property
+    def channel_overrides(self) -> dict:
+        """Override channels per category, e.g. {'crypto': {'discord_webhook_url': '...', 'telegram_chat_id': '...'}}."""
+        return self.config.get("channel_overrides", {})
 
     @property
     def telegram_bot_token(self) -> str:

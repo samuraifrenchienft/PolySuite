@@ -25,6 +25,7 @@ TASKS (use exact format):
 8. ANALYZE ARB: Check triggers (profit < 0.5% = too small, > 2% = suspicious, volume, news timing)
 9. ANALYZE WHALE: Check triggers (CONVERGENCE, WHALE_ENTRY, EARLY_MOVER, CONTRARIAN)
 10. ANALYZE MARKET: Check triggers (LIQUID, TRENDING, MOVEMENT, CATEGORY)
+11. ENTRY_ZONE: Return ENTRY_ZONE: [BUY_YES/BUY_NO/WAIT/AVOID], REASON: [1-2 sentences], CONFIDENCE: [high/medium/low]
 
 TRIGGERS TO LOOK FOR:
 - ARB: profit threshold, volume, news correlation
@@ -147,7 +148,7 @@ class AIFilter:
                         nums = "".join(filter(str.isdigit, line.split("SCORE:")[1][:3]))
                         if nums:
                             score = int(nums)
-                    except:
+                    except (ValueError, IndexError):
                         pass
                 if "REASON:" in line:
                     reason = line.split("REASON:")[1].strip()
@@ -458,6 +459,97 @@ REASON: [1-2 sentences]
                 result = result[8:].strip()
 
         return {"summary": result or "No summary", "top_picks": []}
+
+    def analyze_entry_zones(self, markets: List[Dict]) -> List[Dict]:
+        """Task 11: Entry zone analysis - BUY_YES/BUY_NO/WAIT/AVOID based on outcomePrices, volume, trades.
+
+        Input: markets with question, volume, outcomePrices, optional recent_trades.
+        Returns: list of {entry_zone, reason, confidence} in same order as markets.
+        """
+        if not markets:
+            return []
+
+        import json
+
+        market_inputs = []
+        for m in markets[:10]:
+            q = m.get("question", "")[:80]
+            vol = float(m.get("volume", 0) or 0)
+            raw_prices = m.get("outcomePrices")
+            prices = (
+                json.loads(raw_prices)
+                if isinstance(raw_prices, str)
+                else (raw_prices or [])
+            )
+            yes_pct = float(prices[0]) if prices and len(prices) >= 1 else 0.5
+            no_pct = float(prices[1]) if prices and len(prices) >= 2 else 1 - yes_pct
+            trades = m.get("recent_trades", [])
+            trade_summary = ""
+            if trades:
+                sides = [t.get("side", "?") for t in trades[:10]]
+                trade_summary = f" Recent flow: {', '.join(str(s) for s in sides[:5])}"
+
+            market_inputs.append(
+                f"- {q} | Vol: ${vol:,.0f} | YES: {yes_pct:.0%} NO: {no_pct:.0%}{trade_summary}"
+            )
+
+        prompt = f"""ENTRY ZONE ANALYSIS - Prediction market strategy:
+
+For each market, consider:
+1. YES/NO split from outcomePrices - is crowd skewed?
+2. Volume level - liquidity for entry/exit
+3. Recent trades (if provided) - flow direction
+4. Timeframe - 5M/15M = fee risk
+
+Markets:
+{chr(10).join(market_inputs)}
+
+Return for EACH market (one block per market):
+ENTRY_ZONE: [BUY_YES/BUY_NO/WAIT/AVOID]
+REASON: [1-2 sentences based on sentiment, volume, strategy]
+CONFIDENCE: [high/medium/low]"""
+
+        result = self._call(prompt, max_tokens=500)
+        results = []
+        if not result:
+            return [{"entry_zone": "WAIT", "reason": "", "confidence": "low"}] * len(
+                markets
+            )
+
+        # Parse response - extract entry_zone, reason, confidence per block
+        current = {}
+        for line in result.split("\n"):
+            line = line.strip()
+            if "ENTRY_ZONE:" in line.upper():
+                for zone in ["BUY_YES", "BUY_NO", "WAIT", "AVOID"]:
+                    if zone in line.upper():
+                        current["entry_zone"] = zone
+                        break
+            elif "REASON:" in line.upper():
+                current["reason"] = (
+                    line.split("REASON:")[-1].split("CONFIDENCE:")[0].strip()
+                )
+            elif "CONFIDENCE:" in line.upper():
+                for c in ["high", "medium", "low"]:
+                    if c in line.lower():
+                        current["confidence"] = c
+                        break
+                if current:
+                    results.append(
+                        {
+                            "entry_zone": current.get("entry_zone", "WAIT"),
+                            "reason": current.get("reason", ""),
+                            "confidence": current.get("confidence", "low"),
+                        }
+                    )
+                    current = {}
+
+        # Pad if we got fewer than markets
+        while len(results) < len(markets):
+            results.append(
+                {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+            )
+        return results[: len(markets)]
 
 
 # Singleton

@@ -484,19 +484,25 @@ class CombinedDispatcher:
         t1.join()
         t2.join()
 
-    def send_to_alerts(self, message: str):
-        """Send to alerts channel (new markets, arb, convergence, whales)."""
+    def send_to_alerts(self, message: str, category: Optional[str] = None):
+        """Send to alerts channel. Use channel_overrides when category (e.g. 'crypto') has a dedicated channel."""
+        overrides = getattr(self.config, "channel_overrides", {}) or {}
+        override = overrides.get(category, {}) if category else {}
+
         chat = (
-            getattr(self.config, "telegram_alerts_chat_id", None)
+            override.get("telegram_chat_id")
+            or getattr(self.config, "telegram_alerts_chat_id", None)
             or self.telegram_health_chat
         )
         webhook = (
-            getattr(self.config, "discord_alerts_webhook_url", None)
+            override.get("discord_webhook_url")
+            or getattr(self.config, "discord_alerts_webhook_url", None)
             or self.config.discord_webhook_url
         )
 
         if webhook:
             try:
+                self._wait_for_rate_limit("discord")
                 requests.post(webhook, json={"content": message}, timeout=10)
             except Exception as e:
                 print(f"[Alerts-Discord] Error: {e}")

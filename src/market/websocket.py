@@ -53,9 +53,9 @@ class MarketWebSocket:
                 for channel, callback in self.callbacks:
                     try:
                         callback(data)
-                    except:
+                    except Exception:
                         pass
-        except:
+        except Exception:
             pass
 
     def _on_error(self, ws, error):

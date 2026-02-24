@@ -49,7 +49,7 @@ class TrendScanner:
             )
             if resp.status_code == 200:
                 return resp.json()
-        except:
+        except Exception:
             pass
         return []
 

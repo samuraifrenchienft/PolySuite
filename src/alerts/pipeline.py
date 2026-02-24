@@ -28,7 +28,7 @@ class AlertPipeline:
                 profit = float(arb.get("profit_pct", 0))
                 if profit >= 0.5:  # Minimum 0.5%
                     filtered.append(arb)
-            except:
+            except (ValueError, TypeError):
                 pass
         return filtered
 
@@ -63,7 +63,7 @@ class AlertPipeline:
                 mc = float(t.get("usd_market_cap", 0) or 0)
                 if mc >= 50000:  # $50k min
                     filtered.append(t)
-            except:
+            except (ValueError, TypeError):
                 pass
         return filtered
 
