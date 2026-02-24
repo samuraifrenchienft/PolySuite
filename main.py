@@ -551,7 +551,6 @@ def monitor(
             # ===== PRIORITY 2: CRYPTO 5MIN/15MIN MARKETS =====
             print("[*] Checking crypto markets...")
             crypto_markets = event_alerter.check_crypto_markets(limit=100)
-            # Also get sports and politics sorted by volume
             sports_markets = event_alerter.check_sports_markets(limit=50)
             politics_markets = event_alerter.check_politics_markets(limit=50)
 
@@ -559,6 +558,55 @@ def monitor(
             print(
                 f"   Crypto: {len(crypto_markets)} | Sports: {len(sports_markets)} | Politics: {len(politics_markets)}"
             )
+
+            # AI picks best opportunities across all categories
+            all_markets = []
+            for m in crypto_markets + sports_markets + politics_markets:
+                v = float(m.get("volume", 0) or 0)
+                if v > 10000:  # Only liquid markets
+                    all_markets.append(m)
+
+            # AI analyze and pick best opportunities
+            if all_markets:
+                print("\n   === AI TOP PICKS ===")
+                for m in sorted(
+                    all_markets,
+                    key=lambda x: float(x.get("volume", 0) or 0),
+                    reverse=True,
+                )[:10]:
+                    try:
+                        analysis = ai_filter.analyze_new_market(m)
+                        q = m.get("question", "")[:45]
+                        v = float(m.get("volume", 0) or 0)
+
+                        # Get current odds
+                        prices = m.get("outcomePrices", "")
+                        odds_str = ""
+                        if prices:
+                            try:
+                                import json
+
+                                if isinstance(prices, str):
+                                    p = json.loads(prices)
+                                else:
+                                    p = prices
+                                if p and len(p) >= 2:
+                                    odds_str = f" YES:{float(p[0]) * 100:.0f}% NO:{float(p[1]) * 100:.0f}%"
+                            except:
+                                pass
+
+                        opp = analysis.get("opportunity", "LOW")
+                        emoji = (
+                            "⭐" if opp == "HIGH" else ("✅" if opp == "MEDIUM" else "")
+                        )
+
+                        print(f"   {emoji} ${v:>10,.0f} - {q}")
+                        if odds_str:
+                            print(f"      Odds: {odds_str}")
+                        if analysis.get("reason"):
+                            print(f"      -> {analysis.get('reason', '')[:50]}")
+                    except:
+                        pass
 
             # Show top crypto by volume
             if crypto_markets:
@@ -711,13 +759,50 @@ def monitor(
             # Check arbitrage on ALL markets
             if current_time - last_arb_check > arb_check_interval:
                 print("[*] Checking arbitrage (all markets)...")
-                arb_opps = arb_detector.get_top_opportunities(limit=10)
-                # Filter for quality
-                filtered_arbs = [
-                    a for a in arb_opps if float(a.get("profit_pct", 0)) >= 0.5
-                ]
+                arb_opps = arb_detector.get_top_opportunities(limit=20)
 
-                for arb in filtered_arbs[:5]:  # Limit to top 5
+                # AI-driven filtering - score each arb opportunity
+                scored_arbs = []
+                for a in arb_opps:
+                    profit = float(a.get("profit_pct", 0) or 0)
+                    if profit < 0.3:  # Skip too small
+                        continue
+
+                    # AI analysis to decide if worth alerting
+                    try:
+                        ai_analysis = ai_filter.analyze_arb_opportunity(a)
+                        worth = (
+                            ai_analysis.get("worth", True) if profit >= 1.0 else True
+                        )
+                        analysis = ai_analysis.get("analysis", "") or ""
+
+                        if worth or profit >= 1.5:  # Always alert high profit
+                            scored_arbs.append(
+                                {
+                                    "arb": a,
+                                    "profit": profit,
+                                    "ai_analysis": analysis,
+                                    "score": profit + (1.0 if worth else 0),
+                                }
+                            )
+                    except:
+                        # If AI fails, still alert on high profit
+                        if profit >= 1.0:
+                            scored_arbs.append(
+                                {
+                                    "arb": a,
+                                    "profit": profit,
+                                    "ai_analysis": "",
+                                    "score": profit,
+                                }
+                            )
+
+                # Sort by AI score
+                scored_arbs.sort(key=lambda x: x["score"], reverse=True)
+                filtered_arbs = [s["arb"] for s in scored_arbs[:5]]
+
+                for arb_data in scored_arbs[:5]:  # Limit to top 5
+                    arb = arb_data["arb"]
                     market_id = arb.get("market_id") or arb.get("condition_id")
                     if market_id and market_id not in alerted_arbs:
                         try:
@@ -730,16 +815,10 @@ def monitor(
                             "🟢" if profit >= 1.5 else ("🔵" if profit >= 1.0 else "🟠")
                         )
 
-                        # AI analysis for arb (especially profit >= 1%)
-                        ai_reasoning = ""
-                        try:
-                            if profit >= 1.0:
-                                arb_analysis = ai_filter.analyze_arb_opportunity(arb)
-                                ai_reasoning = arb_analysis.get("analysis", "") or ""
-                                if ai_reasoning:
-                                    print(f"   🤖 {ai_reasoning[:60]}...")
-                        except Exception:
-                            pass
+                        # AI analysis reasoning
+                        ai_reasoning = arb_data.get("ai_analysis", "")
+                        if ai_reasoning:
+                            print(f"   🤖 {ai_reasoning[:60]}...")
 
                         # Use formatter
                         from src.alerts.formatter import formatter
