@@ -225,8 +225,10 @@ def monitor(
     # Health check / heartbeat
     last_health_check = 0
     last_ai_summary = 0  # AI daily summary
+    last_ai_report = 0  # AI 30-min report with optimal entry
     last_trend_scan = 0  # Trend scanner
     trend_scan_interval = 900  # 15 minutes
+    ai_report_interval = 1800  # 30 minutes - AI optimal entry report
     whale_min_size = 50000  # Only alert on trades >= $50k (raised from $10k)
     health_check_interval = 9000  # Every 2.5 hours (only if no alerts)
 
@@ -349,6 +351,89 @@ def monitor(
                 # Cleanup old backups
                 storage.cleanup_old_backups(keep_days=7)
                 last_backup = current_time
+
+            # AI Report every 30 minutes - optimal entry points
+            if current_time - last_ai_report > ai_report_interval:
+                print("\n[*] Generating AI market report...")
+                try:
+                    # Fetch fresh markets
+                    all_markets = polymarket_api.get_markets(limit=200) or []
+
+                    # Get prices for analysis
+                    scored = []
+                    for m in all_markets:
+                        v = float(m.get("volume", 0) or 0)
+                        if v < 50000:  # Skip low volume
+                            continue
+
+                        q = m.get("question", "")[:100]
+
+                        # Get odds
+                        prices = m.get("outcomePrices", "")
+                        odds_info = {}
+                        if prices:
+                            try:
+                                import json
+
+                                p = (
+                                    json.loads(prices)
+                                    if isinstance(prices, str)
+                                    else prices
+                                )
+                                if p and len(p) >= 2:
+                                    yes_odds = float(p[0])
+                                    odds_info = {
+                                        "yes": yes_odds,
+                                        "no": float(p[1]),
+                                        "spread": abs((yes_odds + float(p[1])) - 1.0),
+                                    }
+                            except:
+                                pass
+
+                        # AI analyze
+                        analysis = ai_filter.analyze_new_market(m)
+
+                        scored.append(
+                            {
+                                "market": m,
+                                "volume": v,
+                                "odds": odds_info,
+                                "analysis": analysis,
+                                "score": v / 1000000
+                                + (1.0 if analysis.get("opportunity") == "HIGH" else 0),
+                            }
+                        )
+
+                    # Sort by AI score
+                    scored.sort(key=lambda x: x["score"], reverse=True)
+                    top_5 = scored[:5]
+
+                    if top_5:
+                        report = "📊 AI MARKET REPORT - Optimal Entry Points\n\n"
+                        for i, item in enumerate(top_5, 1):
+                            m = item["market"]
+                            q = m.get("question", "")[:60]
+                            v = item["volume"]
+                            odds = item["odds"]
+                            ana = item["analysis"]
+
+                            report += f"{i}. {q}\n"
+                            report += f"   Vol: ${v:,.0f} | "
+                            if odds:
+                                report += f"YES: {odds.get('yes', 0) * 100:.0f}% | NO: {odds.get('no', 0) * 100:.0f}%"
+                            report += f"\n"
+
+                            if ana.get("reason"):
+                                report += f"   -> {ana.get('reason', '')[:50]}\n"
+                            report += "\n"
+
+                        # Send report
+                        combined.send_to_alerts(report)
+                        print(f"   AI Report sent with {len(top_5)} top picks")
+                except Exception as e:
+                    print(f"   AI Report error: {e}")
+
+                last_ai_report = current_time
 
             # Simple whale trade alerts - check tracked wallets for new positions
             # No leaderboard import - users add wallets they want to track
