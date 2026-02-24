@@ -377,7 +377,20 @@ class EventAlerter:
         crypto_keywords = self.CATEGORY_KEYWORDS.get("crypto", [])
         for kw in crypto_keywords:
             # Skip single words that might be sports teams
-            if kw in ["avalanche", "nhl", "flames", "ducks", "jets", "wings"]:
+            if kw in [
+                "avalanche",
+                "nhl",
+                "flames",
+                "ducks",
+                "jets",
+                "wings",
+                "magic",
+                "hawks",
+                "hornets",
+            ]:
+                # But check for ticker symbols like AVAX
+                if kw == "avalanche" and ("avax" in q or "$" in q):
+                    return "crypto"
                 continue
             pattern = r"\b" + re.escape(kw) + r"\b"
             if re.search(pattern, q):
