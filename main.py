@@ -25,11 +25,14 @@ from src.discord_bot import DiscordBot
 from src.market.api import APIClientFactory
 from src.market.discovery import MarketDiscovery
 from src.market.leaderboard import LeaderboardImporter
+from src.market.aggregator import aggregator
 from src.tasks import TaskManager
 from src.telegram_bot import TelegramBot
 from src.wallet import Wallet
 from src.wallet.calculator import WalletCalculator
 from src.wallet.storage import WalletStorage
+from src.ai.engine import ai_filter
+from src.alerts.trendscanner import trendscanner
 
 
 def add_wallet(args, storage: WalletStorage, _config: Config):
@@ -221,7 +224,11 @@ def monitor(
 
     # Health check / heartbeat
     last_health_check = 0
-    health_check_interval = 120  # Every 2 minutes
+    last_ai_summary = 0  # AI daily summary
+    last_trend_scan = 0  # Trend scanner
+    trend_scan_interval = 900  # 15 minutes
+    whale_min_size = 50000  # Only alert on trades >= $50k (raised from $10k)
+    health_check_interval = 9000  # Every 2.5 hours (only if no alerts)
 
     # Database backup
     last_backup = 0
@@ -273,11 +280,61 @@ def monitor(
                 combined.send_health(test_msg)
                 print(f"[*] Sent startup alert to Discord & Telegram")
 
-            # Send health check
+            # Send health check only if no alerts sent recently (every 2.5 hrs max)
             if current_time - last_health_check > health_check_interval:
-                health_msg = f"HEARTBEAT - PolySuite running. Time: {time.strftime('%Y-%m-%d %H:%M:%S')}"
-                combined.send_health(health_msg)
-                last_health_check = current_time
+                # Only send if no alerts in the last 2 hours
+                if current_time - combined.get_last_alert_time() > 7200:
+                    health_msg = f"HEARTBEAT - PolySuite running. Time: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                    combined.send_health(health_msg)
+                    last_health_check = current_time
+
+                # AI Daily Summary (once per day)
+                if current_time - last_ai_summary > 86400:  # 24 hours
+                    try:
+                        print("\n[*] Generating AI daily summary...")
+                        markets = aggregator.get_polymarkets(limit=20)
+                        if markets:
+                            summary = ai_filter.summarize_markets(markets)
+                            text = summary.get("summary", "")
+                            if text and "No summary" not in text:
+                                combined.send_health(
+                                    f"📊 AI DAILY SUMMARY\n{text[:500]}"
+                                )
+                                last_ai_summary = current_time
+                            else:
+                                print(f"[AI Summary] No summary generated")
+                    except Exception as e:
+                        print(f"[AI Summary] Error: {e}")
+
+            # Trend scanner (pump.fun) - send to TRENDS channel
+            if current_time - last_trend_scan > trend_scan_interval:
+                try:
+                    print("\n[*] Scanning for trends...")
+                    alerts = trendscanner.scan_all()
+                    for alert in alerts:
+                        token = alert.get("token", {})
+                        # Filter for quality
+                        try:
+                            mc = float(token.get("usd_market_cap", 0) or 0)
+                            if mc < 50000:
+                                continue  # Skip low cap
+                        except:
+                            continue
+
+                        name = token.get("name", "Unknown")
+                        symbol = token.get("symbol", "?")
+                        mint = token.get("mint", "")[:20]
+
+                        # Use formatter
+                        from src.alerts.formatter import formatter
+
+                        msg = formatter.format_trend(token, "")
+
+                        combined.send_to_trends(msg)  # Send to trends channel
+                        print(f"   Found: {symbol} (${mc / 1000:.1f}k)")
+                    last_trend_scan = current_time
+                except Exception as e:
+                    print(f"[TrendScanner] Error: {e}")
 
             # Database backup
             if current_time - last_backup > backup_interval:
@@ -301,37 +358,83 @@ def monitor(
                 wallets = storage.list_wallets()
                 pm = polymarket_api
 
+                # Collect all whale trades for batch sending
+                whale_trades = []
+
+                def _norm_pos(p):
+                    """Normalize position from API (conditionId, title, outcome, avgPrice) to canonical fields."""
+                    mid = str(p.get("market_id") or p.get("conditionId") or p.get("market") or "")
+                    q = p.get("question") or p.get("title") or "Unknown"
+                    side = p.get("side") or p.get("outcome") or "?"
+                    return {"market_id": mid, "question": q, "side": side, "size": p.get("size"), "entry_price": p.get("entry_price") or p.get("avgPrice")}
+
                 for wallet in wallets:
                     try:
                         # Get current positions
                         positions = pm.get_wallet_positions(wallet.address) or []
 
+                        # Convert sqlite3.Row objects to dicts if needed and normalize
+                        positions = [
+                            dict(p) if hasattr(p, "keys") else p for p in positions
+                        ]
+                        positions = [dict(p, **_norm_pos(p)) for p in positions]
+
                         # Check for new positions (simple comparison)
                         last_pos = getattr(wallet, "_last_positions", [])
+                        last_pos = [
+                            dict(p) if hasattr(p, "keys") else p for p in last_pos
+                        ]
                         last_mids = set(str(p.get("market_id", "")) for p in last_pos)
                         curr_mids = set(str(p.get("market_id", "")) for p in positions)
 
                         new_markets = curr_mids - last_mids
 
                         if new_markets and len(new_markets) > 0:
-                            # Alert on whale trade
+                            # Collect whale trades for batch (only >= $10k)
                             for pos in positions:
                                 mid = str(pos.get("market_id", ""))
-                                if mid in new_markets:
-                                    q = pos.get("question", "Unknown")[:35]
-                                    side = pos.get("side", "?")
-                                    size = float(pos.get("size", 0) or 0)
-
-                                    emoji = "🐋"
-                                    msg = f"\n{emoji} WHALE: {wallet.nickname} {side.upper()} ${size:,.0f}\n{q}"
-                                    combined.send_health(msg)
-                                    print(msg)
+                                trade_size = float(pos.get("size", 0) or 0)
+                                if mid in new_markets and trade_size >= whale_min_size:
+                                    whale_trades.append(
+                                        {
+                                            "wallet": wallet.nickname,
+                                            "address": wallet.address[:10] + "...",
+                                            "side": pos.get("side", "?"),
+                                            "size": trade_size,
+                                            "question": pos.get("question", "Unknown")[
+                                                :35
+                                            ],
+                                            "market_id": mid,
+                                            "entry_price": pos.get("entry_price"),
+                                        }
+                                    )
 
                             # Store current as last
                             wallet._last_positions = positions
 
                     except Exception as e:
                         print(f"Whale check error {wallet.address[:12]}...: {e}")
+
+                # Send batched whale alerts (to alerts channel)
+                if whale_trades:
+                    print(f"    → Sending {len(whale_trades)} whale trades in batch")
+
+                    # AI summary with triggers
+                    ai_summary = ""
+                    try:
+                        ai_summary = ai_filter.analyze_whale_trades(whale_trades[:10])
+                        if ai_summary and "TRIGGER:" in ai_summary:
+                            trig = (
+                                ai_summary.split("TRIGGER:")[1].split("\n")[0].strip()
+                            )
+                            print(f"   🐋 Trigger: {trig}")
+                    except:
+                        pass
+
+                    from src.alerts.formatter import formatter
+
+                    msg = formatter.format_whale_batch(whale_trades, ai_summary)
+                    combined.send_to_alerts(msg)
 
                 last_smart_money_import = current_time
 
@@ -367,74 +470,121 @@ def monitor(
                 except (ValueError, TypeError):
                     profit = 0
 
-                if profit >= 0.5:
-                    # Has arbitrage - color code and indicate
-                    if profit >= 1.5:
-                        emoji = "🟢"
-                    elif profit >= 1.0:
-                        emoji = "🔵"
-                    else:
-                        emoji = "🟠"
-                    msg = f"\n🆕💰 NEW EVENT + ARB {emoji}({profit:.2f}%): {event.get('question', '')[:40]}"
-                    # Send BOTH alerts
-                    combined.send_new_market(event)
-                    combined.send_arb(arb)
-                else:
-                    # No arbitrage - just new event
-                    msg = f"\n🆕 NEW EVENT: {event.get('question', '')[:50]}"
-                    combined.send_new_market(event)
+                # AI sentiment and new market analysis
+                sentiment = ""
+                ai_insight = ""
+                category = ""
+                try:
+                    sentiment = ai_filter.analyze_sentiment(
+                        event.get("question", ""),
+                        event.get("probability", 0.5) or 0.5,
+                    )
+                    nm_analysis = ai_filter.analyze_new_market(event)
+                    ai_insight = nm_analysis.get("analysis", "") or ""
+                    category = nm_analysis.get("category", "") or ""
+                except Exception:
+                    pass
 
-                print(msg)
+                # Use formatter
+                from src.alerts.formatter import formatter
+
+                msg = formatter.format_new_market(
+                    event,
+                    profit >= 0.5,
+                    profit,
+                    sentiment=sentiment,
+                    ai_insight=ai_insight,
+                    category=category,
+                )
+
+                if profit >= 0.5:
+                    combined.send_to_alerts(msg)
+                    combined.send_arb(arb)  # Also send arb alert
+                else:
+                    combined.send_to_alerts(msg)
+
+                if sentiment and sentiment != "neutral":
+                    print(f"   🤖 AI: {sentiment.upper()}")
+
+                print(f"🆕 {event.get('question', '')[:50]}...")
                 alerted_arbs.add(f"new_{event_id}")
 
-            # ===== PRIORITY 2: CRYPTO REAL PRICES (CoinGecko) - EVERY SCAN =====
-            print("[*] Checking crypto prices...")
-            crypto_alerts = event_alerter.check_crypto_prices()
-            for move in crypto_alerts:
-                direction = move.get("direction", "up")
-                emoji = "🚀" if direction == "up" else "📉"
-                symbol = move.get("symbol", "CRYPTO")
-                price = move.get("price", 0)
-                change = move.get("change_24h", 0)
-                msg = f"\n{emoji} CRYPTO: {symbol} ${price:,.0f} ({change:+.1f}%)"
-                combined.send_health(msg)
-                print(msg)
-
-            # Also check Polymarket crypto moves
-            crypto_moves = event_alerter.check_crypto_moves()
-            for move in crypto_moves:
-                direction = move.get("direction", "up")
-                emoji = "🚀" if direction == "up" else "📉"
+            # ===== END NEW EVENTS - AI ANALYSIS =====
+            # AI analyze top new markets for opportunities with triggers
+            if new_events:
                 try:
-                    move_pct = float(move.get("move_pct", 0))
-                    price = float(move.get("price", 0))
-                except (ValueError, TypeError):
-                    move_pct = 0
-                    price = 0
-                msg = f"\n{emoji} POLY CRYPTO: {move.get('question', '')[:35]} {move_pct:.1f}%"
-                combined.send_health(msg)
-                print(msg)
+                    top_events = sorted(
+                        new_events,
+                        key=lambda x: float(x.get("volume", 0) or 0),
+                        reverse=True,
+                    )[:3]
+                    for ev in top_events:
+                        analysis = ai_filter.analyze_new_market(ev)
+                        trigger = analysis.get("trigger", "")
+
+                        if analysis.get("opportunity") == "HIGH":
+                            if "TRIGGER:" in trigger:
+                                trig = (
+                                    trigger.split("TRIGGER:")[1].split("\n")[0].strip()
+                                )
+                                print(
+                                    f"   ⭐ {trig}: {analysis.get('reason', '')[:60]}"
+                                )
+                            else:
+                                print(f"   ⭐ HIGH: {analysis.get('reason', '')[:70]}")
+                        elif analysis.get("opportunity") == "LOW":
+                            print(f"   ⚠️ LOW: {analysis.get('reason', '')[:60]}")
+                except Exception as e:
+                    pass
+
+            # ===== PRIORITY 2: CRYPTO REAL PRICES (CoinGecko) - EVERY SCAN =====
+            # REMOVED - too noisy, not actionable for prediction markets
+            # ===== PRIORITY 2: POLY CRYPTO MOVES =====
+            # REMOVED - too noisy
 
             # ===== PRIORITY 3: SPORTS/GAMES EXPIRING SOON =====
+            # Only alert if < 1 hour left (was 2 hours)
             print("[*] Checking expiring events...")
-            expiring = event_alerter.check_expiring_events(hours=2, limit=20)
+            expiring = event_alerter.check_expiring_events(
+                hours=1, limit=10
+            )  # Was 2hrs, 20 limit
             for event in expiring:
                 try:
                     hours_left = float(event.get("hours_left", 0))
                 except (ValueError, TypeError):
                     hours_left = 0
-                urgency = (
-                    "🔴" if hours_left < 0.5 else ("🟠" if hours_left < 1 else "🔵")
-                )
-                msg = f"\n{urgency}⏰ EXPIRING SOON: {event.get('question', '')[:40]} ({hours_left:.1f}h left)"
-                combined.send_health(msg)
-                print(msg)
+                # Only alert if < 30 mins left
+                if hours_left < 0.5:
+                    from src.alerts.formatter import formatter
+
+                    event_title = event.get("event_title", "") or ""
+                    yes_pct = event.get("yes_pct")
+                    spread = None
+                    # Optional: fetch spread if token_id available (market may not have it)
+                    token_id = event.get("clobTokenIds") or event.get("token_id")
+                    if token_id:
+                        if isinstance(token_id, (list, tuple)):
+                            token_id = token_id[0] if token_id else None
+                        if token_id:
+                            spread = polymarket_api.get_market_spread(token_id)
+                    msg = formatter.format_expiring(
+                        event,
+                        event_title=event_title,
+                        yes_pct=yes_pct,
+                        spread=spread,
+                    )
+                    combined.send_to_alerts(msg)
+                    print(msg[:80] + "..." if len(msg) > 80 else msg)
 
             # ===== PRIORITY 4: CONVERGENCE (tracked wallets in same event) =====
+            # Only alert HIGH/CRITICAL - skip NORMAL
             print("[*] Checking convergence...")
             convergences = detector.find_convergences(min_wallets=2)
             new_convergences = [
-                c for c in convergences if c["market_id"] not in alerted_markets
+                c
+                for c in convergences
+                if c["market_id"] not in alerted_markets
+                and (c.get("has_early_entry") or len(c.get("wallets", [])) >= 3)
             ]
 
             for conv in new_convergences:
@@ -444,27 +594,38 @@ def monitor(
                 urgency = (
                     "CRITICAL"
                     if conv.get("has_early_entry") and len(wallets) >= 3
-                    else (
-                        "HIGH"
-                        if conv.get("has_early_entry") or len(wallets) >= 3
-                        else "NORMAL"
-                    )
+                    else "HIGH"
                 )
-                emoji = (
-                    "🔴"
-                    if urgency == "CRITICAL"
-                    else ("🟠" if urgency == "HIGH" else "🔵")
-                )
+                emoji = "🔴" if urgency == "CRITICAL" else "🟠"
 
-                msg = f"\n{emoji} CONVERGENCE: {len(wallets)} traders in {market.get('question', 'Unknown')[:40]}..."
+                # AI analysis for convergence
+                ai_analysis = ""
+                try:
+                    if wallets:
+                        trade_summary = [
+                            {
+                                "side": w.get("side", ""),
+                                "entry_price": w.get("entry_price"),
+                                "size": w.get("size"),
+                                "question": market.get("question", "")[:30],
+                            }
+                            for w in wallets[:5]
+                        ]
+                        wallet_analysis = ai_filter.analyze_wallet(trade_summary)
+                        if wallet_analysis and wallet_analysis.get("analysis"):
+                            ai_analysis = wallet_analysis["analysis"][:100]
+                            print(f"   🤖 Strategy: {ai_analysis[:60]}")
+                except:
+                    pass
 
-                combined.send_convergence(
-                    market=market,
-                    wallets=wallets,
-                    threshold=config.win_rate_threshold,
-                    convergence=conv,
+                # Format and send with AI reasoning
+                from src.alerts.formatter import formatter
+
+                msg = formatter.format_convergence(market, wallets, conv, ai_analysis)
+                combined.send_to_alerts(msg)
+                print(
+                    f"{emoji} CONVERGENCE: {len(wallets)} traders in {market.get('question', 'Unknown')[:40]}..."
                 )
-                print(msg)
                 alerted_markets.add(conv["market_id"])
 
             # ===== FULL MARKET SCANS (arbitrage, volume, odds) - CAN RUN IN ANY ORDER =====
@@ -473,49 +634,75 @@ def monitor(
             if current_time - last_arb_check > arb_check_interval:
                 print("[*] Checking arbitrage (all markets)...")
                 arb_opps = arb_detector.get_top_opportunities(limit=10)
-                for arb in arb_opps:
+                # Filter for quality
+                filtered_arbs = [
+                    a for a in arb_opps if float(a.get("profit_pct", 0)) >= 0.5
+                ]
+
+                for arb in filtered_arbs[:5]:  # Limit to top 5
                     market_id = arb.get("market_id") or arb.get("condition_id")
                     if market_id and market_id not in alerted_arbs:
                         try:
                             profit = float(arb.get("profit_pct", 0))
                         except (ValueError, TypeError):
                             profit = 0
-                        # Color code: 0.5% orange, 1% blue, 1.5%+ green
-                        if profit >= 1.5:
-                            emoji = "🟢"
-                        elif profit >= 1.0:
-                            emoji = "🔵"
-                        else:
-                            emoji = "🟠"
 
-                        msg = f"\n{emoji}💰 ARBITRAGE ({profit:.2f}%): YES ${arb['yes_price']:.2f} NO ${arb['no_price']:.2f}"
-                        combined.send_arb(arb)
-                        print(msg)
+                        # Color code: 0.5% orange, 1% blue, 1.5%+ green
+                        emoji = (
+                            "🟢" if profit >= 1.5 else ("🔵" if profit >= 1.0 else "🟠")
+                        )
+
+                        # AI analysis for arb (especially profit >= 1%)
+                        ai_reasoning = ""
+                        try:
+                            if profit >= 1.0:
+                                arb_analysis = ai_filter.analyze_arb_opportunity(arb)
+                                ai_reasoning = arb_analysis.get("analysis", "") or ""
+                                if ai_reasoning:
+                                    print(f"   🤖 {ai_reasoning[:60]}...")
+                        except Exception:
+                            pass
+
+                        # Use formatter
+                        from src.alerts.formatter import formatter
+
+                        msg = formatter.format_arb(arb, ai_reasoning)
+                        combined.send_to_alerts(msg)
+
+                        print(
+                            f"{emoji}💰 ARB ({profit:.2f}%): {arb.get('question', '')[:40]}..."
+                        )
                         alerted_arbs.add(market_id)
+
+                # ===== END ARB SCAN - AI ANALYSIS =====
+                # AI analyze top arb opportunities - show facts only
+                if filtered_arbs:
+                    try:
+                        top_arbs = sorted(
+                            filtered_arbs,
+                            key=lambda x: float(x.get("profit_pct", 0)),
+                            reverse=True,
+                        )[:3]
+                        for arb in top_arbs:
+                            analysis = ai_filter.analyze_arb_opportunity(arb)
+
+                            facts = analysis.get("facts", "")
+                            vol = analysis.get("volume", "")
+                            fee_risk = analysis.get("fee_risk", False)
+
+                            # Show facts to user
+                            print(
+                                f"   📊 {facts} | Vol: {vol}"
+                                + (fee_risk and " ⚠️ FEE RISK" or "")
+                            )
+                            if analysis.get("analysis"):
+                                print(f"   → {analysis.get('analysis', '')[:80]}")
+                    except Exception as e:
+                        pass
+
                 last_arb_check = current_time
 
-            # Check volume spikes
-            print("[*] Checking volume spikes...")
-            volume_spikes = event_alerter.check_volume_spikes(limit=10)
-            for spike in volume_spikes[:3]:
-                try:
-                    vol_ratio = float(spike.get("volume_ratio", 0))
-                except (ValueError, TypeError):
-                    vol_ratio = 0
-                msg = f"\n📈 VOLUME SPIKE: {spike.get('question', 'Unknown')[:40]} ({vol_ratio:.1f}x)"
-                combined.send_health(msg)
-                print(msg)
-
-            # Check odds movements (odds_change is 0-1 decimal, convert to %)
-            odds_moves = event_alerter.check_odds_movements(limit=10)
-            for move in odds_moves[:2]:
-                try:
-                    move_pct = float(move.get("odds_change", 0)) * 100
-                except (ValueError, TypeError):
-                    move_pct = 0
-                msg = f"\n📊 ODDS MOVE: {move.get('question', '')[:40]} {move_pct:.1f}%"
-                combined.send_health(msg)
-                print(msg)
+            # Check volume spikes - REMOVED, too noisy
 
             # Clean old markets from alerted set
             active_markets = {
@@ -609,7 +796,11 @@ def list_markets(
     for m in markets:
         q = m.get("question", "Unknown")[:48]
         v = m.get("volume", 0)
-        print(f"{q:<50} ${v:>10,.0f}")
+        try:
+            v = float(v)
+            print(f"{q:<50} ${v:>10,.0f}")
+        except (ValueError, TypeError):
+            print(f"{q:<50} ${str(v):>10}")
 
 
 def import_leaderboard(
@@ -705,7 +896,9 @@ def handle_jupiter_command(
             print(
                 "Usage: python main.py jupiter quote --input-mint <mint> --output-mint <mint> --amount <amount>"
             )
-            print("Example: python main.py jupiter quote --input-mint So11111111111111111111111111111111111111112 --output-mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1")
+            print(
+                "Example: python main.py jupiter quote --input-mint So11111111111111111111111111111111111111112 --output-mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 1"
+            )
             return
 
         quote = jupiter_client.get_quote(args.input_mint, args.output_mint, args.amount)
@@ -716,6 +909,125 @@ def handle_jupiter_command(
 
     elif args.action == "swap":
         print("Swap functionality not yet implemented.")
+
+
+def handle_jupiter_price_command(
+    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
+):
+    """Handle Jupiter price commands."""
+    price_client = api_factory.get_jupiter_price_client()
+
+    if not args.mints:
+        print("Usage: python main.py jupiter-price --mints <mint1>,<mint2>,...")
+        print(
+            "Example: python main.py jupiter-price --mints So11111111111111111111111111111111111111112,EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        )
+        return
+
+    mints = [m.strip() for m in args.mints.split(",")]
+    prices = price_client.get_prices_dict(mints)
+
+    if prices:
+        print("Token Prices:")
+        for mint, price in prices.items():
+            print(f"  {mint}: ${price:.6f}")
+    else:
+        print("Could not fetch prices.")
+
+
+def handle_jupiter_portfolio_command(
+    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
+):
+    """Handle Jupiter portfolio commands."""
+    portfolio_client = api_factory.get_jupiter_portfolio_client()
+
+    if not args.address:
+        print("Usage: python main.py jupiter-portfolio <wallet_address>")
+        return
+
+    summary = portfolio_client.get_portfolio_summary(args.address)
+
+    print(f"Portfolio for {args.address}:")
+    print(f"  SOL: {summary['sol']:.4f}")
+    print(f"  Tokens: {summary['count']}")
+    for token in summary["tokens"][:10]:
+        mint = token.get("mint", "unknown")
+        amount = token.get("amount", "0")
+        print(f"    {mint}: {amount}")
+    if summary["count"] > 10:
+        print(f"    ... and {summary['count'] - 10} more")
+
+
+def handle_jupiter_trigger_command(
+    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
+):
+    """Handle Jupiter trigger/limit order commands."""
+    trigger_client = api_factory.get_jupiter_trigger_client()
+
+    if args.action == "list":
+        if not args.address:
+            print("Usage: python main.py jupiter-trigger list <wallet_address>")
+            return
+        orders = trigger_client.get_active_orders(args.address)
+        if orders:
+            print(f"Active trigger orders for {args.address}:")
+            for order in orders:
+                print(
+                    f"  {order.get('orderKey')}: {order.get('inputMint')} -> {order.get('outputMint')}"
+                )
+        else:
+            print("No active trigger orders.")
+
+    elif args.action == "history":
+        if not args.address:
+            print("Usage: python main.py jupiter-trigger history <wallet_address>")
+            return
+        orders = trigger_client.get_order_history(args.address)
+        if orders:
+            print(f"Trigger order history for {args.address}:")
+            for order in orders:
+                print(f"  {order.get('orderKey')}: {order.get('status')}")
+        else:
+            print("No order history.")
+
+    else:
+        print("Usage: python main.py jupiter-trigger <list|history> <wallet_address>")
+
+
+def handle_jupiter_recurring_command(
+    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
+):
+    """Handle Jupiter recurring/DCA commands."""
+    recurring_client = api_factory.get_jupiter_recurring_client()
+
+    if args.action == "list":
+        if not args.address:
+            print("Usage: python main.py jupiter-recurring list <wallet_address>")
+            return
+        orders = recurring_client.get_active_orders(args.address)
+        if orders:
+            print(f"Active DCA orders for {args.address}:")
+            for order in orders:
+                print(
+                    f"  {order.get('orderKey')}: {order.get('inputMint')} -> {order.get('outputMint')} every {order.get('frequency')}s"
+                )
+        else:
+            print("No active DCA orders.")
+
+    elif args.action == "history":
+        if not args.address:
+            print("Usage: python main.py jupiter-recurring history <wallet_address>")
+            return
+        orders = recurring_client.get_order_history(args.address)
+        if orders:
+            print(f"DCA order history for {args.address}:")
+            for order in orders:
+                print(f"  {order.get('orderKey')}: {order.get('status')}")
+        else:
+            print("No order history.")
+
+    else:
+        print("Usage: python main.py jupiter-recurring <list|history> <wallet_address>")
 
 
 def handle_signals_command(
@@ -730,7 +1042,9 @@ def handle_bot_command(
 ):
     """Handle bot command."""
     if not config.telegram_bot_token or not config.telegram_chat_id:
-        print("Telegram not configured. Set telegram_bot_token and telegram_chat_id in .env")
+        print(
+            "Telegram not configured. Set telegram_bot_token and telegram_chat_id in .env"
+        )
         return
     bot = TelegramBot(config.telegram_bot_token, storage, config, api_factory)
     bot.run()
@@ -933,6 +1247,32 @@ def setup_argument_parser():
     jup_p.add_argument("--output-mint", help="Output token mint address")
     jup_p.add_argument("--amount", type=int, help="Amount to swap")
 
+    # Jupiter Price
+    price_p = subparsers.add_parser(
+        "jupiter-price", help="Get token prices from Jupiter"
+    )
+    price_p.add_argument("--mints", help="Comma-separated list of token mint addresses")
+
+    # Jupiter Portfolio
+    port_p = subparsers.add_parser(
+        "jupiter-portfolio", help="Get wallet holdings from Jupiter"
+    )
+    port_p.add_argument("address", help="Wallet address")
+
+    # Jupiter Trigger (Limit Orders)
+    trig_p = subparsers.add_parser(
+        "jupiter-trigger", help="Manage trigger/limit orders"
+    )
+    trig_p.add_argument("action", choices=["list", "history"], help="Action to perform")
+    trig_p.add_argument("address", help="Wallet address", nargs="?")
+
+    # Jupiter Recurring (DCA)
+    rec_p = subparsers.add_parser(
+        "jupiter-recurring", help="Manage recurring/DCA orders"
+    )
+    rec_p.add_argument("action", choices=["list", "history"], help="Action to perform")
+    rec_p.add_argument("address", help="Wallet address", nargs="?")
+
     # Signals
     subparsers.add_parser("signals", help="Generate trading signals")
 
@@ -1002,6 +1342,10 @@ def main():
         "portfolio": show_portfolio,
         "history": show_history,
         "jupiter": handle_jupiter_command,
+        "jupiter-price": handle_jupiter_price_command,
+        "jupiter-portfolio": handle_jupiter_portfolio_command,
+        "jupiter-trigger": handle_jupiter_trigger_command,
+        "jupiter-recurring": handle_jupiter_recurring_command,
         "signals": handle_signals_command,
         "bot": handle_bot_command,
         "discord": handle_discord_command,
@@ -1027,6 +1371,10 @@ def main():
         "portfolio": [storage, config, api_factory],
         "history": [storage, config],
         "jupiter": [storage, config, api_factory],
+        "jupiter-price": [storage, config, api_factory],
+        "jupiter-portfolio": [storage, config, api_factory],
+        "jupiter-trigger": [storage, config, api_factory],
+        "jupiter-recurring": [storage, config, api_factory],
         "signals": [storage, config, api_factory],
         "bot": [storage, config, api_factory],
         "discord": [storage, config, api_factory],

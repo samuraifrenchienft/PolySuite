@@ -3,23 +3,31 @@
 import requests
 from src.config import Config
 
+
+JUPITER_API_URL = "https://api.jup.ag"
+
+
 class JupiterClient:
     """A client for the Jupiter API."""
 
     def __init__(self):
         """Initialize the client."""
         self.config = Config()
-        self.api_url = self.config.jupiter_api_key
+        self.api_url = JUPITER_API_URL
         self.headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.config.jupiter_id}",
         }
+        # Use x-api-key header for authentication
+        if self.config.jupiter_id:
+            self.headers["x-api-key"] = self.config.jupiter_id
 
-    def get_quote(self, input_mint: str, output_mint: str, amount: int, slippage_bps: int = 50):
+    def get_quote(
+        self, input_mint: str, output_mint: str, amount: int, slippage_bps: int = 50
+    ):
         """Get a quote for a swap."""
         try:
             response = requests.get(
-                f"{self.api_url}/quote",
+                f"{self.api_url}/swap/v1/quote",
                 params={
                     "inputMint": input_mint,
                     "outputMint": output_mint,

@@ -190,7 +190,7 @@ class PolymarketAPI:
                 wallets.add(addr)
         return list(wallets)
 
-    def get_active_markets(self, limit: int = 100) -> List[Dict]:
+    def get_active_markets(self, limit: int = 500) -> List[Dict]:
         """Get currently active markets with key info."""
         markets = self.get_markets(limit=limit, active=True)
         return [
@@ -201,6 +201,10 @@ class PolymarketAPI:
                 "liquidity": m.get("liquidity", 0),
                 "category": m.get("category"),
                 "outcomePrices": m.get("outcomePrices", "[]"),
+                "createdAt": m.get("createdAt"),
+                "endDate": m.get("endDate") or m.get("end_date"),
+                "groupItemTitle": m.get("groupItemTitle"),
+                "clobTokenIds": m.get("clobTokenIds"),
                 "active": True,
             }
             for m in markets
@@ -239,12 +243,29 @@ class PolymarketAPI:
             return float(data.get("price", 0))
         return None
 
+    def get_market_spread(self, token_id: str) -> Optional[float]:
+        """Get spread (ask - bid) for a token. Returns None if unavailable."""
+        if not token_id:
+            return None
+        try:
+            url = f"{CLOB_API}/spread"
+            data = self._get(url, {"token_id": token_id})
+            if data and "spread" in data:
+                return float(data["spread"])
+        except Exception:
+            pass
+        return None
+
 
 from src.config import Config
 from src.market.auth_api import AuthenticatedPolymarketAPI
 from src.market.hashdive import HashdiveClient
 from src.market.jupiter import JupiterClient
 from src.market.jupiter_prediction import JupiterPredictionAPI
+from src.market.jupiter_price import JupiterPriceAPI
+from src.market.jupiter_portfolio import JupiterPortfolioAPI
+from src.market.jupiter_trigger import JupiterTriggerAPI
+from src.market.jupiter_recurring import JupiterRecurringAPI
 from src.market.predictfolio import PredictFolioClient
 from src.market.polyscope import PolyScopeClient
 
@@ -258,6 +279,10 @@ class APIClientFactory:
         self._hashdive_client = None
         self._jupiter_client = None
         self._jupiter_prediction_client = None
+        self._jupiter_price_client = None
+        self._jupiter_portfolio_client = None
+        self._jupiter_trigger_client = None
+        self._jupiter_recurring_client = None
         self._predictfolio_client = None
         self._polyscope_client = None
         self.clients = []
@@ -327,3 +352,31 @@ class APIClientFactory:
             self._jupiter_prediction_client = JupiterPredictionAPI()
             self.clients.append(self._jupiter_prediction_client)
         return self._jupiter_prediction_client
+
+    def get_jupiter_price_client(self) -> JupiterPriceAPI:
+        """Get a singleton instance of the JupiterPriceAPI."""
+        if self._jupiter_price_client is None:
+            self._jupiter_price_client = JupiterPriceAPI()
+            self.clients.append(self._jupiter_price_client)
+        return self._jupiter_price_client
+
+    def get_jupiter_portfolio_client(self) -> JupiterPortfolioAPI:
+        """Get a singleton instance of the JupiterPortfolioAPI."""
+        if self._jupiter_portfolio_client is None:
+            self._jupiter_portfolio_client = JupiterPortfolioAPI()
+            self.clients.append(self._jupiter_portfolio_client)
+        return self._jupiter_portfolio_client
+
+    def get_jupiter_trigger_client(self) -> JupiterTriggerAPI:
+        """Get a singleton instance of the JupiterTriggerAPI."""
+        if self._jupiter_trigger_client is None:
+            self._jupiter_trigger_client = JupiterTriggerAPI()
+            self.clients.append(self._jupiter_trigger_client)
+        return self._jupiter_trigger_client
+
+    def get_jupiter_recurring_client(self) -> JupiterRecurringAPI:
+        """Get a singleton instance of the JupiterRecurringAPI."""
+        if self._jupiter_recurring_client is None:
+            self._jupiter_recurring_client = JupiterRecurringAPI()
+            self.clients.append(self._jupiter_recurring_client)
+        return self._jupiter_recurring_client

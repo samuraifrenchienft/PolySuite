@@ -245,7 +245,9 @@ class WalletStorage:
                     last_updated=row["last_updated"],
                     created_at=row["created_at"],
                     is_smart_money=row["is_smart_money"],
-                    trade_volume=row.get("trade_volume", 0),
+                    trade_volume=row["trade_volume"]
+                    if "trade_volume" in row.keys()
+                    else 0,
                 )
                 for row in rows
             ]

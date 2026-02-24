@@ -40,8 +40,13 @@ SECRET_KEYS = [
     "discord_bot_token",
     "discord_webhook_url",
     "discord_application_id",
+    "discord_alerts_webhook_url",  # For trading alerts
+    "discord_trends_webhook_url",  # For trend alerts
     "telegram_bot_token",
     "telegram_chat_id",
+    "telegram_health_chat_id",
+    "telegram_alerts_chat_id",  # For trading alerts
+    "telegram_trends_chat_id",  # For trend alerts
     "polymarket_api_key",
     "polymarket_api_secret",
     "polymarket_api_passphrase",
@@ -127,6 +132,14 @@ class Config:
         return self.config.get("discord_webhook_url", "")
 
     @property
+    def discord_alerts_webhook_url(self) -> str:
+        return self.config.get("discord_alerts_webhook_url", "")
+
+    @property
+    def discord_trends_webhook_url(self) -> str:
+        return self.config.get("discord_trends_webhook_url", "")
+
+    @property
     def polling_interval(self) -> int:
         return self.config.get("polling_interval", 60)
 
@@ -185,6 +198,18 @@ class Config:
     @property
     def telegram_chat_id(self) -> str:
         return self.config.get("telegram_chat_id", "")
+
+    @property
+    def telegram_health_chat_id(self) -> str:
+        return self.config.get("telegram_health_chat_id", "")
+
+    @property
+    def telegram_alerts_chat_id(self) -> str:
+        return self.config.get("telegram_alerts_chat_id", "")
+
+    @property
+    def telegram_trends_chat_id(self) -> str:
+        return self.config.get("telegram_trends_chat_id", "")
 
     @property
     def polymarket_api_key(self) -> str:

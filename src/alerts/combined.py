@@ -11,8 +11,9 @@ from src.config import Config
 
 
 # Rate limit handling
-MIN_INTERVAL_SECONDS = 1.0  # Telegram/Discord rate limits
+MIN_INTERVAL_SECONDS = 2.0  # Telegram/Discord rate limits - safer to avoid limits
 _last_sent_time = {"discord": 0.0, "telegram": 0.0}
+_last_alert_time = 0.0  # Track last alert for heartbeat logic
 
 
 class CombinedDispatcher:
@@ -44,6 +45,16 @@ class CombinedDispatcher:
         thread.start()
         self._worker_started = True
 
+    def mark_alert_sent(self):
+        """Mark that an alert was sent (for heartbeat logic)."""
+        global _last_alert_time
+        _last_alert_time = time.time()
+
+    def get_last_alert_time(self) -> float:
+        """Get timestamp of last alert sent."""
+        global _last_alert_time
+        return _last_alert_time
+
     def _worker(self):
         """Background worker that processes alert queue."""
         while True:
@@ -65,6 +76,9 @@ class CombinedDispatcher:
                     self._send_wallet_update(*data)
                 elif alert_type == "smart_money":
                     self._send_smart_money(*data)
+                elif alert_type == "whale_batch":
+                    self._send_whale_batch(*data)
+                self.mark_alert_sent()
             except queue.Empty:
                 continue
             except Exception as e:
@@ -137,35 +151,46 @@ class CombinedDispatcher:
         except Exception:
             has_early = False
 
-        # Format message with full details
+        # Determine urgency
         urgency = (
             "CRITICAL"
             if has_early and len(wallets) >= 3
             else ("HIGH" if has_early or len(wallets) >= 3 else "NORMAL")
         )
 
+        emoji = "🔴" if urgency == "CRITICAL" else ("🟠" if urgency == "HIGH" else "🔵")
+
+        # Clean title
         lines = [
-            f"🔥 CONVERGENCE ALERT - {urgency}",
-            "",
-            f"**Traders:** {len(wallets)} high-performers ({threshold}%+ win rate)",
-            f"**Early Entry:** {'Yes' if convergence.get('has_early_entry') else 'No'}",
-            "",
-            "*Top Wallets:*",
+            f"{emoji} CONVERGENCE {urgency}",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"👥 **{len(wallets)}** expert traders | 🎯 **{threshold}%+** win rate",
         ]
+
+        if has_early:
+            lines.append("🚀 Early entry detected!")
+
+        lines.append("")
+        lines.append("📊 *Top Traders:*")
+
         for w in wallets[:5]:  # Top 5 wallets
+            early_flag = " 🚀" if convergence and w.get("is_early_entry") else ""
+            wr = w.get("win_rate", 0)
+            wins = w.get("wins", 0)
+            trades = w.get("total_trades", 0)
             lines.append(
-                f"• {w.get('nickname', 'Unknown')}: {w.get('win_rate', 0):.1f}% ({w.get('wins', 0)}/{w.get('total_trades', 0)})"
+                f"• {w.get('nickname', 'Unknown')}: **{wr:.1f}%** ({wins}/{trades}){early_flag}"
             )
 
-        lines.extend(["", f"**Market:** {market.get('question', 'Unknown')[:200]}"])
+        lines.extend(["", f"📈 **{market.get('question', 'Unknown')[:180]}**"])
 
         volume = market.get("volume", 0)
         if volume:
-            lines.append(f"**Volume:** ${volume:,.0f}")
+            lines.append(f"💵 Volume: **${volume:,.0f}**")
 
         # Add link to market
         if market_id:
-            lines.append(f"[View on Polymarket]({self._get_market_link(market_id)})")
+            lines.append(f"[Trade →]({self._get_market_link(market_id)})")
 
         msg = "\n".join(lines)
 
@@ -190,26 +215,30 @@ class CombinedDispatcher:
         except (ValueError, TypeError):
             profit = 0
 
+        # Color coding based on profit
+        if profit >= 2.0:
+            emoji = "🟢"
+        elif profit >= 1.0:
+            emoji = "🔵"
+        else:
+            emoji = "🟠"
+
         lines = [
-            "💰 ARBITRAGE OPPORTUNITY",
+            f"{emoji} ARBITRAGE: **{profit:.2f}%**",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"YES: **${yes_ask:.2f}** | NO: **${no_ask:.2f}**",
+            f"Spread: {spread:.2f}% | Total: ${arb.get('total', 0):,.0f}",
             "",
-            f"**Profit:** {profit:.2f}%",
-            f"**Yes Price:** ${yes_ask:.2f}",
-            f"**No Price:** ${no_ask:.2f}",
-            f"**Spread:** {spread:.2f}%",
-            "",
-            f"**Total:** ${arb.get('total', 0):,.0f}",
-            "",
-            f"**Market:** {arb.get('question', 'Unknown')[:200]}",
+            f"📈 **{arb.get('question', 'Unknown')[:180]}**",
         ]
 
         volume = arb.get("volume", 0)
         if volume:
-            lines.append(f"**Volume:** ${volume:,.0f}")
+            lines.append(f"💵 Volume: **${volume:,.0f}**")
 
         # Add link
         if market_id:
-            lines.append(f"[View on Polymarket]({self._get_market_link(market_id)})")
+            lines.append(f"[Trade →]({self._get_market_link(market_id)})")
 
         msg = "\n".join(lines)
 
@@ -230,33 +259,36 @@ class CombinedDispatcher:
 
         lines = [
             "🆕 NEW MARKET",
-            "",
-            f"**{market.get('question', 'Unknown')[:300]}**",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"📈 **{market.get('question', 'Unknown')[:180]}**",
             "",
         ]
 
         volume = market.get("volume", 0)
-        if volume:
-            lines.append(f"**Volume:** ${volume:,.0f}")
-
         liquidity = market.get("liquidity", 0)
-        if liquidity:
-            lines.append(f"**Liquidity:** ${liquidity:,.0f}")
+
+        if volume or liquidity:
+            parts = []
+            if volume:
+                parts.append(f"💵 Vol: ${volume:,.0f}")
+            if liquidity:
+                parts.append(f"💧 Liq: ${liquidity:,.0f}")
+            lines.append(" | ".join(parts))
 
         # Add timeframe info
         if end_date:
-            lines.append(f"**Ends:** {end_date}")
-        if start_date:
-            lines.append(f"**Starts:** {start_date}")
+            lines.append(
+                f"⏰ Ends: {end_date[:10] if len(end_date) > 10 else end_date}"
+            )
 
         # Add category if available
         category = market.get("category") or market.get("groupItemTitle")
         if category:
-            lines.append(f"**Category:** {category}")
+            lines.append(f"🏷️ {category}")
 
         # Add link
         if market_id:
-            lines.append(f"[View on Polymarket]({self._get_market_link(market_id)})")
+            lines.append(f"[Trade →]({self._get_market_link(market_id)})")
 
         msg = "\n".join(lines)
 
@@ -273,23 +305,23 @@ class CombinedDispatcher:
 
         lines = [
             "📈 VOLUME SPIKE",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"📈 **{market.get('question', 'Unknown')[:180]}**",
             "",
-            f"**{market.get('question', 'Unknown')[:250]}**",
-            "",
-            f"**Spike:** {multiplier:.1f}x normal volume",
+            f"⚡ **{multiplier:.1f}x** normal volume",
         ]
 
         volume = market.get("volume", 0)
         if volume:
-            lines.append(f"**Volume:** ${volume:,.0f}")
+            lines.append(f"💵 Volume: **${volume:,.0f}**")
 
         avg_volume = market.get("avg_volume", volume / multiplier) if multiplier else 0
         if avg_volume:
-            lines.append(f"**Avg Volume:** ${avg_volume:,.0f}")
+            lines.append(f"📊 Avg: **${avg_volume:,.0f}**")
 
         # Add link
         if market_id:
-            lines.append(f"[View on Polymarket]({self._get_market_link(market_id)})")
+            lines.append(f"[View →]({self._get_market_link(market_id)})")
 
         msg = "\n".join(lines)
 
@@ -367,6 +399,80 @@ class CombinedDispatcher:
         t1.join()
         t2.join()
 
+    def send_whale_batch(self, trades: list):
+        """Queue batched whale trades for sending."""
+        self._queue.put(("whale_batch", (trades,)))
+
+    def _send_whale_batch(self, trades: list):
+        """Send batched whale trades as one consolidated alert."""
+        if not trades:
+            return
+
+        # Group by wallet
+        by_wallet = {}
+        for t in trades:
+            wallet = t.get("wallet", "Unknown")
+            if wallet not in by_wallet:
+                by_wallet[wallet] = []
+            by_wallet[wallet].append(t)
+
+        # Build embed
+        embed = {
+            "title": "🐋 Whale Activity",
+            "description": f"**{len(trades)} new trades detected from {len(by_wallet)} wallet(s)**",
+            "color": 0xFF6B6B,
+            "fields": [],
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+
+        for wallet, wallet_trades in by_wallet.items():
+            total_size = sum(t.get("size", 0) for t in wallet_trades)
+            trade_details = "\n".join(
+                [
+                    f"  {t.get('side', '?').upper()}: ${t.get('size', 0):,.0f} → {t.get('question', '?')[:25]}..."
+                    for t in wallet_trades[:3]
+                ]
+            )
+            if len(wallet_trades) > 3:
+                trade_details += f"\n  ... +{len(wallet_trades) - 3} more"
+
+            embed["fields"].append(
+                {
+                    "name": f"{wallet} (${total_size:,.0f} total)",
+                    "value": trade_details,
+                    "inline": False,
+                }
+            )
+
+        # Send to Discord
+        if self.has_discord:
+            self._wait_for_rate_limit("discord")
+            try:
+                requests.post(
+                    self.config.discord_webhook_url,
+                    json={"embeds": [embed]},
+                    timeout=10,
+                )
+            except Exception as e:
+                print(f"[WhaleBatch] Discord error: {e}")
+
+        # Send to Telegram
+        if self.has_telegram and self.telegram_health_chat:
+            msg = f"🐋 *Whale Alert*\n\n{len(trades)} trades from {len(by_wallet)} wallet(s)\n\n"
+            for wallet, wallet_trades in by_wallet.items():
+                total = sum(t.get("size", 0) for t in wallet_trades)
+                top_trades = "\n".join(
+                    [
+                        f"  {t.get('side', '?').upper()}: ${t.get('size', 0):,.0f} → {t.get('question', '?')[:30]}"
+                        for t in wallet_trades[:2]
+                    ]
+                )
+                if len(wallet_trades) > 2:
+                    top_trades += f"\n  ... +{len(wallet_trades) - 2} more"
+                msg += f"*{wallet}* (${total:,.0f}):\n{top_trades}\n\n"
+
+            self._send_telegram(msg, self.telegram_health_chat)
+
     def _send_health(self, message: str):
         """Send health check - Discord + Telegram private."""
         t1 = threading.Thread(target=self._send_discord, args=(message,))
@@ -377,6 +483,46 @@ class CombinedDispatcher:
         t2.start()
         t1.join()
         t2.join()
+
+    def send_to_alerts(self, message: str):
+        """Send to alerts channel (new markets, arb, convergence, whales)."""
+        chat = (
+            getattr(self.config, "telegram_alerts_chat_id", None)
+            or self.telegram_health_chat
+        )
+        webhook = (
+            getattr(self.config, "discord_alerts_webhook_url", None)
+            or self.config.discord_webhook_url
+        )
+
+        if webhook:
+            try:
+                requests.post(webhook, json={"content": message}, timeout=10)
+            except Exception as e:
+                print(f"[Alerts-Discord] Error: {e}")
+
+        if chat:
+            self._send_telegram(message, chat)
+
+    def send_to_trends(self, message: str):
+        """Send to trends channel (pump.fun, crypto moves)."""
+        chat = (
+            getattr(self.config, "telegram_trends_chat_id", None)
+            or self.telegram_health_chat
+        )
+        webhook = (
+            getattr(self.config, "discord_trends_webhook_url", None)
+            or self.config.discord_webhook_url
+        )
+
+        if webhook:
+            try:
+                requests.post(webhook, json={"content": message}, timeout=10)
+            except Exception as e:
+                print(f"[Trends-Discord] Error: {e}")
+
+        if chat:
+            self._send_telegram(message, chat)
 
     def _send_smart_money(self, wallets: list):
         """Send smart money wallet alert."""

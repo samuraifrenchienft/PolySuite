@@ -1,168 +1,243 @@
-"""Discord embed formatting for alerts."""
-from typing import List, Dict, Optional
+"""Alert formatter for clean, actionable alerts.
+
+Each alert type has consistent formatting with:
+- Clear title with emoji
+- Actionable data
+- Links where applicable
+- AI reasoning when available
+"""
+
+from typing import Optional, Dict, List
 from datetime import datetime
 
 
 class AlertFormatter:
-    """Formats alerts for Discord webhooks."""
+    """Format alerts for maximum clarity and actionability."""
 
     @staticmethod
-    def format_convergence_alert(
-        market: Dict,
-        wallets: List[Dict],
-        threshold: float
-    ) -> Dict:
-        """Format convergence alert as Discord embed.
+    def format_new_market(
+        event: dict,
+        has_arb: bool = False,
+        arb_profit: float = 0,
+        sentiment: str = "",
+        ai_insight: str = "",
+        category: str = "",
+    ) -> str:
+        """Format new market alert."""
+        question = event.get("question", "Unknown")[:100]
+        volume = event.get("volume", 0)
+        link = f"https://polymarket.com/market/{event.get('id', '')}"
 
-        Args:
-            market: Market information
-            wallets: List of converging wallets
-            threshold: Win rate threshold used
+        lines = [
+            f"🆕 **NEW MARKET**",
+            f"_{question}_",
+            f"💰 Volume: ${volume:,.0f}" if volume else "",
+        ]
 
-        Returns:
-            Discord webhook payload
-        """
-        # Build wallet list text
-        wallet_lines = []
-        for w in wallets:
-            line = f"**{w['nickname']}** — {w['win_rate']:.1f}% ({w['wins']}/{w['total_trades']} trades)"
-            wallet_lines.append(line)
+        if has_arb:
+            emoji = "🟢" if arb_profit >= 1.5 else ("🔵" if arb_profit >= 1.0 else "🟠")
+            lines.insert(1, f"{emoji} **ARB: {arb_profit:.2f}%**")
 
-        wallet_text = "\n".join(wallet_lines)
+        if category:
+            lines.append(f"📁 Category: {category}")
 
-        # Market info
-        question = market.get("question", "Unknown")[:200]
-        volume = market.get("volume", 0)
-        liquidity = market.get("liquidity", 0)
-        outcome_prices = market.get("outcomePrices", "[]")
+        if sentiment and sentiment != "neutral":
+            lines.append(f"📊 Sentiment: {sentiment.upper()}")
 
-        # Parse outcome prices if possible
-        prices_text = ""
-        try:
-            import json
-            prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
-            if prices and len(prices) >= 2:
-                prices_text = f"Yes: {prices[0]} | No: {prices[1]}"
-        except (json.JSONDecodeError, TypeError) as e:
-            print(f"Error parsing outcome prices: {e}")
+        if ai_insight:
+            lines.append(f"🤖 {ai_insight[:120]}")
 
-        # Build embed
-        embed = {
-            "title": "🔥 Convergence Alert",
-            "description": f"**{len(wallets)}** high-performers detected in the same market\n"
-                          f"Win rate threshold: **{threshold}%**+\n\n"
-                          f"{wallet_text}",
-            "color": 0xFF6B6B,  # Red-ish
-            "fields": [
-                {
-                    "name": "📊 Market",
-                    "value": question,
-                    "inline": False
-                }
-            ],
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        lines.append(f"[View]({link})")
+        return "\n".join([l for l in lines if l])
 
-        # Add volume field
-        embed["fields"].append({
-            "name": "💰 Volume",
-            "value": f"${volume:,.0f}" if isinstance(volume, (int, float)) else str(volume),
-            "inline": True
-        })
+    @staticmethod
+    def format_arb(arb: dict, ai_reasoning: str = "") -> str:
+        """Format arbitrage alert."""
+        question = arb.get("question", "Unknown")[:80]
+        yes_price = float(arb.get("yes_price", 0))
+        no_price = float(arb.get("no_price", 0))
+        profit = float(arb.get("profit_pct", 0))
 
-        # Add liquidity field
-        embed["fields"].append({
-            "name": "💵 Liquidity",
-            "value": f"${liquidity:,.0f}" if isinstance(liquidity, (int, float)) else str(liquidity),
-            "inline": True
-        })
+        emoji = "🟢" if profit >= 1.5 else ("🔵" if profit >= 1.0 else "🟠")
 
-        # Add odds if available
-        if prices_text:
-            embed["fields"].append({
-                "name": "📈 Odds",
-                "value": prices_text,
-                "inline": True
-            })
+        lines = [
+            f"{emoji} **ARBITRAGE: {profit:.2f}%**",
+            f"_{question}_",
+            f"YES: ${yes_price:.2f} | NO: ${no_price:.2f}",
+        ]
 
-        # Add Polymarket link
-        market_id = market.get("id") or market.get("conditionId")
+        if ai_reasoning:
+            lines.append(f"🤖 {ai_reasoning[:150]}")
+
+        market_id = arb.get("market_id") or arb.get("condition_id") or ""
         if market_id:
-            embed["url"] = f"https://polymarket.com/market/{market_id}"
+            lines.append(f"[View](https://polymarket.com/market/{market_id})")
 
-        return {"embeds": [embed]}
+        return "\n".join(lines)
 
     @staticmethod
-    def format_new_market_alert(market: Dict) -> Dict:
-        """Format new market alert as Discord embed.
+    def format_convergence(
+        market: dict, wallets: list, convergence: dict, ai_analysis: str = ""
+    ) -> str:
+        """Format convergence alert."""
+        question = market.get("question", "Unknown")[:80]
 
-        Args:
-            market: Market information
+        has_early = convergence.get("has_early_entry", False)
+        urgency = (
+            "CRITICAL"
+            if (has_early and len(wallets) >= 3)
+            else ("HIGH" if has_early or len(wallets) >= 3 else "NORMAL")
+        )
+        emoji = "🔴" if urgency == "CRITICAL" else ("🟠" if urgency == "HIGH" else "🔵")
 
-        Returns:
-            Discord webhook payload
-        """
-        question = market.get("question", "Unknown")[:250]
-        volume = market.get("volume", 0)
-        category = market.get("groupItemTitle", "General")
+        lines = [
+            f"{emoji} **CONVERGENCE - {urgency}**",
+            f"_{question}_",
+            f"👥 **{len(wallets)} traders** | Early: {'Yes' if has_early else 'No'}",
+        ]
 
-        embed = {
-            "title": "🆕 New Market Detected",
-            "description": question,
-            "color": 0x00FF00,  # Green
-            "fields": [
-                {
-                    "name": "📂 Category",
-                    "value": category,
-                    "inline": True
-                },
-                {
-                    "name": "💰 Volume",
-                    "value": f"${volume:,.0f}" if isinstance(volume, (int, float)) else str(volume),
-                    "inline": True
-                }
-            ],
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        if wallets:
+            lines.append("")
+            for w in wallets[:3]:
+                wr = w.get("win_rate", 0)
+                side = w.get("side", "?")
+                ep = w.get("entry_price")
+                size = w.get("size")
+                parts = [f"• {w.get('nickname', '?')}"]
+                if side and side != "?":
+                    parts.append(f"{side}")
+                if ep is not None:
+                    parts.append(f"@ {ep:.2f}")
+                if size and float(size) > 0:
+                    parts.append(f"(${float(size):,.0f})")
+                parts.append(f"| {wr:.0f}%")
+                lines.append(" ".join(parts))
 
-        market_id = market.get("id") or market.get("conditionId")
+        if ai_analysis:
+            lines.append(f"\n🤖 {ai_analysis[:120]}")
+
+        market_id = market.get("id") or market.get("conditionId") or ""
         if market_id:
-            embed["url"] = f"https://polymarket.com/market/{market_id}"
+            lines.append(f"\n[View](https://polymarket.com/market/{market_id})")
 
-        return {"embeds": [embed]}
+        return "\n".join([l for l in lines if l])
 
     @staticmethod
-    def format_wallet_alert(wallet: Dict) -> Dict:
-        """Format wallet update alert as Discord embed.
+    def format_whale_batch(trades: list, ai_summary: str = "") -> str:
+        """Format whale activity alert - cleaned up."""
+        if not trades:
+            return ""
 
-        Args:
-            wallet: Wallet information
+        by_wallet = {}
+        for t in trades:
+            w = t.get("wallet", "Unknown")
+            if w not in by_wallet:
+                by_wallet[w] = []
+            by_wallet[w].append(t)
 
-        Returns:
-            Discord webhook payload
-        """
-        nickname = wallet.get("nickname", "Unknown")
-        win_rate = wallet.get("win_rate", 0)
-        wins = wallet.get("wins", 0)
-        total = wallet.get("total_trades", 0)
+        sorted_wallets = sorted(
+            by_wallet.items(),
+            key=lambda x: sum(t.get("size", 0) for t in x[1]),
+            reverse=True,
+        )
 
-        embed = {
-            "title": "👤 Wallet Updated",
-            "description": f"**{nickname}** stats updated",
-            "color": 0x3498DB,  # Blue
-            "fields": [
+        lines = [
+            f"🐋 **WHALE ACTIVITY**",
+            f"_{len(trades)} trades from {len(by_wallet)} wallets_",
+            "",
+        ]
+
+        for wallet, wallet_trades in sorted_wallets[:5]:
+            total = sum(t.get("size", 0) for t in wallet_trades)
+            top = max(wallet_trades, key=lambda x: x.get("size", 0))
+            question = top.get("question", "?")[:30]
+            side = top.get("side", "?").upper()
+            ep = top.get("entry_price")
+            price_str = f" @ {ep:.2f}" if ep is not None else ""
+            lines.append(f"**{wallet}** - ${total:,.0f}")
+            lines.append(f"  {side}: ${top.get('size', 0):,.0f}{price_str} → {question}...")
+
+        if len(sorted_wallets) > 5:
+            lines.append(f"\n+{len(sorted_wallets) - 5} more wallets")
+
+        if ai_summary:
+            lines.append(f"\n🤖 {ai_summary[:100]}")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_trend(token: dict, analysis: str = "") -> str:
+        """Format pump.fun trend alert."""
+        name = token.get("name", "Unknown")
+        symbol = token.get("symbol", "?")
+        mint = token.get("mint", "")[:20]
+
+        lines = [
+            f"🚨 **NEW TREND**",
+            f"**{name}** (${symbol})",
+            f"mint: `{mint}...`",
+        ]
+
+        if analysis:
+            lines.append(f"\n🤖 {analysis[:150]}")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_crypto_alert(
+        symbol: str, price: float, change: float, source: str = ""
+    ) -> str:
+        """Format crypto price alert."""
+        emoji = "🚀" if change > 0 else "📉"
+        lines = [
+            f"{emoji} **{symbol}**",
+            f"${price:,.0f} ({change:+.1f}%)",
+        ]
+        if source:
+            lines[0] += f" - {source}"
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_expiring(
+        event: dict,
+        event_title: str = "",
+        yes_pct: float = None,
+        spread: float = None,
+    ) -> str:
+        """Format expiring soon alert with game/event context and market consensus."""
+        question = event.get("question", "Unknown")[:60]
+        hours = event.get("hours_left", 0)
+        mins = hours * 60
+
+        emoji = "🔴" if hours < 0.5 else ("🟠" if hours < 1 else "🔵")
+
+        lines = [
+            f"{emoji} **EXPIRING** ({mins:.0f}m left)",
+            f"_{question}_",
+        ]
+        if event_title:
+            lines.append(f"📌 {event_title}")
+        if yes_pct is not None:
+            lines.append(f"📊 Market: {yes_pct:.0%} YES / {100 - yes_pct * 100:.0f}% NO")
+        if spread is not None and spread > 0:
+            lines.append(f"📐 Spread: {spread:.2f}¢")
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_discord_embed(
+        alert_type: str, content: str, color: int = 0x00FF00
+    ) -> dict:
+        """Format as Discord embed."""
+        return {
+            "embeds": [
                 {
-                    "name": "📊 Win Rate",
-                    "value": f"{win_rate:.1f}%",
-                    "inline": True
-                },
-                {
-                    "name": "🎯 Record",
-                    "value": f"{wins}/{total}",
-                    "inline": True
+                    "title": alert_type,
+                    "description": content,
+                    "color": color,
+                    "timestamp": datetime.utcnow().isoformat(),
                 }
-            ],
-            "timestamp": datetime.utcnow().isoformat()
+            ]
         }
 
-        return {"embeds": [embed]}
+
+formatter = AlertFormatter()
