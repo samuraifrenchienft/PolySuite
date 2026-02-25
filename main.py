@@ -489,78 +489,59 @@ def monitor(
 
                 last_ai_report = current_time
 
-            # Simple whale trade alerts - check tracked wallets for new positions
-            # No leaderboard import - users add wallets they want to track
+            # Whale trade alerts - use RECENT trades only (last 6h), not old positions
             if current_time - last_smart_money_import > whale_check_interval:
-                print("\n[*] Checking tracked wallets for new trades...")
+                print("\n[*] Checking tracked wallets for recent whale trades...")
 
                 wallets = storage.list_wallets()
                 pm = polymarket_api
 
-                # Collect all whale trades for batch sending
-                whale_trades = []
+                # Only trades from last 6 hours
+                import time as _time
+                whale_hours_window = 6
+                after_ts = int(_time.time()) - (whale_hours_window * 3600)
 
-                def _norm_pos(p):
-                    """Normalize position from API (conditionId, title, outcome, avgPrice) to canonical fields."""
-                    mid = str(
-                        p.get("market_id")
-                        or p.get("conditionId")
-                        or p.get("market")
-                        or ""
-                    )
-                    q = p.get("question") or p.get("title") or "Unknown"
-                    side = p.get("side") or p.get("outcome") or "?"
-                    return {
-                        "market_id": mid,
-                        "question": q,
-                        "side": side,
-                        "size": p.get("size"),
-                        "entry_price": p.get("entry_price") or p.get("avgPrice"),
-                    }
+                whale_trades = []
+                market_cache = {}  # market_id -> {question, slug}
 
                 for wallet in wallets:
                     try:
-                        # Get current positions
-                        positions = pm.get_wallet_positions(wallet.address) or []
+                        trades = pm.get_wallet_trades(
+                            wallet.address, limit=100, after=after_ts
+                        ) or []
 
-                        # Convert sqlite3.Row objects to dicts if needed and normalize
-                        positions = [
-                            dict(p) if hasattr(p, "keys") else p for p in positions
-                        ]
-                        positions = [dict(p, **_norm_pos(p)) for p in positions]
+                        for t in trades:
+                            mid = str(t.get("conditionId") or t.get("market") or "")
+                            if not mid:
+                                continue
+                            size = float(t.get("size", 0) or 0)
+                            price = float(t.get("price", 0) or 0)
+                            # USD value: size*price (size in shares) or use value/amount if present
+                            trade_usd = float(t.get("value") or t.get("amount") or 0) or (size * price if price else size)
+                            if trade_usd < whale_min_size:
+                                continue
 
-                        # Check for new positions (simple comparison)
-                        last_pos = getattr(wallet, "_last_positions", [])
-                        last_pos = [
-                            dict(p) if hasattr(p, "keys") else p for p in last_pos
-                        ]
-                        last_mids = set(str(p.get("market_id", "")) for p in last_pos)
-                        curr_mids = set(str(p.get("market_id", "")) for p in positions)
+                            # Fetch market for question/slug (cache for reuse)
+                            if mid not in market_cache:
+                                m = pm.get_market(mid) or pm.get_market_details(mid)
+                                market_cache[mid] = {
+                                    "question": (m.get("question") or m.get("title") or "Unknown")[:35] if m else "Unknown",
+                                    "slug": m.get("slug", "") if m else "",
+                                }
 
-                        new_markets = curr_mids - last_mids
-
-                        if new_markets and len(new_markets) > 0:
-                            # Collect whale trades for batch (only >= $10k)
-                            for pos in positions:
-                                mid = str(pos.get("market_id", ""))
-                                trade_size = float(pos.get("size", 0) or 0)
-                                if mid in new_markets and trade_size >= whale_min_size:
-                                    whale_trades.append(
-                                        {
-                                            "wallet": wallet.nickname,
-                                            "address": wallet.address[:10] + "...",
-                                            "side": pos.get("side", "?"),
-                                            "size": trade_size,
-                                            "question": pos.get("question", "Unknown")[
-                                                :35
-                                            ],
-                                            "market_id": mid,
-                                            "entry_price": pos.get("entry_price"),
-                                        }
-                                    )
-
-                            # Store current as last
-                            wallet._last_positions = positions
+                            q = market_cache[mid]["question"]
+                            whale_trades.append(
+                                {
+                                    "wallet": wallet.nickname,
+                                    "address": wallet.address[:10] + "...",
+                                    "side": t.get("outcome") or t.get("side", "?"),
+                                    "size": trade_usd,
+                                    "question": q,
+                                    "market_id": mid,
+                                    "entry_price": price,
+                                    "slug": market_cache[mid].get("slug", ""),
+                                }
+                            )
 
                     except Exception as e:
                         print(f"Whale check error {wallet.address[:12]}...: {e}")

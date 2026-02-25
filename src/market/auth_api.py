@@ -102,17 +102,41 @@ class AuthenticatedPolymarketAPI:
             print(f"Error fetching user positions for {address}: {e}")
         return []
 
-    def get_user_trades(self, address: str, limit: int = 100) -> List[dict]:
-        """Get user's trade history."""
+    def get_user_trades(
+        self, address: str, limit: int = 100, after: int = None
+    ) -> List[dict]:
+        """Get user's trade history. Optionally filter to trades after Unix timestamp."""
         url = f"https://data-api.polymarket.com/trades?user={address}&limit={limit}"
         try:
             resp = self.session.get(url, timeout=30)
             if resp.status_code == 200:
                 try:
-                    return resp.json()
+                    trades = resp.json()
                 except requests.exceptions.JSONDecodeError as e:
                     print(f"Error decoding JSON from user trades: {e}")
                     return []
+                if not trades or after is None:
+                    return trades or []
+                # Filter client-side to recent trades only
+                from datetime import datetime
+                result = []
+                for t in trades:
+                    ts = t.get("timestamp") or t.get("matchTime") or t.get("match_time") or t.get("createdAt")
+                    if ts is None:
+                        continue
+                    try:
+                        if isinstance(ts, (int, float)):
+                            t_val = float(ts)
+                        elif isinstance(ts, str):
+                            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            t_val = dt.timestamp()
+                        else:
+                            continue
+                        if t_val >= after:
+                            result.append(t)
+                    except (ValueError, TypeError):
+                        continue
+                return result
         except requests.RequestException as e:
             print(f"Error fetching user trades for {address}: {e}")
         return []
@@ -183,9 +207,11 @@ class AuthenticatedPolymarketAPI:
         """Get current positions for a wallet."""
         return self.get_user_positions(address)
 
-    def get_wallet_trades(self, address: str, limit: int = 100) -> List[Dict]:
-        """Get trade history for a wallet."""
-        return self.get_user_trades(address, limit)
+    def get_wallet_trades(
+        self, address: str, limit: int = 100, after: int = None
+    ) -> List[Dict]:
+        """Get trade history for a wallet. Optionally filter to trades after Unix timestamp."""
+        return self.get_user_trades(address, limit, after)
 
     def get_leaderboard(self, limit: int = 50) -> List[Dict]:
         """Get top traders from Polymarket."""
@@ -261,9 +287,11 @@ class AuthenticatedPolymarketAPI:
         """Get current positions for a wallet."""
         return self.get_user_positions(address)
 
-    def get_wallet_trades(self, address: str, limit: int = 100) -> List[Dict]:
-        """Get trade history for a wallet."""
-        return self.get_user_trades(address, limit)
+    def get_wallet_trades(
+        self, address: str, limit: int = 100, after: int = None
+    ) -> List[Dict]:
+        """Get trade history for a wallet. Optionally filter to trades after Unix timestamp."""
+        return self.get_user_trades(address, limit, after)
 
     def close(self):
         """Close the session."""

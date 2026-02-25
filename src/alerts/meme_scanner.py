@@ -123,8 +123,8 @@ class MemeCoinScanner:
                 data = resp.json()
                 info["holders"] = data.get("holderCount")
                 info["total_supply"] = data.get("totalSupply")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[MemeScanner] token-insights error: {e}")
 
         return info
 

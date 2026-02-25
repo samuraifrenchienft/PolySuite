@@ -147,10 +147,35 @@ class PolymarketAPI:
         url = f"{DATA_API}/positions"
         return self._get_list(url, {"user": address})
 
-    def get_wallet_trades(self, address: str, limit: int = 100) -> List[Dict]:
-        """Get trade history for a wallet."""
+    def get_wallet_trades(
+        self, address: str, limit: int = 100, after: int = None
+    ) -> List[Dict]:
+        """Get trade history for a wallet. Optionally filter to trades after Unix timestamp."""
         url = f"{DATA_API}/trades"
-        return self._get_list(url, {"user": address, "limit": limit})
+        trades = self._get_list(url, {"user": address, "limit": limit})
+        if not trades or after is None:
+            return trades or []
+        # Filter client-side (Data API may not support 'after' param)
+        cutoff = after
+        result = []
+        for t in trades:
+            ts = t.get("timestamp") or t.get("matchTime") or t.get("match_time") or t.get("createdAt")
+            if ts is None:
+                continue
+            try:
+                if isinstance(ts, (int, float)):
+                    t_val = float(ts)
+                elif isinstance(ts, str):
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    t_val = dt.timestamp()
+                else:
+                    continue
+                if t_val >= cutoff:
+                    result.append(t)
+            except (ValueError, TypeError):
+                continue
+        return result
 
     def get_wallet_markets(self, address: str) -> List[str]:
         """Get list of market IDs a wallet has traded in."""
@@ -363,6 +388,8 @@ class PolymarketAPI:
         return [
             {
                 "id": m.get("id") or m.get("conditionId"),
+                "conditionId": m.get("conditionId"),
+                "slug": m.get("slug") or m.get("eventSlug"),
                 "question": m.get("question", "Unknown"),
                 "volume": m.get("volume", 0),
                 "liquidity": m.get("liquidity", 0),
@@ -419,8 +446,8 @@ class PolymarketAPI:
             data = self._get(url, {"token_id": token_id})
             if data and "spread" in data:
                 return float(data["spread"])
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[API] get_market_spread error: {e}")
         return None
 
 

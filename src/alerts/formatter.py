@@ -11,6 +11,17 @@ from typing import Optional, Dict, List
 from datetime import datetime
 
 
+def _polymarket_link(obj: dict) -> str:
+    """Build working Polymarket URL. Prefer slug (event/market) over id/conditionId."""
+    slug = obj.get("slug") or obj.get("event_slug")
+    if slug:
+        return f"https://polymarket.com/event/{slug}"
+    mid = obj.get("conditionId") or obj.get("market_id") or obj.get("id") or obj.get("condition_id") or ""
+    if mid:
+        return f"https://polymarket.com/market/{mid}"
+    return ""
+
+
 class AlertFormatter:
     """Format alerts for maximum clarity and actionability."""
 
@@ -26,7 +37,7 @@ class AlertFormatter:
         """Format new market alert."""
         question = event.get("question", "Unknown")[:100]
         volume = event.get("volume", 0)
-        link = f"https://polymarket.com/market/{event.get('id', '')}"
+        link = _polymarket_link(event) or f"https://polymarket.com/market/{event.get('id', '')}"
 
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
@@ -71,9 +82,9 @@ class AlertFormatter:
         if ai_reasoning:
             lines.append(f"🤖 {ai_reasoning[:150]}")
 
-        market_id = arb.get("market_id") or arb.get("condition_id") or ""
-        if market_id:
-            lines.append(f"[View](https://polymarket.com/market/{market_id})")
+        link = _polymarket_link(arb) or (f"https://polymarket.com/market/{arb.get('market_id') or arb.get('condition_id')}" if (arb.get("market_id") or arb.get("condition_id")) else "")
+        if link:
+            lines.append(f"[View]({link})")
 
         return "\n".join(lines)
 
@@ -119,9 +130,9 @@ class AlertFormatter:
         if ai_analysis:
             lines.append(f"\n🤖 {ai_analysis[:120]}")
 
-        market_id = market.get("id") or market.get("conditionId") or ""
-        if market_id:
-            lines.append(f"\n[View](https://polymarket.com/market/{market_id})")
+        link = _polymarket_link(market) or f"https://polymarket.com/market/{market.get('id') or market.get('conditionId') or ''}"
+        if link:
+            lines.append(f"\n[View]({link})")
 
         return "\n".join([l for l in lines if l])
 
@@ -167,6 +178,13 @@ class AlertFormatter:
         if ai_summary:
             lines.append(f"\n🤖 {ai_summary[:100]}")
 
+        # Add link to top trade's market if available
+        if trades and trades[0].get("market_id"):
+            top = max(trades, key=lambda x: x.get("size", 0))
+            link = _polymarket_link(top) or f"https://polymarket.com/market/{top.get('market_id', '')}"
+            if link:
+                lines.append(f"\n[View on Polymarket]({link})")
+
         return "\n".join(lines)
 
     @staticmethod
@@ -193,7 +211,7 @@ class AlertFormatter:
         question = market.get("question", "Unknown")[:80]
         volume = float(market.get("volume", 0) or 0)
         yes_pct = market.get("yes_pct")
-        link = f"https://polymarket.com/market/{market.get('id', '')}"
+        link = _polymarket_link(market) or f"https://polymarket.com/market/{market.get('id', '')}"
 
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
@@ -225,7 +243,7 @@ class AlertFormatter:
         """Format sports market alert."""
         question = market.get("question", "Unknown")[:80]
         volume = float(market.get("volume", 0) or 0)
-        link = f"https://polymarket.com/market/{market.get('id', '')}"
+        link = _polymarket_link(market) or f"https://polymarket.com/market/{market.get('id', '')}"
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
             "🏀 **SPORTS**",
@@ -272,7 +290,7 @@ class AlertFormatter:
         """Format politics market alert."""
         question = market.get("question", "Unknown")[:80]
         volume = float(market.get("volume", 0) or 0)
-        link = f"https://polymarket.com/market/{market.get('id', '')}"
+        link = _polymarket_link(market) or f"https://polymarket.com/market/{market.get('id', '')}"
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
             "🗳️ **POLITICS**",
@@ -307,6 +325,9 @@ class AlertFormatter:
             lines.append(f"📊 Market: {yes_pct:.0%} YES / {100 - yes_pct * 100:.0f}% NO")
         if spread is not None and spread > 0:
             lines.append(f"📐 Spread: {spread:.2f}¢")
+        link = _polymarket_link(event) or f"https://polymarket.com/market/{event.get('id') or event.get('conditionId') or ''}"
+        if link:
+            lines.append(f"[View]({link})")
         return "\n".join(lines)
 
     @staticmethod

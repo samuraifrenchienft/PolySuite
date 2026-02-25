@@ -49,9 +49,62 @@ class TrendScanner:
             )
             if resp.status_code == 200:
                 return resp.json()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[TrendScanner] pump.fun graduated error: {e}")
         return []
+
+    def get_dexscreener_trending(self, limit: int = 15) -> List[Dict]:
+        """Get trending Solana tokens from DexScreener (community takeovers + token boosts)."""
+        tokens = []
+        seen = set()
+
+        # Community takeovers - trending tokens
+        try:
+            resp = self.session.get(
+                "https://api.dexscreener.com/community-takeovers/latest/v1",
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in (data if isinstance(data, list) else [])[:limit]:
+                    addr = item.get("tokenAddress")
+                    if addr and addr not in seen:
+                        seen.add(addr)
+                        tokens.append({
+                            "name": item.get("description", "")[:50] or "Unknown",
+                            "symbol": "?",
+                            "mint": addr,
+                            "address": addr,
+                            "source": "dexscreener_takeover",
+                            "chainId": item.get("chainId", ""),
+                        })
+        except Exception as e:
+            print(f"[TrendScanner] DexScreener takeovers error: {e}")
+
+        # Token boosts - promoted/trending
+        try:
+            resp = self.session.get(
+                "https://api.dexscreener.com/token-boosts/latest/v1",
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in (data if isinstance(data, list) else [])[:limit]:
+                    addr = item.get("tokenAddress")
+                    if addr and addr not in seen:
+                        seen.add(addr)
+                        tokens.append({
+                            "name": item.get("description", "")[:50] or "Unknown",
+                            "symbol": "?",
+                            "mint": addr,
+                            "address": addr,
+                            "source": "dexscreener_boost",
+                            "chainId": item.get("chainId", ""),
+                        })
+        except Exception as e:
+            print(f"[TrendScanner] DexScreener boosts error: {e}")
+
+        return tokens[:limit]
 
     def analyze_token(self, token: Dict) -> Dict:
         """Use AI to analyze if a token is worth alerting."""
@@ -123,13 +176,36 @@ REASON: [1 sentence]"""
 
         return alerts
 
+    def scan_dexscreener_trending(self, limit: int = 10) -> List[Dict]:
+        """Scan DexScreener trending tokens for alerts."""
+        alerts = []
+        tokens = self.get_dexscreener_trending(limit=limit)
+        if tokens:
+            print(f"[TrendScanner] Found {len(tokens)} DexScreener trending tokens")
+        for token in tokens[:5]:
+            if token.get("chainId") == "solana":
+                analysis = self.analyze_token(token)
+                if analysis.get("alert"):
+                    alerts.append({
+                        "type": "trending",
+                        "source": "dexscreener",
+                        "token": token,
+                        "analysis": analysis,
+                    })
+        return alerts
+
     def scan_all(self) -> List[Dict]:
         """Scan all sources."""
         alerts = []
         alerts.extend(self.scan_new_tokens())
         alerts.extend(self.scan_graduated())
+        alerts.extend(self.scan_dexscreener_trending())
         return alerts
 
 
-# Singleton
-trendscanner = TrendScanner()
+# Singleton - wire AI filter for token analysis
+try:
+    from src.ai.engine import ai_filter
+    trendscanner = TrendScanner(ai_filter=ai_filter)
+except ImportError:
+    trendscanner = TrendScanner()

@@ -44,30 +44,47 @@ class WalletVetting:
         unresolved_losses = 0
         resolved_markets = set()
 
+        # N+1 fix: collect unique market_ids, fetch once per id
+        market_ids = set()
+        trade_market_map = []
         for trade in trades:
+            mid = trade.get("conditionId") or trade.get("market")
+            if mid:
+                market_ids.add(mid)
+                trade_market_map.append((trade, mid))
+
+        market_cache = {}
+        for mid in market_ids:
+            market_cache[mid] = self.api.get_market(mid)
+
+        for trade, market_id in trade_market_map:
             size = float(trade.get("size", 0) or 0)
             price = float(trade.get("price", 0) or 0)
             side = trade.get("side", "").upper()
-            market_id = trade.get("conditionId") or trade.get("market")
 
             total_volume += size * price
 
-            if market_id:
-                market = self.api.get_market(market_id)
-                if market:
-                    resolved = market.get("resolved") or market.get("closed")
-                    if resolved:
-                        resolved_markets.add(market_id)
+            market = market_cache.get(market_id)
+            if market:
+                resolved = market.get("resolved") or market.get("closed")
+                if resolved:
+                    resolved_markets.add(market_id)
 
-                        outcome = market.get("outcome")
-                        if outcome:
-                            if side == "BUY" and outcome.lower() == "yes":
-                                wins += 1
-                            elif side == "SELL" and outcome.lower() == "no":
-                                wins += 1
-                            else:
-                                if not self._has_closed_position(address, market_id):
-                                    unresolved_losses += 1
+                    winning_outcome = (market.get("outcome") or "").lower()
+                    if winning_outcome:
+                        # Use trade outcome (YES/NO) - BUY can be buying YES or NO
+                        trade_outcome = (trade.get("outcome") or "").lower()
+                        if not trade_outcome:
+                            # Infer from price: < 0.5 typically NO, else YES
+                            trade_outcome = "no" if price < 0.5 else "yes"
+                        # Win: bought winning side, or sold losing side before resolution
+                        if trade_outcome == winning_outcome and side == "BUY":
+                            wins += 1
+                        elif trade_outcome != winning_outcome and side == "SELL":
+                            wins += 1
+                        elif trade_outcome != winning_outcome and side == "BUY":
+                            if not self._has_closed_position(address, market_id):
+                                unresolved_losses += 1
 
         analysis["total_volume"] = total_volume
         analysis["avg_bet_size"] = total_volume / len(trades) if trades else 0
@@ -122,8 +139,8 @@ class WalletVetting:
             if ts:
                 try:
                     trade_times.append(datetime.fromisoformat(ts.replace("Z", "")))
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[Vetting] timestamp parse: {e}")
 
             size = float(trade.get("size", 0) or 0)
             if size > 1000:
@@ -150,7 +167,8 @@ class WalletVetting:
         """Check if wallet has closed their position in a market."""
         try:
             positions = self.api.get_wallet_positions(address) if self.api else []
-        except Exception:
+        except Exception as e:
+            print(f"[Vetting] _has_closed_position error: {e}")
             positions = []
         for pos in positions:
             pos_market = pos.get("conditionId") or pos.get("market")

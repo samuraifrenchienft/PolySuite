@@ -50,9 +50,12 @@ class ConvergenceDetector:
         """Get all tracked wallets above win rate threshold."""
         return self.wallet_storage.get_high_performers(self.threshold)
 
-    def _get_market_age(self, market_id: str) -> Optional[float]:
+    def _get_market_age(self, market_id: str, market_cache: Dict = None) -> Optional[float]:
         """Get market age in hours from creation time."""
-        market = self.api.get_market(market_id)
+        cache = market_cache or {}
+        if market_id not in cache:
+            cache[market_id] = self.api.get_market(market_id)
+        market = cache[market_id]
         if not market:
             return None
 
@@ -72,7 +75,8 @@ class ConvergenceDetector:
 
             age = datetime.now(timezone.utc) - created_time
             return age.total_seconds() / 3600
-        except Exception:
+        except Exception as e:
+            print(f"[Convergence] _get_market_age error: {e}")
             return None
 
     def _get_wallet_entry_time(self, wallet: str, market_id: str) -> Optional[datetime]:
@@ -88,12 +92,13 @@ class ConvergenceDetector:
                         if ts.endswith("Z"):
                             ts = ts[:-1] + "+00:00"
                         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[Convergence] _get_wallet_entry_time parse error: {e}")
 
         try:
             positions = self.api.get_wallet_positions(wallet) if self.api else []
-        except Exception:
+        except Exception as e:
+            print(f"[Convergence] get_wallet_positions error: {e}")
             positions = []
         for pos in positions:
             pos_market = pos.get("conditionId") or pos.get("market")
@@ -111,9 +116,12 @@ class ConvergenceDetector:
 
         return None
 
-    def _is_early_entry(self, wallet: str, market_id: str) -> bool:
+    def _is_early_entry(self, wallet: str, market_id: str, market_cache: Dict = None) -> bool:
         """Check if wallet entered within early_entry_minutes of market creation."""
-        market = self.api.get_market(market_id)
+        cache = market_cache or {}
+        if market_id not in cache:
+            cache[market_id] = self.api.get_market(market_id)
+        market = cache[market_id]
         if not market:
             return False
 
@@ -132,7 +140,8 @@ class ConvergenceDetector:
                 market_created = datetime.fromtimestamp(
                     created_at / 1000, tz=timezone.utc
                 )
-        except Exception:
+        except Exception as e:
+            print(f"[Convergence] _is_early_entry parse error: {e}")
             return False
 
         entry_time = self._get_wallet_entry_time(wallet, market_id)
@@ -167,13 +176,15 @@ class ConvergenceDetector:
         time_window = now - timedelta(hours=self.time_window_hours)
 
         market_convergences: Dict[str, Dict] = {}
+        market_cache: Dict[str, Optional[Dict]] = {}  # market_id -> market data (N+1 fix)
 
         for wallet in high_performers:
             try:
                 positions = (
                     self.api.get_wallet_positions(wallet.address) if self.api else []
                 )
-            except Exception:
+            except Exception as e:
+                print(f"[Convergence] get_wallet_positions for {wallet.nickname}: {e}")
                 positions = []
 
             for pos in positions:
@@ -199,8 +210,8 @@ class ConvergenceDetector:
 
                         if pos_time < time_window:
                             continue
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[Convergence] pos timestamp parse: {e}")
 
                 if market_id not in market_convergences:
                     market_convergences[market_id] = {
@@ -231,7 +242,7 @@ class ConvergenceDetector:
                         "size": size,
                     }
 
-                    if self._is_early_entry(wallet.address, market_id):
+                    if self._is_early_entry(wallet.address, market_id, market_cache):
                         entry_info["is_early_entry"] = True
                         market_convergences[market_id]["has_early_entry"] = True
                         market_convergences[market_id]["early_entry_wallets"].append(
@@ -248,12 +259,14 @@ class ConvergenceDetector:
             if only_early_entry and not conv["has_early_entry"]:
                 continue
 
-            market = self.api.get_market(market_id)
+            if market_id not in market_cache:
+                market_cache[market_id] = self.api.get_market(market_id)
+            market = market_cache[market_id]
             conv["market_info"] = market
             conv["wallet_count"] = len(conv["wallets"])
 
             if only_new_markets:
-                age = self._get_market_age(market_id)
+                age = self._get_market_age(market_id, market_cache)
                 if age is None:
                     continue
                 if age > self.max_market_age_hours:

@@ -148,9 +148,12 @@ class CombinedDispatcher:
             print(f"[Telegram] Error: {e}")
             return False
 
-    def _get_market_link(self, market_id: str) -> str:
-        """Get Polymarket link for a market."""
-        return f"https://polymarket.com/market/{market_id}"
+    def _get_market_link(self, market_id_or_obj) -> str:
+        """Get Polymarket link. Prefer slug when obj has it (dict with slug/conditionId/id)."""
+        if isinstance(market_id_or_obj, dict):
+            from src.alerts.formatter import _polymarket_link
+            return _polymarket_link(market_id_or_obj) or f"https://polymarket.com/market/{market_id_or_obj.get('id') or market_id_or_obj.get('conditionId') or ''}"
+        return f"https://polymarket.com/market/{market_id_or_obj}"
 
     def _send_convergence(
         self, market: dict, wallets: list, threshold: float, convergence: dict
@@ -201,9 +204,10 @@ class CombinedDispatcher:
         if volume:
             lines.append(f"💵 Volume: **${volume:,.0f}**")
 
-        # Add link to market
-        if market_id:
-            lines.append(f"[Trade →]({self._get_market_link(market_id)})")
+        # Add link to market (use full market for slug when available)
+        link = self._get_market_link(market) if market_id else ""
+        if link:
+            lines.append(f"[Trade →]({link})")
 
         msg = "\n".join(lines)
 
