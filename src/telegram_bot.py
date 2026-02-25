@@ -72,16 +72,22 @@ class TelegramBot:
         @rate_limited
         def add(message):
             try:
-                address = message.text.split()[1]
+                parts = message.text.split()
+                if len(parts) < 2:
+                    self.bot.reply_to(message, "Usage: /add <address> [nickname]")
+                    return
+
+                address = parts[1]
                 if not is_valid_address(address):
                     self.bot.reply_to(message, "Invalid wallet address format.")
                     return
-                self.storage.add_wallet(
-                    Wallet(address=address, nickname=address[:12] + "...")
-                )
+
+                nickname = parts[2] if len(parts) > 2 else address[:12] + "..."
+
+                self.storage.add_wallet(Wallet(address=address, nickname=nickname))
                 self.bot.reply_to(message, f"Added wallet: {address}")
             except IndexError:
-                self.bot.reply_to(message, "Usage: /add <address>")
+                self.bot.reply_to(message, "Usage: /add <address> [nickname]")
 
         @self.bot.message_handler(commands=["ai", "ask"])
         def ask_ai(message):

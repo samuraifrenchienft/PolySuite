@@ -63,7 +63,7 @@ class DiscordBot(commands.Bot):
             await interaction.response.send_message(msg, ephemeral=True)
 
         @self.tree.command(name="add", description="Add wallet to track")
-        async def add_slash(interaction: discord.Interaction, address: str):
+        async def add_slash(interaction: discord.Interaction, address: str, nickname: str = None):
             MAX_WALLETS = 10  # Max wallets per user
 
             if not is_valid_address(address):
@@ -89,11 +89,14 @@ class DiscordBot(commands.Bot):
                 )
                 return
 
+            # Use provided nickname or create a default one
+            final_nickname = nickname if nickname else address[:12] + "..."
+
             self.storage.add_wallet(
-                Wallet(address=address, nickname=address[:12] + "...")
+                Wallet(address=address, nickname=final_nickname)
             )
             await interaction.response.send_message(
-                f"✅ Added `{address[:12]}...` to tracking!\nNow tracking {len(wallets) + 1}/{MAX_WALLETS} wallets.",
+                f"✅ Added `{final_nickname}` to tracking!\nNow tracking {len(wallets) + 1}/{MAX_WALLETS} wallets.",
                 ephemeral=True,
             )
 
@@ -417,25 +420,34 @@ class DiscordBot(commands.Bot):
             await ctx.message.reply(msg)
 
         @self.command(name="add")
-        async def add_msg(ctx, address: str):
+        async def add_msg(ctx, *, args: str = None):
             MAX_WALLETS = 10
+            if not args:
+                await ctx.message.reply("Usage: !add <address> [nickname]")
+                return
+
+            parts = args.split()
+            address = parts[0]
+            nickname = parts[1] if len(parts) > 1 else address[:12] + "..."
+
             if not is_valid_address(address):
                 await ctx.message.reply("Invalid address.")
                 return
+
             existing = self.storage.get_wallet(address)
             if existing:
                 await ctx.message.reply("Already tracking this wallet.")
                 return
+
             wallets = self.storage.list_wallets()
             if len(wallets) >= MAX_WALLETS:
                 await ctx.message.reply(
                     f"Limit reached ({MAX_WALLETS} wallets). Remove one first."
                 )
                 return
-            self.storage.add_wallet(
-                Wallet(address=address, nickname=address[:12] + "...")
-            )
-            await ctx.message.reply(f"Added: {address[:12]}...")
+
+            self.storage.add_wallet(Wallet(address=address, nickname=nickname))
+            await ctx.message.reply(f"Added: {nickname} (`{address[:8]}...`)")
 
     async def _handle_ai(self, interaction, question: str):
         """Handle AI query via slash command - uses Groq."""

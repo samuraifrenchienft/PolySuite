@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-
 from dotenv import load_dotenv
 
 
@@ -114,8 +113,12 @@ class Config:
 
     def save(self) -> None:
         """Save config to file."""
+        # Only save non-secret keys
+        config_to_save = {
+            k: v for k, v in self.config.items() if k not in SECRET_KEYS
+        }
         with open(self.config_path, "w") as f:
-            json.dump(self.config, f, indent=2)
+            json.dump(config_to_save, f, indent=2)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get config value."""

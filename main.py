@@ -35,6 +35,10 @@ from src.wallet.storage import WalletStorage
 from src.ai.engine import ai_filter
 from src.alerts.formatter import formatter
 from src.alerts.trendscanner import trendscanner
+from src.wallet.vetting import WalletVetting
+from src.alerts.events import EventAlerter
+from src.agent import Agent
+from src.alerts.combined import CombinedDispatcher
 
 
 def add_wallet(args, storage: WalletStorage, _config: Config):
@@ -122,7 +126,7 @@ def refresh_wallet(
 
 
 def refresh_all(
-    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
+    _args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
 ):
     """Refresh all wallet stats."""
     wallets = storage.list_wallets()
@@ -151,8 +155,132 @@ def refresh_all(
     print("\n[+] All wallets refreshed")
 
 
+def _generate_ai_market_report(polymarket_api, combined):
+    """Generates and sends an AI market report."""
+    print("\n[*] Generating AI market report...")
+    try:
+        # Fetch fresh markets (sort by volume client-side)
+        all_markets = polymarket_api.get_markets(limit=200, active=True) or []
+        all_markets.sort(
+            key=lambda x: float(x.get("volume", 0) or 0), reverse=True
+        )
+
+        # Get prices for analysis
+        scored = []
+        for m in all_markets:
+            v = float(m.get("volume", 0) or 0)
+            if v < 50000:  # Skip low volume
+                continue
+
+            # Get odds
+            prices = m.get("outcomePrices", "")
+            odds_info = {}
+            if prices:
+                try:
+                    p = (
+                        json.loads(prices)
+                        if isinstance(prices, str)
+                        else prices
+                    )
+                    if p and len(p) >= 2:
+                        yes_odds = float(p[0])
+                        odds_info = {
+                            "yes": yes_odds,
+                            "no": float(p[1]),
+                            "spread": abs((yes_odds + float(p[1])) - 1.0),
+                        }
+                except Exception:
+                    pass
+
+            # AI analyze
+            analysis = ai_filter.analyze_new_market(m)
+
+            scored.append(
+                {
+                    "market": m,
+                    "volume": v,
+                    "odds": odds_info,
+                    "analysis": analysis,
+                    "score": v / 1000000
+                    + (1.0 if analysis.get("opportunity") == "HIGH" else 0),
+                }
+            )
+
+        # Sort by AI score
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        top_5 = scored[:5]
+
+        # Fetch recent trades for top markets for entry-zone analysis
+        markets_for_entry = []
+        for item in top_5:
+            m = dict(item["market"])
+            mid = m.get("id")
+            if mid:
+                try:
+                    trades = polymarket_api.get_market_trades(
+                        mid, limit=20
+                    ) or []
+                    m["recent_trades"] = trades
+                except Exception:
+                    m["recent_trades"] = []
+            else:
+                m["recent_trades"] = []
+            markets_for_entry.append(m)
+
+        # Entry zone analysis
+        entry_zones = []
+        if markets_for_entry:
+            try:
+                entry_zones = ai_filter.analyze_entry_zones(
+                    markets_for_entry
+                )
+            except Exception:
+                entry_zones = [
+                    {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                ] * len(markets_for_entry)
+
+        if top_5:
+            report = "📊 AI MARKET REPORT - Optimal Entry Points\n\n"
+            for i, item in enumerate(top_5, 1):
+                m = item["market"]
+                q = m.get("question", "")[:60]
+                v = item["volume"]
+                odds = item["odds"]
+                ana = item["analysis"]
+                ez = (
+                    entry_zones[i - 1]
+                    if i <= len(entry_zones)
+                    else {}
+                )
+
+                report += f"{i}. {q}\n"
+                report += f"   Vol: ${v:,.0f} | "
+                if odds:
+                    report += f"YES: {odds.get('yes', 0) * 100:.0f}% | NO: {odds.get('no', 0) * 100:.0f}%"
+                report += "\n"
+
+                # Entry zone from AI
+                zone = ez.get("entry_zone", "")
+                reason = ez.get("reason", "") or ana.get("analysis", "") or ana.get("trigger", "")
+                conf = ez.get("confidence", "")
+                if zone:
+                    report += f"   ENTRY: {zone}"
+                    if conf:
+                        report += f" ({conf})"
+                    report += "\n"
+                if reason:
+                    report += f"   -> {reason[:80]}\n"
+                report += "\n"
+
+            # Send report
+            combined.send_to_alerts(report)
+            print(f"   AI Report sent with {len(top_5)} top picks")
+    except Exception as e:
+        print(f"   AI Report error: {e}")
+
+
 def monitor(
-    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
+    _args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
 ):
     """Run continuous monitoring mode with convergence detection."""
     print("Starting PolySuite monitor...")
@@ -185,9 +313,6 @@ def monitor(
         config.discord_webhook_url, cooldown_seconds=config.alert_cooldown
     )
 
-    # Use combined dispatcher for simultaneous Discord + Telegram alerts
-    from src.alerts.combined import CombinedDispatcher
-
     combined = CombinedDispatcher(config)
 
     telegram = TelegramDispatcher(config.telegram_bot_token, config.telegram_chat_id)
@@ -204,7 +329,7 @@ def monitor(
     leaderboard_importer = LeaderboardImporter(api_factory)
     smart_money_detector = SmartMoneyDetector(api_factory)
 
-    from src.alerts.events import EventAlerter
+
 
     event_alerter = EventAlerter(
         api_factory,
@@ -244,13 +369,11 @@ def monitor(
     # Alert check intervals - more aggressive
     new_market_check_interval = 60  # Check for new markets every 1 min
     volume_check_interval = 30  # Check volume every 30 seconds
-    odds_check_interval = 60  # Check odds every 1 min
+
     crypto_short_term_interval = config.crypto_short_term_interval
     sports_alert_interval = config.sports_alert_interval
     politics_alert_interval = config.politics_alert_interval
-    last_new_market_check = 0
-    last_volume_check = 0
-    last_odds_check = 0
+
     last_crypto_short_term_check = 0
     last_sports_alert_check = 0
     last_politics_alert_check = 0
@@ -336,9 +459,7 @@ def monitor(
                         except:
                             continue
 
-                        name = token.get("name", "Unknown")
                         symbol = token.get("symbol", "?")
-                        mint = token.get("mint", "")[:20]
 
                         msg = formatter.format_trend(token, "")
 
@@ -364,129 +485,7 @@ def monitor(
 
             # AI Report every 30 minutes - optimal entry points with entry-zone analysis
             if current_time - last_ai_report > ai_report_interval:
-                print("\n[*] Generating AI market report...")
-                try:
-                    # Fetch fresh markets (sort by volume client-side)
-                    all_markets = polymarket_api.get_markets(limit=200, active=True) or []
-                    all_markets.sort(
-                        key=lambda x: float(x.get("volume", 0) or 0), reverse=True
-                    )
-
-                    # Get prices for analysis
-                    scored = []
-                    for m in all_markets:
-                        v = float(m.get("volume", 0) or 0)
-                        if v < 50000:  # Skip low volume
-                            continue
-
-                        q = m.get("question", "")[:100]
-
-                        # Get odds
-                        prices = m.get("outcomePrices", "")
-                        odds_info = {}
-                        if prices:
-                            try:
-                                p = (
-                                    json.loads(prices)
-                                    if isinstance(prices, str)
-                                    else prices
-                                )
-                                if p and len(p) >= 2:
-                                    yes_odds = float(p[0])
-                                    odds_info = {
-                                        "yes": yes_odds,
-                                        "no": float(p[1]),
-                                        "spread": abs((yes_odds + float(p[1])) - 1.0),
-                                    }
-                            except Exception:
-                                pass
-
-                        # AI analyze
-                        analysis = ai_filter.analyze_new_market(m)
-
-                        scored.append(
-                            {
-                                "market": m,
-                                "volume": v,
-                                "odds": odds_info,
-                                "analysis": analysis,
-                                "score": v / 1000000
-                                + (1.0 if analysis.get("opportunity") == "HIGH" else 0),
-                            }
-                        )
-
-                    # Sort by AI score
-                    scored.sort(key=lambda x: x["score"], reverse=True)
-                    top_5 = scored[:5]
-
-                    # Fetch recent trades for top markets for entry-zone analysis
-                    markets_for_entry = []
-                    for item in top_5:
-                        m = dict(item["market"])
-                        mid = m.get("id")
-                        if mid:
-                            try:
-                                trades = polymarket_api.get_market_trades(
-                                    mid, limit=20
-                                ) or []
-                                m["recent_trades"] = trades
-                            except Exception:
-                                m["recent_trades"] = []
-                        else:
-                            m["recent_trades"] = []
-                        markets_for_entry.append(m)
-
-                    # Entry zone analysis
-                    entry_zones = []
-                    if markets_for_entry:
-                        try:
-                            entry_zones = ai_filter.analyze_entry_zones(
-                                markets_for_entry
-                            )
-                        except Exception:
-                            entry_zones = [
-                                {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
-                            ] * len(markets_for_entry)
-
-                    if top_5:
-                        report = "📊 AI MARKET REPORT - Optimal Entry Points\n\n"
-                        for i, item in enumerate(top_5, 1):
-                            m = item["market"]
-                            q = m.get("question", "")[:60]
-                            v = item["volume"]
-                            odds = item["odds"]
-                            ana = item["analysis"]
-                            ez = (
-                                entry_zones[i - 1]
-                                if i <= len(entry_zones)
-                                else {}
-                            )
-
-                            report += f"{i}. {q}\n"
-                            report += f"   Vol: ${v:,.0f} | "
-                            if odds:
-                                report += f"YES: {odds.get('yes', 0) * 100:.0f}% | NO: {odds.get('no', 0) * 100:.0f}%"
-                            report += "\n"
-
-                            # Entry zone from AI
-                            zone = ez.get("entry_zone", "")
-                            reason = ez.get("reason", "") or ana.get("analysis", "") or ana.get("trigger", "")
-                            conf = ez.get("confidence", "")
-                            if zone:
-                                report += f"   ENTRY: {zone}"
-                                if conf:
-                                    report += f" ({conf})"
-                                report += "\n"
-                            if reason:
-                                report += f"   -> {reason[:80]}\n"
-                            report += "\n"
-
-                        # Send report
-                        combined.send_to_alerts(report)
-                        print(f"   AI Report sent with {len(top_5)} top picks")
-                except Exception as e:
-                    print(f"   AI Report error: {e}")
-
+                _generate_ai_market_report(polymarket_api, combined)
                 last_ai_report = current_time
 
             # Whale trade alerts - use RECENT trades only (last 6h), not old positions
@@ -1198,9 +1197,7 @@ def list_markets(
             print(f"{q:<50} ${str(v):>10}")
 
 
-def import_leaderboard(
-    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
-):
+def import_leaderboard(api_factory: APIClientFactory):
     """Import top traders from Polymarket leaderboards."""
     importer = LeaderboardImporter(api_factory)
 
@@ -1477,8 +1474,6 @@ def handle_vet_command(
     args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
 ):
     """Handle vet command - vet wallets for bots and P&L cheaters."""
-    from src.wallet.vetting import WalletVetting
-
     vetter = WalletVetting(api_factory)
     min_bet = args.min_bet if args.min_bet else config.min_bet_size
 
