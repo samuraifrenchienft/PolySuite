@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PolySuite Dashboard</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
@@ -102,12 +103,22 @@
     </div>
 
     <script>
+        // Telegram Mini App: init when opened in Telegram
+        (function() {
+            if (window.Telegram && window.Telegram.WebApp) {
+                const tg = window.Telegram.WebApp;
+                tg.ready();
+                tg.expand();
+                tg.enableClosingConfirmation();
+            }
+        })();
+
         const ctx = document.getElementById('walletChart');
 
         const walletChart = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: [{% for wallet in (wallets or []) %}'{{ wallet.nickname or "Wallet" }}',{% endfor %}],
+                labels: [{% for wallet in (wallets or []) %}{{ (wallet.nickname or "Wallet")|tojson }}{% if not loop.last %},{% endif %}{% endfor %}],
                 datasets: [{
                     label: 'Trade Volume',
                     data: [{% for wallet in (wallets or []) %}{{ wallet.trade_volume or 0 }},{% endfor %}],

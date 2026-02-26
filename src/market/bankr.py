@@ -9,9 +9,12 @@ Note: Apply for official Polymarket API at polymarket.us/developers
       Alternative: Polymarket CLOB API at docs.polymarketexchange.com
 """
 
+import logging
 import os
 import requests
 from typing import Optional, Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 
 def get_crypto_price_free(symbol: str) -> Optional[str]:
@@ -51,7 +54,7 @@ def get_crypto_price_free(symbol: str) -> Optional[str]:
                 change = data[coin_id].get("usd_24h_change", 0)
                 return f"{coin_id.capitalize()}: ${price:,.2f} (24h: {change:+.2f}%)"
     except Exception as e:
-        print(f"CoinGecko error: {e}")
+        logger.warning("CoinGecko error: %s", type(e).__name__)
     return None
 
 
@@ -83,7 +86,7 @@ def query_openrouter(prompt: str, api_key: str = None) -> Optional[str]:
             result = resp.json()
             return result["choices"][0]["message"]["content"]
     except Exception as e:
-        print(f"OpenRouter error: {e}")
+        logger.warning("OpenRouter error: %s", type(e).__name__)
     return None
 
 
@@ -151,10 +154,10 @@ class BankrClient:
                 except Exception:
                     pass
                 return None, "❌ Daily limit exceeded (100 msg/day free). Upgrade at bankr.bot"
-            return None, f"Bankr error {resp.status_code}"
+            return None, "Bankr error"
         except Exception as e:
-            print(f"[Bankr] Error: {e}")
-            return None, str(e)
+            logger.warning("[Bankr] Error: %s", type(e).__name__)
+            return None, "Request failed"
         return None, "Failed to submit"
 
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -245,11 +248,11 @@ class BankrClient:
             if resp.status_code in (200, 201):
                 return resp.json()
             else:
-                print(f"[Bankr] Deploy error: {resp.status_code} - {resp.text}")
-                return {"error": resp.text, "status": resp.status_code}
+                logger.warning("[Bankr] Deploy error: %s", resp.status_code)
+                return {"error": "Deploy failed", "status": resp.status_code}
 
         except Exception as e:
-            print(f"[Bankr] Deploy exception: {e}")
+            logger.warning("[Bankr] Deploy exception: %s", type(e).__name__)
             return None
 
     def read_only_query(self, query: str) -> Optional[str]:
@@ -356,8 +359,8 @@ class BankrCLI:
                 data["feeRecipient"] = {"type": "wallet", "value": fee_recipient}
 
             resp = requests.post(
-                f"{self.base_url}/token-launches/deploy",
-                headers={"Content-Type": "application/json", "X-API-Key": self.api_key},
+                f"{self.client.base_url}/token-launches/deploy",
+                headers={"Content-Type": "application/json", "X-API-Key": self.client.api_key},
                 json=data,
                 timeout=60,
             )
@@ -365,9 +368,9 @@ class BankrCLI:
             if resp.status_code in (200, 201):
                 return resp.json()
             else:
-                print(f"[Bankr] Deploy error: {resp.status_code} - {resp.text}")
-                return {"error": resp.text, "status": resp.status_code}
+                logger.warning("[Bankr] Deploy error: %s", resp.status_code)
+                return {"error": "Deploy failed", "status": resp.status_code}
 
         except Exception as e:
-            print(f"[Bankr] Deploy exception: {e}")
+            logger.warning("[Bankr] Deploy exception: %s", type(e).__name__)
             return None

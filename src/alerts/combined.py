@@ -1,5 +1,7 @@
 """Combined alert dispatcher for PolySuite - sends to Discord and Telegram simultaneously."""
 
+import hashlib
+import logging
 import threading
 import queue
 import time
@@ -8,6 +10,8 @@ from typing import Optional
 import requests
 
 from src.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 # Rate limit handling
@@ -19,10 +23,11 @@ _last_alert_time = 0.0  # Track last alert for heartbeat logic
 class CombinedDispatcher:
     """Sends alerts to both Discord and Telegram simultaneously."""
 
-    def __init__(self, config: Optional[Config] = None):
+    def __init__(self, config: Optional[Config] = None, backtest_storage=None):
         if config is None:
             config = Config()
         self.config = config
+        self.backtest_storage = backtest_storage
 
         self.has_discord = bool(config.discord_webhook_url)
         self.has_telegram = bool(config.telegram_bot_token and config.telegram_chat_id)
@@ -55,6 +60,25 @@ class CombinedDispatcher:
         global _last_alert_time
         return _last_alert_time
 
+    def _log_alert(self, alert_type: str, data: tuple):
+        """Log alert to backtest storage for performance tracking."""
+        if not self.backtest_storage:
+            return
+        try:
+            market_id = ""
+            if alert_type == "convergence" and len(data) >= 4:
+                market_id = str((data[3] or {}).get("market_id", ""))
+            elif alert_type == "arb" and data:
+                market_id = str((data[0] or {}).get("market_id") or (data[0] or {}).get("condition_id", ""))
+            elif alert_type in ("new_market", "volume_spike", "market_resolved") and data:
+                market_id = str((data[0] or {}).get("id") or (data[0] or {}).get("conditionId", ""))
+            elif alert_type == "whale_batch" and data and data[0]:
+                market_id = str((data[0][0] or {}).get("market_id", "")) if data[0] else ""
+            content_hash = str(hash(str(data)))[:64]
+            self.backtest_storage.log_alert(alert_type, content_hash, market_id)
+        except Exception:
+            pass
+
     def _worker(self):
         """Background worker that processes alert queue."""
         while True:
@@ -78,11 +102,12 @@ class CombinedDispatcher:
                     self._send_smart_money(*data)
                 elif alert_type == "whale_batch":
                     self._send_whale_batch(*data)
+                self._log_alert(alert_type, data)
                 self.mark_alert_sent()
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"[AlertWorker] Error: {e}")
+                logger.warning("[AlertWorker] Error: %s", type(e).__name__)
 
     def _wait_for_rate_limit(self, channel: str):
         """Wait to respect rate limits."""
@@ -115,7 +140,7 @@ class CombinedDispatcher:
             resp = requests.post(target, json=payload, timeout=10)
             return resp.status_code in (200, 204)
         except Exception as e:
-            print(f"[Discord] Error: {e}")
+            logger.warning("[Discord] Error: %s", type(e).__name__)
             return False
 
     # Discord embed colors per alert type (left edge bar)
@@ -509,7 +534,7 @@ class CombinedDispatcher:
                     timeout=10,
                 )
             except Exception as e:
-                print(f"[WhaleBatch] Discord error: {e}")
+                logger.warning("[WhaleBatch] Discord error: %s", type(e).__name__)
 
         # Send to Telegram
         if self.has_telegram and self.telegram_health_chat:
@@ -539,9 +564,10 @@ class CombinedDispatcher:
         t1.join()
         t2.join()
 
-    def send_to_alerts(self, message: str, category: Optional[str] = None):
+    def send_to_alerts(self, message: str, category: Optional[str] = None, backtest_meta: Optional[dict] = None):
         """Send to alerts channel. Use channel_overrides when category has a dedicated channel.
-        Discord: uses colored embed when category is provided (crypto=blue, sports=green, politics=purple)."""
+        Discord: uses colored embed when category is provided (crypto=blue, sports=green, politics=purple).
+        backtest_meta: optional {alert_type, market_id} for alert_log."""
         overrides = getattr(self.config, "channel_overrides", {}) or {}
         override = overrides.get(category, {}) if category else {}
 
@@ -574,6 +600,13 @@ class CombinedDispatcher:
         if chat:
             self._send_telegram(message, chat)
 
+        if self.backtest_storage and backtest_meta:
+            self.backtest_storage.log_alert(
+                alert_type=backtest_meta.get("alert_type", "unknown"),
+                content_hash=hashlib.sha256(message.encode()).hexdigest(),
+                market_id=backtest_meta.get("market_id"),
+            )
+
     def send_to_trends(self, message: str):
         """Send to trends channel (pump.fun, crypto moves)."""
         chat = (
@@ -589,7 +622,7 @@ class CombinedDispatcher:
             try:
                 requests.post(webhook, json={"content": message}, timeout=10)
             except Exception as e:
-                print(f"[Trends-Discord] Error: {e}")
+                logger.warning("[Trends-Discord] Error: %s", type(e).__name__)
 
         if chat:
             self._send_telegram(message, chat)

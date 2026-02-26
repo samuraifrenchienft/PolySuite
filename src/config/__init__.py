@@ -110,6 +110,15 @@ class Config:
             if env_value:
                 config[key] = env_value
 
+        # MED-001: Warn if secrets came from file (config.json) instead of env
+        if os.getenv("POLYSUITE_STRICT_SECRETS", "").lower() in ("1", "true", "yes"):
+            for key in SECRET_KEYS:
+                if config.get(key) and not os.getenv(key.upper()):
+                    raise RuntimeError(
+                        f"Secret '{key}' loaded from config.json but POLYSUITE_STRICT_SECRETS=1. "
+                        "Set secrets via environment variables only."
+                    )
+
         return config
 
     def save(self) -> None:
@@ -124,6 +133,13 @@ class Config:
     def get(self, key: str, default: Any = None) -> Any:
         """Get config value."""
         return self.config.get(key, default)
+
+    def get_safe_for_logging(self) -> Dict[str, Any]:
+        """Return config with secrets redacted (HIGH-002). Use for logging/debug."""
+        return {
+            k: ("***" if k in SECRET_KEYS else v)
+            for k, v in self.config.items()
+        }
 
     def set(self, key: str, value: Any) -> None:
         """Set config value."""
