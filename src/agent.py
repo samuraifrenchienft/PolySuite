@@ -100,7 +100,8 @@ class Agent:
             else:
                 return self._handle_general_query(message)
         except Exception as e:
-            return f"Error: {str(e)}"
+            print(f"[Agent] Error: {e}")
+            return "An error occurred. Please try again."
 
     def _handle_wallet_query(self, message: str) -> str:
         if not self.storage or not self.api_factory:
@@ -431,7 +432,8 @@ Provide a helpful answer about Polymarket prediction markets, smart money tracki
             )
             return response["message"]["content"]
         except Exception as e:
-            return f"LLM Error: {str(e)}\n\nTry asking about: wallets, markets, convergence, volume, or arbitrage"
+            print(f"[Agent/LLM] Error: {e}")
+            return "AI temporarily unavailable. Try asking about: wallets, markets, convergence, volume, or arbitrage"
 
     def _get_help(self) -> str:
         return """## Available Commands

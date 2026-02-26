@@ -49,23 +49,25 @@ class WalletStorage:
                     last_updated TEXT,
                     created_at TEXT,
                     is_smart_money BOOLEAN DEFAULT FALSE,
-                    trade_volume INTEGER DEFAULT 0
+                    trade_volume INTEGER DEFAULT 0,
+                    bot_score INTEGER,
+                    unresolved_exposure_usd REAL,
+                    last_vetted_at TEXT
                 )
             """)
 
             # Migration: Add missing columns if they don't exist
-            try:
-                conn.execute(
-                    "ALTER TABLE wallets ADD COLUMN is_smart_money BOOLEAN DEFAULT FALSE"
-                )
-            except Exception:
-                pass
-            try:
-                conn.execute(
-                    "ALTER TABLE wallets ADD COLUMN trade_volume INTEGER DEFAULT 0"
-                )
-            except Exception:
-                pass
+            for col, sql in [
+                ("is_smart_money", "ALTER TABLE wallets ADD COLUMN is_smart_money BOOLEAN DEFAULT FALSE"),
+                ("trade_volume", "ALTER TABLE wallets ADD COLUMN trade_volume INTEGER DEFAULT 0"),
+                ("bot_score", "ALTER TABLE wallets ADD COLUMN bot_score INTEGER"),
+                ("unresolved_exposure_usd", "ALTER TABLE wallets ADD COLUMN unresolved_exposure_usd REAL"),
+                ("last_vetted_at", "ALTER TABLE wallets ADD COLUMN last_vetted_at TEXT"),
+            ]:
+                try:
+                    conn.execute(sql)
+                except Exception:
+                    pass
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS wallet_history (
@@ -88,8 +90,8 @@ class WalletStorage:
             try:
                 conn.execute(
                     """
-                    INSERT INTO wallets (address, nickname, total_trades, wins, win_rate, last_updated, created_at, is_smart_money, trade_volume)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO wallets (address, nickname, total_trades, wins, win_rate, last_updated, created_at, is_smart_money, trade_volume, bot_score, unresolved_exposure_usd, last_vetted_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         wallet.address,
@@ -101,6 +103,9 @@ class WalletStorage:
                         wallet.created_at,
                         wallet.is_smart_money,
                         wallet.trade_volume,
+                        getattr(wallet, "bot_score", None),
+                        getattr(wallet, "unresolved_exposure_usd", None),
+                        getattr(wallet, "last_vetted_at", None),
                     ),
                 )
                 conn.commit()
@@ -141,6 +146,9 @@ class WalletStorage:
                     created_at=row["created_at"],
                     is_smart_money=row["is_smart_money"],
                     trade_volume=row["trade_volume"],
+                    bot_score=row["bot_score"] if "bot_score" in row.keys() else None,
+                    unresolved_exposure_usd=row["unresolved_exposure_usd"] if "unresolved_exposure_usd" in row.keys() else None,
+                    last_vetted_at=row["last_vetted_at"] if "last_vetted_at" in row.keys() else None,
                 )
             return None
 
@@ -177,7 +185,16 @@ class WalletStorage:
                     last_updated=row["last_updated"],
                     created_at=row["created_at"],
                     is_smart_money=row["is_smart_money"],
-                    trade_volume=row["trade_volume"],
+                    trade_volume=row["trade_volume"]
+                    if "trade_volume" in row.keys()
+                    else 0,
+                    bot_score=row["bot_score"] if "bot_score" in row.keys() else None,
+                    unresolved_exposure_usd=row["unresolved_exposure_usd"]
+                    if "unresolved_exposure_usd" in row.keys()
+                    else None,
+                    last_vetted_at=row["last_vetted_at"]
+                    if "last_vetted_at" in row.keys()
+                    else None,
                 )
                 for row in rows
             ]
@@ -224,16 +241,41 @@ class WalletStorage:
             conn.commit()
             return cursor.rowcount > 0
 
-    def get_high_performers(self, threshold: float = 55.0) -> List[Wallet]:
-        """Get wallets above win rate threshold with minimum 10 trades."""
+    def update_wallet_vetting(
+        self,
+        address: str,
+        bot_score: Optional[int] = None,
+        unresolved_exposure_usd: Optional[float] = None,
+    ) -> bool:
+        """Persist vetting results (bot_score, unresolved_exposure_usd)."""
+        from datetime import datetime
+
+        last_vetted_at = datetime.utcnow().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE wallets
+                SET bot_score = ?, unresolved_exposure_usd = ?, last_vetted_at = ?
+                WHERE address = ?
+            """,
+                (bot_score, unresolved_exposure_usd, last_vetted_at, address),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_high_performers(
+        self, threshold: float = 55.0, max_bot_score: int = 70
+    ) -> List[Wallet]:
+        """Get wallets above win rate threshold, min 10 trades, bot_score < max_bot_score."""
         with self._get_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM wallets
                 WHERE win_rate >= ? AND total_trades >= 10
+                  AND (bot_score IS NULL OR bot_score < ?)
                 ORDER BY win_rate DESC
             """,
-                (threshold,),
+                (threshold, max_bot_score),
             ).fetchall()
             return [
                 Wallet(
@@ -248,6 +290,13 @@ class WalletStorage:
                     trade_volume=row["trade_volume"]
                     if "trade_volume" in row.keys()
                     else 0,
+                    bot_score=row["bot_score"] if "bot_score" in row.keys() else None,
+                    unresolved_exposure_usd=row["unresolved_exposure_usd"]
+                    if "unresolved_exposure_usd" in row.keys()
+                    else None,
+                    last_vetted_at=row["last_vetted_at"]
+                    if "last_vetted_at" in row.keys()
+                    else None,
                 )
                 for row in rows
             ]

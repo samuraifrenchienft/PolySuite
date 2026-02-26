@@ -72,12 +72,13 @@ class WalletVetting:
 
                     winning_outcome = (market.get("outcome") or "").lower()
                     if winning_outcome:
-                        # Use trade outcome (YES/NO) - BUY can be buying YES or NO
-                        trade_outcome = (trade.get("outcome") or "").lower()
+                        # Use trade outcome (YES/NO) - prefer explicit field, else infer from price
+                        trade_outcome = (trade.get("outcome") or trade.get("outcomeType") or "").lower()
                         if not trade_outcome:
                             # Infer from price: < 0.5 typically NO, else YES
                             trade_outcome = "no" if price < 0.5 else "yes"
                         # Win: bought winning side, or sold losing side before resolution
+                        # Loss: bought losing side, or sold winning side (gave up the win)
                         if trade_outcome == winning_outcome and side == "BUY":
                             wins += 1
                         elif trade_outcome != winning_outcome and side == "SELL":
@@ -85,6 +86,9 @@ class WalletVetting:
                         elif trade_outcome != winning_outcome and side == "BUY":
                             if not self._has_closed_position(address, market_id):
                                 unresolved_losses += 1
+                        elif trade_outcome == winning_outcome and side == "SELL":
+                            # Sold winning position before resolution - loss (not counted as win)
+                            pass
 
         analysis["total_volume"] = total_volume
         analysis["avg_bet_size"] = total_volume / len(trades) if trades else 0
@@ -124,7 +128,11 @@ class WalletVetting:
         return analysis
 
     def _calculate_bot_score(self, trades: List[Dict]) -> int:
-        """Calculate how likely a wallet is a bot (0-100)."""
+        """Calculate how likely a wallet is a bot (0-100).
+
+        Indicators: round-number sizes, identical prices, 24/7 trading,
+        instant in/out, high-frequency intervals.
+        """
         if not trades:
             return 0
 
@@ -132,6 +140,8 @@ class WalletVetting:
         total = 0
 
         trade_times = []
+        sizes = []
+        prices = []
         for i, trade in enumerate(trades):
             total += 1
 
@@ -143,13 +153,36 @@ class WalletVetting:
                     print(f"[Vetting] timestamp parse: {e}")
 
             size = float(trade.get("size", 0) or 0)
-            if size > 1000:
+            price = float(trade.get("price", 0) or 0)
+            sizes.append(size)
+            prices.append(price)
+
+            # Round-number sizes (100, 500, 1000, 5000, etc.)
+            if size > 0 and size == round(size) and size in (100, 500, 1000, 5000, 10000):
+                bot_indicators += 1
+            elif size > 1000:
                 bot_indicators += 1
 
+            # Instant in/out (< 1s between trades)
             if i > 0 and len(trade_times) > 1:
                 if (trade_times[-1] - trade_times[-2]).total_seconds() < 1:
                     bot_indicators += 2
 
+        # Identical price across many trades (bot-like)
+        if len(prices) >= 5:
+            from collections import Counter
+            price_counts = Counter(round(p, 2) for p in prices if p > 0)
+            most_common = price_counts.most_common(1)
+            if most_common and most_common[0][1] >= len(prices) * 0.5:
+                bot_indicators += 3
+
+        # 24/7 trading (trades at odd hours: 2-6 AM UTC suggests bot)
+        if len(trade_times) >= 5:
+            night_trades = sum(1 for t in trade_times if 2 <= t.hour <= 6)
+            if night_trades >= len(trade_times) * 0.4:
+                bot_indicators += 2
+
+        # High-frequency intervals
         if len(trade_times) > 10:
             intervals = []
             for i in range(1, min(20, len(trade_times))):

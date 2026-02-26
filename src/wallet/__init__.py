@@ -22,6 +22,9 @@ class Wallet:
     created_at: Optional[str] = None
     is_smart_money: bool = False
     trade_volume: int = 0
+    bot_score: Optional[int] = None
+    unresolved_exposure_usd: Optional[float] = None
+    last_vetted_at: Optional[str] = None
 
     def __post_init__(self):
         """Set timestamps on creation."""

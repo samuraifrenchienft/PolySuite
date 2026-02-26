@@ -17,18 +17,28 @@ DEFAULT_CONFIG = {
     "tracked_categories": [],
     "priority_categories": ["crypto", "politics"],
     "crypto_short_term_interval": 90,
-    "sports_alert_interval": 120,
-    "politics_alert_interval": 180,
+    "sports_alert_interval": 240,  # 4 min (reduced noise)
+    "politics_alert_interval": 300,  # 5 min (reduced noise)
     "kalshi_jupiter_interval": 180,
     "channel_overrides": {},
     "whale_alert_cooldown": 1200,
     "whale_check_interval": 300,
     "whale_min_size": 50000,
-    "ai_filter_low_value_alerts": False,
+    "whale_alerts_enabled": False,  # Disabled until curated AI-vetted wallet list
+    "trend_scanner_enabled": False,  # Deprioritized - meme coins, different use case
+    "ai_daily_summary_enabled": False,  # Deprioritized - overlaps with 30-min report
+    "jupiter_alerts_enabled": True,  # Jupiter prediction market alerts (set False if geo-restricted)
+    "ai_filter_low_value_alerts": True,
     "ai_report_enabled": True,
+    "min_volume_for_alert": 5000,
+    "qualification_strict_mode": False,
+    "min_liquidity_depth_usd": 5000,
+    "max_spread_pct": 5.0,
+    "require_liquidity_check": False,
     "trade_volume_threshold": 1000,
     "position_size_threshold": 1000,
     "leaderboard_import_interval": 3600,  # 1 hour
+    "background_vetting_interval": 86400,  # 24 hours - vet leaderboard in background
 }
 
 # Shared Bankr client instance
@@ -140,6 +150,10 @@ class Config:
             k: ("***" if k in SECRET_KEYS else v)
             for k, v in self.config.items()
         }
+
+    def __repr__(self) -> str:
+        """Avoid leaking secrets when config is printed or logged (SEC-003)."""
+        return repr(self.get_safe_for_logging())
 
     def set(self, key: str, value: Any) -> None:
         """Set config value."""
@@ -262,6 +276,31 @@ class Config:
         return self.config.get("whale_min_size", 50000)
 
     @property
+    def whale_alerts_enabled(self) -> bool:
+        """Enable whale trade alerts (disabled until curated AI-vetted wallet list)."""
+        return self.config.get("whale_alerts_enabled", False)
+
+    @property
+    def trend_scanner_enabled(self) -> bool:
+        """Enable trend scanner (pump.fun, meme coins)."""
+        return self.config.get("trend_scanner_enabled", False)
+
+    @property
+    def ai_daily_summary_enabled(self) -> bool:
+        """Enable AI daily summary (overlaps with 30-min report)."""
+        return self.config.get("ai_daily_summary_enabled", False)
+
+    @property
+    def jupiter_alerts_enabled(self) -> bool:
+        """Enable Jupiter prediction market alerts (Polymarket-sourced)."""
+        return self.config.get("jupiter_alerts_enabled", False)
+
+    @property
+    def background_vetting_interval(self) -> int:
+        """Seconds between background leaderboard vetting runs (default 24h)."""
+        return self.config.get("background_vetting_interval", 86400)
+
+    @property
     def ai_filter_low_value_alerts(self) -> bool:
         """Skip new market alerts when AI scores opportunity as LOW and volume < 5k."""
         return self.config.get("ai_filter_low_value_alerts", False)
@@ -270,6 +309,31 @@ class Config:
     def ai_report_enabled(self) -> bool:
         """Enable AI 30-min market report."""
         return self.config.get("ai_report_enabled", True)
+
+    @property
+    def min_liquidity_depth_usd(self) -> float:
+        """Minimum order book depth (USD) for alert qualification."""
+        return float(self.config.get("min_liquidity_depth_usd", 5000))
+
+    @property
+    def max_spread_pct(self) -> float:
+        """Maximum spread (percent) for alert qualification."""
+        return float(self.config.get("max_spread_pct", 5.0))
+
+    @property
+    def require_liquidity_check(self) -> bool:
+        """Require liquidity depth check before sending new market alerts."""
+        return self.config.get("require_liquidity_check", False)
+
+    @property
+    def min_volume_for_alert(self) -> float:
+        """Minimum market volume for new market alerts."""
+        return float(self.config.get("min_volume_for_alert", 5000))
+
+    @property
+    def qualification_strict_mode(self) -> bool:
+        """Reject on any qualification gate failure."""
+        return self.config.get("qualification_strict_mode", False)
 
     @property
     def telegram_bot_token(self) -> str:

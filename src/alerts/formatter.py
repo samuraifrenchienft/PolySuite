@@ -34,6 +34,9 @@ class AlertFormatter:
         sentiment: str = "",
         ai_insight: str = "",
         category: str = "",
+        entry_zone: str = "",
+        conviction: str = "",
+        entry_reason: str = "",
     ) -> str:
         """Format new market alert."""
         question = event.get("question", "Unknown")[:100]
@@ -56,6 +59,14 @@ class AlertFormatter:
 
         if sentiment and sentiment != "neutral":
             lines.append(f"📊 Sentiment: {sentiment.upper()}")
+
+        if entry_zone and entry_zone not in ("WAIT", "AVOID"):
+            rec_line = f"📌 RECOMMENDATION: {entry_zone}"
+            if conviction:
+                rec_line += f" | Confidence: {conviction}"
+            lines.append(rec_line)
+            if entry_reason:
+                lines.append(f"   _{entry_reason[:100]}_")
 
         if ai_insight:
             lines.append(f"🤖 {ai_insight[:120]}")
@@ -207,7 +218,12 @@ class AlertFormatter:
         return "\n".join(lines)
 
     @staticmethod
-    def format_crypto_short_term(market: dict) -> str:
+    def format_crypto_short_term(
+        market: dict,
+        entry_zone: str = "",
+        conviction: str = "",
+        entry_reason: str = "",
+    ) -> str:
         """Format crypto 5M/15M/hourly market alert with question, time window, YES%, volume, link."""
         question = market.get("question", "Unknown")[:80]
         volume = float(market.get("volume", 0) or 0)
@@ -222,6 +238,13 @@ class AlertFormatter:
         ]
         if yes_pct is not None:
             lines.append(f"📊 YES: {yes_pct * 100:.0f}% | NO: {(1 - yes_pct) * 100:.0f}%")
+        if entry_zone and entry_zone not in ("WAIT", "AVOID"):
+            rec_line = f"📌 RECOMMENDATION: {entry_zone}"
+            if conviction:
+                rec_line += f" | Confidence: {conviction}"
+            lines.append(rec_line)
+            if entry_reason:
+                lines.append(f"   _{entry_reason[:100]}_")
         lines.append(f"[View]({link})")
         return "\n".join([l for l in lines if l])
 
@@ -240,7 +263,12 @@ class AlertFormatter:
         return "\n".join(lines)
 
     @staticmethod
-    def format_sports_market(market: dict) -> str:
+    def format_sports_market(
+        market: dict,
+        entry_zone: str = "",
+        conviction: str = "",
+        entry_reason: str = "",
+    ) -> str:
         """Format sports market alert."""
         question = market.get("question", "Unknown")[:80]
         volume = float(market.get("volume", 0) or 0)
@@ -250,8 +278,15 @@ class AlertFormatter:
             "🏀 **SPORTS**",
             f"_{question}_",
             f"💰 Volume: ${volume:,.0f}" if volume else "",
-            f"[View]({link})",
         ]
+        if entry_zone and entry_zone not in ("WAIT", "AVOID"):
+            rec_line = f"📌 RECOMMENDATION: {entry_zone}"
+            if conviction:
+                rec_line += f" | Confidence: {conviction}"
+            lines.append(rec_line)
+            if entry_reason:
+                lines.append(f"   _{entry_reason[:100]}_")
+        lines.append(f"[View]({link})")
         return "\n".join([l for l in lines if l])
 
     @staticmethod
@@ -276,18 +311,25 @@ class AlertFormatter:
         """Format Jupiter market alert (MarketAlert from aggregator)."""
         q = getattr(alert, "question", alert.get("question", "Unknown"))[:80]
         price = getattr(alert, "price", alert.get("price", 0.5)) or 0.5
+        vol = getattr(alert, "volume", alert.get("volume", 0)) or 0
         url = getattr(alert, "url", alert.get("url", ""))
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
             "🪐 **JUPITER**",
             f"_{q}_",
+            f"💰 Vol: ${vol:,.0f}" if vol else "",
             f"📈 YES: {price*100:.0f}%" if price else "",
             f"[View]({url})" if url else "",
         ]
         return "\n".join([l for l in lines if l])
 
     @staticmethod
-    def format_politics_market(market: dict) -> str:
+    def format_politics_market(
+        market: dict,
+        entry_zone: str = "",
+        conviction: str = "",
+        entry_reason: str = "",
+    ) -> str:
         """Format politics market alert."""
         question = market.get("question", "Unknown")[:80]
         volume = float(market.get("volume", 0) or 0)
@@ -297,8 +339,15 @@ class AlertFormatter:
             "🗳️ **POLITICS**",
             f"_{question}_",
             f"💰 Volume: ${volume:,.0f}" if volume else "",
-            f"[View]({link})",
         ]
+        if entry_zone and entry_zone not in ("WAIT", "AVOID"):
+            rec_line = f"📌 RECOMMENDATION: {entry_zone}"
+            if conviction:
+                rec_line += f" | Confidence: {conviction}"
+            lines.append(rec_line)
+            if entry_reason:
+                lines.append(f"   _{entry_reason[:100]}_")
+        lines.append(f"[View]({link})")
         return "\n".join([l for l in lines if l])
 
     @staticmethod

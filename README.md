@@ -14,8 +14,9 @@ cp .env.example .env
 # Edit config.json with your settings
 
 # Run
-python main.py discord    # Start Discord bot
-python main.py monitor    # Run market monitor
+python main.py all        # Start everything (monitor + bots + dashboard)
+python main.py discord    # Start Discord bot only
+python main.py monitor    # Run market monitor (includes bots)
 ```
 
 ## Discord Commands
@@ -43,6 +44,8 @@ python main.py monitor    # Run market monitor
 
 ## Configuration
 
+Copy `.env.example` to `.env` and fill in your API keys (no real secrets in the example). See `.env.example` for all supported variables.
+
 Edit `config.json`:
 ```json
 {
@@ -61,6 +64,8 @@ BANKR_API_KEY=your_key
 ```
 
 **Bankr:** Enable Agent API at [bankr.bot/api](https://bankr.bot/api). Free tier: 100 messages/day.
+
+**Telegram Mini App:** To show a Dashboard button in the bot menu, set `DASHBOARD_URL` to your deployed dashboard URL (e.g. `https://your-domain.com`). Run `python main.py dashboard` and expose it via ngrok or similar for testing.
 
 ## Requirements
 

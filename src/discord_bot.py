@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 from src.wallet import Wallet
 from src.wallet.storage import WalletStorage
-from src.utils import is_valid_address
+from src.utils import is_valid_eth_address, is_valid_solana_address, sanitize_nickname
 from src.agent import Agent
 from src.config import Config
 import asyncio
@@ -66,7 +66,7 @@ class DiscordBot(commands.Bot):
         async def add_slash(interaction: discord.Interaction, address: str, nickname: str = None):
             MAX_WALLETS = 10  # Max wallets per user
 
-            if not is_valid_address(address):
+            if not is_valid_eth_address(address):
                 await interaction.response.send_message(
                     "Invalid address.", ephemeral=True
                 )
@@ -89,8 +89,9 @@ class DiscordBot(commands.Bot):
                 )
                 return
 
-            # Use provided nickname or create a default one
-            final_nickname = nickname if nickname else address[:12] + "..."
+            # Use provided nickname or create a default one (sanitized)
+            raw_nick = nickname if nickname else address[:12] + "..."
+            final_nickname = sanitize_nickname(raw_nick) or address[:12] + "..."
 
             self.storage.add_wallet(
                 Wallet(address=address, nickname=final_nickname)
@@ -102,7 +103,7 @@ class DiscordBot(commands.Bot):
 
         @self.tree.command(name="remove", description="Remove wallet from tracking")
         async def remove_slash(interaction: discord.Interaction, address: str):
-            if not is_valid_address(address):
+            if not is_valid_eth_address(address):
                 await interaction.response.send_message(
                     "Invalid address.", ephemeral=True
                 )
@@ -185,9 +186,10 @@ class DiscordBot(commands.Bot):
             except discord.errors.NotFound:
                 pass  # Interaction expired or was deleted
             except Exception as e:
+                print(f"[Discord/bankr] Error: {e}")
                 try:
                     await interaction.edit_original_response(
-                        content=f"Error: {str(e)[:200]}"
+                        content="An error occurred. Please try again."
                     )
                 except discord.errors.NotFound:
                     pass
@@ -216,8 +218,9 @@ class DiscordBot(commands.Bot):
                 msg += "\n[Polymarket](https://polymarket.com)"
                 await interaction.edit_original_response(content=msg[:2000])
             except Exception as e:
+                print(f"[Discord/markets] Error: {e}")
                 await interaction.edit_original_response(
-                    content=f"Error: {str(e)[:200]}"
+                    content="Could not fetch markets. Please try again."
                 )
 
         @self.tree.command(
@@ -227,7 +230,7 @@ class DiscordBot(commands.Bot):
             """Scan a wallet for insider trading indicators."""
             await interaction.response.defer(ephemeral=True)
 
-            if not is_valid_address(address):
+            if not is_valid_eth_address(address):
                 await interaction.followup.send("Invalid address.", ephemeral=True)
                 return
 
@@ -238,7 +241,8 @@ class DiscordBot(commands.Bot):
                 result = detector.scan_wallet_for_anomalies(address)
 
                 if "error" in result:
-                    await interaction.followup.send(f"Error: {result['error']}")
+                    print(f"[Discord/scan] Detector error: {result['error']}")
+                    await interaction.followup.send("Scan failed. Please try again.")
                     return
 
                 # Build response
@@ -287,17 +291,24 @@ class DiscordBot(commands.Bot):
                 await interaction.followup.send(msg, ephemeral=True)
 
             except Exception as e:
-                await interaction.followup.send(f"Error: {str(e)[:100]}")
+                print(f"[Discord/scan] Error: {e}")
+                await interaction.followup.send("Scan failed. Please try again.")
 
         @self.tree.command(name="ca", description="Scan meme coin contract address")
         async def ca_slash(interaction: discord.Interaction, address: str):
             """Scan a meme coin contract address for safety analysis."""
             await interaction.response.defer(ephemeral=True)
 
-            # Clean address
+            # Clean and validate address (MED-003)
             address = address.strip()
             if address.startswith("0x"):
+                if not is_valid_eth_address(address):
+                    await interaction.followup.send("Invalid Ethereum address.", ephemeral=True)
+                    return
                 address = address[2:]  # Remove 0x prefix for some APIs
+            elif not is_valid_solana_address(address):
+                await interaction.followup.send("Invalid address format.", ephemeral=True)
+                return
 
             try:
                 from src.alerts.meme_scanner import MemeCoinScanner
@@ -306,7 +317,8 @@ class DiscordBot(commands.Bot):
                 result = scanner.scan_token(address)
 
                 if "error" in result:
-                    await interaction.followup.send(f"Error: {result['error']}")
+                    print(f"[Discord/ca] Scanner error: {result['error']}")
+                    await interaction.followup.send("Token scan failed. Please try again.")
                     return
 
                 safety = result.get("safety", {})
@@ -395,7 +407,8 @@ class DiscordBot(commands.Bot):
                 await interaction.followup.send(msg[:2000], ephemeral=True)
 
             except Exception as e:
-                await interaction.followup.send(f"Error: {str(e)[:200]}")
+                print(f"[Discord/ca] Error: {e}")
+                await interaction.followup.send("Token scan failed. Please try again.")
 
         # === MESSAGE COMMANDS (fallback) ===
         @self.command(name="ask")
@@ -428,9 +441,10 @@ class DiscordBot(commands.Bot):
 
             parts = args.split()
             address = parts[0]
-            nickname = parts[1] if len(parts) > 1 else address[:12] + "..."
+            raw_nick = parts[1] if len(parts) > 1 else address[:12] + "..."
+            nickname = sanitize_nickname(raw_nick) or address[:12] + "..."
 
-            if not is_valid_address(address):
+            if not is_valid_eth_address(address):
                 await ctx.message.reply("Invalid address.")
                 return
 
@@ -467,8 +481,10 @@ class DiscordBot(commands.Bot):
                 )
 
         except Exception as e:
-            print(f"AI error: {e}")
-            await interaction.edit_original_response(content=f"Error: {str(e)[:200]}")
+            print(f"[Discord/AI] Error: {e}")
+            await interaction.edit_original_response(
+                content="AI temporarily unavailable. Please try again."
+            )
 
     def _call_groq(self, message: str) -> str:
         """Call Groq AI."""
@@ -534,8 +550,8 @@ class DiscordBot(commands.Bot):
             else:
                 await ctx.message.reply("AI unavailable. Try again later.")
         except Exception as e:
-            print(f"AI error: {e}")
-            await ctx.message.reply(f"Error: {str(e)[:100]}")
+            print(f"[Discord/AI-msg] Error: {e}")
+            await ctx.message.reply("AI temporarily unavailable. Please try again.")
 
     async def setup_hook(self):
         """Sync commands on startup."""
@@ -690,7 +706,8 @@ class DiscordBot(commands.Bot):
             await message.reply(msg[:2000])
 
         except Exception as e:
-            await message.reply(f"Error scanning: {str(e)[:100]}")
+            print(f"[Discord/scan-addr] Error: {e}")
+            await message.reply("Scan failed. Please try again.")
 
     async def _scan_market(self, message, condition_id: str):
         """Scan a market by condition ID."""
@@ -728,7 +745,8 @@ class DiscordBot(commands.Bot):
             else:
                 await message.reply(f"Market not found for `{condition_id[:15]}...`")
         except Exception as e:
-            await message.reply(f"Error: {str(e)[:100]}")
+            print(f"[Discord/scan-market] Error: {e}")
+            await message.reply("Market scan failed. Please try again.")
 
     async def on_interaction(self, interaction):
         """Debug all interactions."""

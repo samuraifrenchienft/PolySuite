@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,6 +31,7 @@ from src.market.aggregator import aggregator
 from src.tasks import TaskManager
 from src.telegram_bot import TelegramBot
 from src.wallet import Wallet
+from src.utils import sanitize_nickname
 from src.wallet.calculator import WalletCalculator
 from src.wallet.storage import WalletStorage
 from src.ai.engine import ai_filter
@@ -39,6 +41,9 @@ from src.wallet.vetting import WalletVetting
 from src.alerts.events import EventAlerter
 from src.agent import Agent
 from src.alerts.combined import CombinedDispatcher
+from src.alerts.liquidity import check_liquidity_depth
+from src.alerts.qualifier import Qualifier
+from backtest.storage import BacktestStorage
 
 
 def add_wallet(args, storage: WalletStorage, _config: Config):
@@ -50,7 +55,8 @@ def add_wallet(args, storage: WalletStorage, _config: Config):
         return
 
     try:
-        wallet = Wallet(address=args.address.strip(), nickname=args.nickname.strip())
+        nickname = sanitize_nickname(args.nickname.strip()) or args.address[:12] + "..."
+        wallet = Wallet(address=args.address.strip(), nickname=nickname)
         storage.add_wallet(wallet)
         print(f"Added wallet {args.nickname} ({args.address})")
     except sqlite3.IntegrityError:
@@ -321,7 +327,8 @@ def monitor(
         config.discord_webhook_url, cooldown_seconds=config.alert_cooldown
     )
 
-    combined = CombinedDispatcher(config)
+    backtest_storage = BacktestStorage()
+    combined = CombinedDispatcher(config, backtest_storage)
 
     telegram = TelegramDispatcher(config.telegram_bot_token, config.telegram_chat_id)
     detector = ConvergenceDetector(
@@ -343,6 +350,12 @@ def monitor(
         api_factory,
         new_market_hours=config.new_market_alert_hours,
         volume_spike_multiplier=config.volume_spike_multiplier,
+    )
+
+    qualifier = Qualifier(
+        min_volume=config.min_volume_for_alert,
+        min_expiring_hours=1.0,
+        strict_mode=config.qualification_strict_mode,
     )
 
     calculator = WalletCalculator(api_factory)
@@ -373,6 +386,10 @@ def monitor(
     # Database backup
     last_backup = 0
     backup_interval = 21600  # Every 6 hours
+
+    # Background vetting - vet leaderboard wallets, build curated list (no auto-add)
+    last_background_vetting = 0
+    background_vetting_interval = config.background_vetting_interval
 
     # Alert check intervals - more aggressive
     new_market_check_interval = 60  # Check for new markets every 1 min
@@ -434,8 +451,8 @@ def monitor(
                     combined.send_health(health_msg)
                     last_health_check = current_time
 
-                # AI Daily Summary (once per day)
-                if current_time - last_ai_summary > 86400:  # 24 hours
+                # AI Daily Summary (once per day) - deprioritized, gated by config
+                if config.ai_daily_summary_enabled and current_time - last_ai_summary > 86400:  # 24 hours
                     try:
                         print("\n[*] Generating AI daily summary...")
                         markets = aggregator.get_polymarkets(limit=20)
@@ -452,8 +469,8 @@ def monitor(
                     except Exception as e:
                         print(f"[AI Summary] Error: {e}")
 
-            # Trend scanner (pump.fun) - send to TRENDS channel
-            if current_time - last_trend_scan > trend_scan_interval:
+            # Trend scanner (pump.fun) - deprioritized, gated by config
+            if config.trend_scanner_enabled and current_time - last_trend_scan > trend_scan_interval:
                 try:
                     print("\n[*] Scanning for trends...")
                     alerts = trendscanner.scan_all()
@@ -491,13 +508,46 @@ def monitor(
                 storage.cleanup_old_backups(keep_days=7)
                 last_backup = current_time
 
+            # Background vetting - vet leaderboard, build curated list (no auto-add)
+            if current_time - last_background_vetting > background_vetting_interval:
+                try:
+                    print("\n[*] Background vetting: vetting leaderboard wallets...")
+                    importer = LeaderboardImporter(api_factory)
+                    vetter = WalletVetting(api_factory)
+                    min_bet = getattr(config, "min_bet_size", 10.0) or 10.0
+                    traders = importer.fetch_leaderboard(limit=20)
+                    curated = []
+                    for t in traders:
+                        addr = t.get("address")
+                        if not addr:
+                            continue
+                        result = vetter.vet_wallet(addr, min_bet=min_bet)
+                        if result and result.get("passed"):
+                            curated.append({
+                                "address": addr,
+                                "nickname": t.get("userName") or t.get("username") or addr[:12] + "...",
+                                "bot_score": result.get("bot_score"),
+                                "win_rate_real": result.get("win_rate_real"),
+                                "avg_bet_size": result.get("avg_bet_size"),
+                            })
+                    if curated:
+                        vetting_path = Path("data/vetted_leaderboard.json")
+                        vetting_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(vetting_path, "w") as f:
+                            json.dump({"updated": datetime.utcnow().isoformat(), "wallets": curated}, f, indent=2)
+                        print(f"[*] Background vetting: {len(curated)} passed, saved to {vetting_path}")
+                    last_background_vetting = current_time
+                except Exception as e:
+                    print(f"[Background vetting] Error: {e}")
+                    last_background_vetting = current_time  # Avoid rapid retries
+
             # AI Report every 30 minutes - optimal entry points with entry-zone analysis
             if current_time - last_ai_report > ai_report_interval:
                 _generate_ai_market_report(polymarket_api, combined, config)
                 last_ai_report = current_time
 
-            # Whale trade alerts - use RECENT trades only (last 6h), not old positions
-            if current_time - last_smart_money_import > whale_check_interval:
+            # Whale trade alerts - gated until curated AI-vetted wallet list
+            if config.whale_alerts_enabled and current_time - last_smart_money_import > whale_check_interval:
                 print("\n[*] Checking tracked wallets for recent whale trades...")
 
                 wallets = storage.list_wallets()
@@ -578,6 +628,40 @@ def monitor(
 
                 last_smart_money_import = current_time
 
+            # Kalshi & Jupiter - run regardless of wallet count (moved above high-performer gate)
+            if current_time - last_kalshi_jupiter_check >= kalshi_jupiter_interval:
+                last_kalshi_jupiter_check = current_time
+                try:
+                    print("[*] Fetching Kalshi & Jupiter markets...")
+                    kalshi_markets = aggregator.get_kalshi_markets(limit=50)
+                    jupiter_markets = aggregator.get_jupiter_markets()
+                    print(f"[Kalshi] Fetched {len(kalshi_markets)} markets")
+                    print(f"[Jupiter] Fetched {len(jupiter_markets)} markets")
+                    # Kalshi: top 3 by volume, only send if volume >= $100 (trade signal)
+                    kalshi_sorted = sorted(
+                        kalshi_markets,
+                        key=lambda x: float(getattr(x, "volume", 0) or 0),
+                        reverse=True,
+                    )
+                    kalshi_passed = [m for m in kalshi_sorted[:10] if float(getattr(m, "volume", 0) or 0) >= 100][:3]
+                    for m in kalshi_passed:
+                        msg = formatter.format_kalshi_market(m)
+                        combined.send_to_alerts(msg, category="kalshi")
+                        print(f"   Kalshi: {getattr(m, 'question', '')[:40]}...")
+                    # Jupiter: top 3, only send if volume >= $100 (trade signal)
+                    if config.jupiter_alerts_enabled:
+                        jupiter_passed = sorted(
+                            [m for m in jupiter_markets if float(getattr(m, "volume", 0) or 0) >= 100],
+                            key=lambda x: float(getattr(x, "volume", 0) or 0),
+                            reverse=True,
+                        )[:3]
+                        for m in jupiter_passed:
+                            msg = formatter.format_jupiter_market(m)
+                            combined.send_to_alerts(msg, category="jupiter")
+                            print(f"   Jupiter: {getattr(m, 'question', '')[:40]}...")
+                except Exception as e:
+                    print(f"[Kalshi/Jupiter] Error: {e}")
+
             # Get high performers
             all_wallets = storage.list_wallets()
             trade_volume_threshold = config.trade_volume_threshold
@@ -598,19 +682,19 @@ def monitor(
             # ===== PRIORITY 1: NEW EVENTS (1hr) - ALWAYS ALERT, CHECK ARB FIRST =====
             print("\n[*] Checking for new events...")
             new_events = event_alerter.check_new_events(hours=1, limit=200)
+            # Collect events that pass filters for batch entry zone analysis
+            to_send = []
             for event in new_events:
                 event_id = event.get("id")
                 if not event_id:
                     continue
 
-                # Check arbitrage BEFORE alerting
                 arb = arb_detector.check_market_arb(event_id)
                 try:
                     profit = float(arb.get("profit_pct", 0)) if arb else 0
                 except (ValueError, TypeError):
                     profit = 0
 
-                # AI sentiment and new market analysis
                 sentiment = ""
                 ai_insight = ""
                 category = ""
@@ -626,22 +710,10 @@ def monitor(
                 except Exception:
                     pass
 
-                # Optional: skip low-value alerts when ai_filter_low_value_alerts is True
-                if config.ai_filter_low_value_alerts:
-                    vol = float(event.get("volume", 0) or 0)
-                    if (
-                        nm_analysis.get("opportunity") == "LOW"
-                        and vol < 5000
-                        and profit < 0.5
-                    ):
-                        continue
-
-                # Use formatter - crypto 5M/15M get distinct formatting
                 is_crypto_st = event_alerter.is_crypto_short_term(
                     event.get("question", "")
                 )
                 if is_crypto_st:
-                    # Enrich with yes_pct for crypto short-term
                     raw_p = event.get("outcomePrices")
                     if raw_p:
                         try:
@@ -651,7 +723,80 @@ def monitor(
                                 event["yes_pct"] = float(p[0])
                         except Exception:
                             pass
-                    msg = formatter.format_crypto_short_term(event)
+
+                # Liquidity check (Zigma-style) when enabled
+                liquidity_result = None
+                if config.require_liquidity_check:
+                    market_for_liq = event
+                    if not (event.get("clobTokenIds") or event.get("clob_token_ids")):
+                        m = polymarket_api.get_market(event_id)
+                        if m:
+                            market_for_liq = dict(event)
+                            market_for_liq["clobTokenIds"] = m.get("clobTokenIds")
+                    liquidity_result = check_liquidity_depth(
+                        market_for_liq,
+                        api_factory,
+                        min_liquidity_depth_usd=config.min_liquidity_depth_usd,
+                        max_spread_pct=config.max_spread_pct,
+                    )
+                    if not liquidity_result.get("pass", True):
+                        continue
+
+                # Multi-layer qualification (Zigma-style)
+                passed, reject_reason = qualifier.qualify_new_market(
+                    event,
+                    ai_analysis=nm_analysis,
+                    liquidity_result=liquidity_result if config.require_liquidity_check else None,
+                    arb_profit=profit,
+                    require_liquidity=config.require_liquidity_check,
+                )
+                if not passed:
+                    continue
+
+                to_send.append({
+                    "event": event,
+                    "arb": arb,
+                    "profit": profit,
+                    "sentiment": sentiment,
+                    "ai_insight": ai_insight,
+                    "category": category,
+                    "is_crypto_st": is_crypto_st,
+                })
+
+            # Batch entry zone analysis for top 5 (Zigma-style BUY/SELL/HOLD)
+            entry_zones = []
+            if to_send:
+                try:
+                    batch = [item["event"] for item in to_send[:5]]
+                    entry_zones = ai_filter.analyze_entry_zones(batch)
+                    # Pad to match to_send length
+                    while len(entry_zones) < len(to_send):
+                        entry_zones.append({"entry_zone": "WAIT", "reason": "", "confidence": "low"})
+                except Exception:
+                    entry_zones = [{"entry_zone": "WAIT", "reason": "", "confidence": "low"}] * len(to_send)
+
+            for i, item in enumerate(to_send):
+                event = item["event"]
+                arb = item["arb"]
+                profit = item["profit"]
+                sentiment = item["sentiment"]
+                ai_insight = item["ai_insight"]
+                category = item["category"]
+                is_crypto_st = item["is_crypto_st"]
+                event_id = event.get("id")
+
+                ez = entry_zones[i] if i < len(entry_zones) else {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                entry_zone = ez.get("entry_zone", "WAIT")
+                conviction = ez.get("confidence", "low")
+                entry_reason = ez.get("reason", "")
+
+                if is_crypto_st:
+                    msg = formatter.format_crypto_short_term(
+                        event,
+                        entry_zone=entry_zone,
+                        conviction=conviction,
+                        entry_reason=entry_reason,
+                    )
                 else:
                     msg = formatter.format_new_market(
                         event,
@@ -660,13 +805,16 @@ def monitor(
                         sentiment=sentiment,
                         ai_insight=ai_insight,
                         category=category,
+                        entry_zone=entry_zone,
+                        conviction=conviction,
+                        entry_reason=entry_reason,
                     )
 
                 if profit >= 0.5:
                     combined.send_to_alerts(
                         msg, category="crypto" if is_crypto_st else None
                     )
-                    combined.send_arb(arb)  # Also send arb alert
+                    combined.send_arb(arb)
                 else:
                     combined.send_to_alerts(
                         msg, category="crypto" if is_crypto_st else None
@@ -727,11 +875,22 @@ def monitor(
                         key=lambda x: float(x.get("volume", 0) or 0),
                         reverse=True,
                     )[:5]
-                    for m in top_short_term:
-                        msg = formatter.format_crypto_short_term(m)
+                    entry_zones_st = []
+                    try:
+                        entry_zones_st = ai_filter.analyze_entry_zones(top_short_term)
+                    except Exception:
+                        entry_zones_st = [{"entry_zone": "WAIT", "reason": "", "confidence": "low"}] * len(top_short_term)
+                    for idx, m in enumerate(top_short_term):
+                        ez = entry_zones_st[idx] if idx < len(entry_zones_st) else {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                        msg = formatter.format_crypto_short_term(
+                            m,
+                            entry_zone=ez.get("entry_zone", "WAIT"),
+                            conviction=ez.get("confidence", "low"),
+                            entry_reason=ez.get("reason", ""),
+                        )
                         combined.send_to_alerts(msg, category="crypto")
 
-            # Sports dedicated check - HIGH PRIORITY, send top sports to alerts
+            # Sports dedicated check - send top 1 to reduce noise
             if current_time - last_sports_alert_check >= sports_alert_interval:
                 last_sports_alert_check = current_time
                 if sports_markets:
@@ -739,14 +898,25 @@ def monitor(
                         sports_markets,
                         key=lambda x: float(x.get("volume", 0) or 0),
                         reverse=True,
-                    )[:3]
+                    )[:1]
                     for m in top_sports:
                         vol = float(m.get("volume", 0) or 0)
                         if vol >= 5000:  # Only liquid sports
-                            msg = formatter.format_sports_market(m)
+                            ez = {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                            try:
+                                zones = ai_filter.analyze_entry_zones([m])
+                                ez = zones[0] if zones else ez
+                            except Exception:
+                                pass
+                            msg = formatter.format_sports_market(
+                                m,
+                                entry_zone=ez.get("entry_zone", "WAIT"),
+                                conviction=ez.get("confidence", "low"),
+                                entry_reason=ez.get("reason", ""),
+                            )
                             combined.send_to_alerts(msg, category="sports")
 
-            # Politics dedicated check - send top politics to alerts
+            # Politics dedicated check - send top 1 to reduce noise
             if current_time - last_politics_alert_check >= politics_alert_interval:
                 last_politics_alert_check = current_time
                 if politics_markets:
@@ -754,42 +924,23 @@ def monitor(
                         politics_markets,
                         key=lambda x: float(x.get("volume", 0) or 0),
                         reverse=True,
-                    )[:3]
+                    )[:1]
                     for m in top_politics:
                         vol = float(m.get("volume", 0) or 0)
                         if vol >= 10000:  # Higher bar for politics
-                            msg = formatter.format_politics_market(m)
+                            ez = {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                            try:
+                                zones = ai_filter.analyze_entry_zones([m])
+                                ez = zones[0] if zones else ez
+                            except Exception:
+                                pass
+                            msg = formatter.format_politics_market(
+                                m,
+                                entry_zone=ez.get("entry_zone", "WAIT"),
+                                conviction=ez.get("confidence", "low"),
+                                entry_reason=ez.get("reason", ""),
+                            )
                             combined.send_to_alerts(msg, category="politics")
-
-            # Kalshi & Jupiter - multi-source alerts (HIGH PRIORITY)
-            if current_time - last_kalshi_jupiter_check >= kalshi_jupiter_interval:
-                last_kalshi_jupiter_check = current_time
-                try:
-                    print("[*] Fetching Kalshi & Jupiter markets...")
-                    kalshi_markets = aggregator.get_kalshi_markets(limit=50)
-                    jupiter_markets = aggregator.get_jupiter_markets()
-                    # Kalshi: top 5 by volume (min $100)
-                    kalshi_sorted = sorted(
-                        kalshi_markets,
-                        key=lambda x: float(getattr(x, "volume", 0) or 0),
-                        reverse=True,
-                    )
-                    passed = [m for m in kalshi_sorted[:5] if float(getattr(m, "volume", 0) or 0) >= 100]
-                    if not passed and kalshi_sorted:
-                        passed = kalshi_sorted[:1]  # Send at least 1 to confirm pipeline
-                    k_count = len([x for x in kalshi_markets if float(getattr(x, "volume", 0) or 0) >= 100])
-                    print(f"[Kalshi] Fetched {len(kalshi_markets)} markets, {k_count} pass volume filter")
-                    for m in passed:
-                        msg = formatter.format_kalshi_market(m)
-                        combined.send_to_alerts(msg, category="kalshi")
-                        print(f"   📊 Kalshi: {getattr(m, 'question', '')[:40]}...")
-                    # Jupiter: top 2 (often Polymarket-sourced)
-                    for m in jupiter_markets[:2]:
-                        msg = formatter.format_jupiter_market(m)
-                        combined.send_to_alerts(msg, category="jupiter")
-                        print(f"   🪐 Jupiter: {getattr(m, 'question', '')[:40]}...")
-                except Exception as e:
-                    print(f"[Kalshi/Jupiter] Error: {e}")
 
             # Print top actionable markets
             print(
@@ -1004,7 +1155,11 @@ def monitor(
 
                 # Format and send with AI reasoning
                 msg = formatter.format_convergence(market, wallets, conv, ai_analysis)
-                combined.send_to_alerts(msg, category="convergence")
+                combined.send_to_alerts(
+                    msg,
+                    category="convergence",
+                    backtest_meta={"alert_type": "convergence", "market_id": conv.get("market_id")},
+                )
                 print(
                     f"{emoji} CONVERGENCE: {len(wallets)} traders in {market.get('question', 'Unknown')[:40]}..."
                 )
@@ -1016,6 +1171,19 @@ def monitor(
             if current_time - last_arb_check > arb_check_interval:
                 print("[*] Checking arbitrage (all markets)...")
                 arb_opps = arb_detector.get_top_opportunities(limit=20)
+
+                for a in arb_opps:
+                    try:
+                        backtest_storage.log_arb(
+                            market_id=str(a.get("market_id") or a.get("condition_id") or ""),
+                            question=a.get("question", "")[:200],
+                            yes_price=float(a.get("yes_price") or 0),
+                            no_price=float(a.get("no_price") or 0),
+                            profit_pct=float(a.get("profit_pct") or 0),
+                            volume=float(a.get("volume") or 0),
+                        )
+                    except (ValueError, TypeError):
+                        pass
 
                 # AI-driven filtering - score each arb opportunity
                 scored_arbs = []
@@ -1077,7 +1245,14 @@ def monitor(
                             print(f"   🤖 {ai_reasoning[:60]}...")
 
                         msg = formatter.format_arb(arb, ai_reasoning)
-                        combined.send_to_alerts(msg, category="arb")
+                        combined.send_to_alerts(
+                            msg,
+                            category="arb",
+                            backtest_meta={
+                                "alert_type": "arb",
+                                "market_id": arb.get("market_id") or arb.get("condition_id"),
+                            },
+                        )
 
                         print(
                             f"{emoji}💰 ARB ({profit:.2f}%): {arb.get('question', '')[:40]}..."
@@ -1209,9 +1384,13 @@ def list_markets(
             print(f"{q:<50} ${str(v):>10}")
 
 
-def import_leaderboard(api_factory: APIClientFactory):
-    """Import top traders from Polymarket leaderboards."""
+def import_leaderboard(
+    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
+):
+    """Import top traders from Polymarket leaderboards. Vet-before-add (Phase 2a)."""
     importer = LeaderboardImporter(api_factory)
+    vetter = WalletVetting(api_factory)
+    min_bet = getattr(config, "min_bet_size", 10.0) or 10.0
 
     print("Fetching from Polymarket leaderboards...")
     traders = importer.fetch_leaderboard()
@@ -1220,29 +1399,44 @@ def import_leaderboard(api_factory: APIClientFactory):
         print("No traders found.")
         return
 
-    print(f"\nFound {len(traders)} traders:\n")
+    print(f"\nFound {len(traders)} traders (vetting before add)...\n")
 
     added = 0
     skipped = 0
+    rejected = 0
 
     for i, trader in enumerate(traders, 1):
         addr = trader.get("address")
         if not addr:
             continue
-        nickname = (
+        raw_nick = (
             trader.get("userName")
             or trader.get("username")
-            or trader.get("proxyWallet", f"Trader{i}")[:10]
+            or trader.get("proxyWallet", f"Trader{i}")
         )
+        nickname = sanitize_nickname(str(raw_nick)[:50]) or f"Trader{i}"
+
+        # Vet before add - only add if passed
+        result = vetter.vet_wallet(addr, min_bet=min_bet)
+        if result and not result.get("passed"):
+            rejected += 1
+            continue
+
         wallet = Wallet(address=addr, nickname=nickname)
+        if result:
+            wallet.bot_score = result.get("bot_score")
 
         if storage.add_wallet(wallet):
+            if result:
+                storage.update_wallet_vetting(
+                    addr, bot_score=result.get("bot_score"), unresolved_exposure_usd=None
+                )
             print(f"[+] Added: {wallet.nickname} ({wallet.address[:10]}...)")
             added += 1
         else:
             skipped += 1
 
-    print(f"\nAdded: {added} | Already existed: {skipped}")
+    print(f"\nAdded: {added} | Already existed: {skipped} | Rejected (vet): {rejected}")
 
 
 def show_portfolio(
@@ -1445,12 +1639,11 @@ def handle_bot_command(
     args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
 ):
     """Handle bot command."""
-    if not config.telegram_bot_token or not config.telegram_chat_id:
-        print(
-            "Telegram not configured. Set telegram_bot_token and telegram_chat_id in .env"
-        )
+    token = (config.telegram_bot_token or "").strip()
+    if not token:
+        print("[-] Telegram not configured. Set TELEGRAM_BOT_TOKEN in .env")
         return
-    bot = TelegramBot(config.telegram_bot_token, storage, config, api_factory)
+    bot = TelegramBot(token, storage, config, api_factory)
     bot.run()
 
 
@@ -1458,10 +1651,11 @@ def handle_discord_command(
     args, storage: WalletStorage, config: Config, api_factory=None
 ):
     """Handle discord command."""
-    if not config.discord_bot_token:
-        print("Discord not configured. Set discord_bot_token in .env")
+    token = (config.discord_bot_token or "").strip()
+    if not token:
+        print("[-] Discord not configured. Set discord_bot_token in .env")
         return
-    bot = DiscordBot(config.discord_bot_token, storage, config, api_factory)
+    bot = DiscordBot(token, storage, config, api_factory)
     bot.run_bot()
 
 
@@ -1470,6 +1664,29 @@ def handle_dashboard_command(args, storage: WalletStorage, config: Config):
     socketio = SocketIO()
     dash = Dashboard(storage, socketio)
     dash.run()
+
+
+def handle_all_command(
+    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
+):
+    """Start everything: monitor, Telegram bot, Discord bot, and dashboard."""
+    import threading
+
+    # Start dashboard in background
+    socketio = SocketIO()
+    dash = Dashboard(storage, socketio)
+
+    def run_dashboard():
+        dash.run()
+
+    dash_thread = threading.Thread(
+        target=run_dashboard, daemon=True, name="Dashboard"
+    )
+    dash_thread.start()
+    print("[*] Dashboard started - http://127.0.0.1:5000 (or configured port)")
+
+    # Run monitor (starts Telegram + Discord in background, then main loop)
+    monitor(args, storage, config, api_factory)
 
 
 def handle_check_positions_command(
@@ -1513,6 +1730,13 @@ def handle_vet_command(
         print(f"   Unsettled losses: {result['unsettled_loses']}")
         if result["issues"]:
             print(f"   Issues: {', '.join(result['issues'])}")
+        # Persist vetting results (Phase 2) - only if wallet is tracked
+        if storage.get_wallet(addr):
+            storage.update_wallet_vetting(
+                addr,
+                bot_score=result.get("bot_score"),
+                unresolved_exposure_usd=None,
+            )
         print()
 
 
@@ -1687,6 +1911,9 @@ def setup_argument_parser():
     # Dashboard
     subparsers.add_parser("dashboard", help="Start the web dashboard")
 
+    # All (monitor + bots + dashboard)
+    subparsers.add_parser("all", help="Start everything: monitor, Telegram, Discord, dashboard")
+
     # Position Alerts
     subparsers.add_parser("check_positions", help="Check for position changes")
 
@@ -1701,6 +1928,11 @@ def setup_argument_parser():
         "events",
         help="Check for market events (new markets, volume spikes, odds moves)",
     )
+
+    # Backtest
+    backtest_p = subparsers.add_parser("backtest", help="Backtest arb opportunities")
+    backtest_p.add_argument("action", choices=["replay"], help="Action to perform")
+    backtest_p.add_argument("--fee-bps", type=float, default=30, help="Fee in basis points (default 30)")
 
     # Vet wallets
     vet_p = subparsers.add_parser("vet", help="Vet wallets for bots and P&L cheaters")
@@ -1752,6 +1984,7 @@ def main():
         "bot": handle_bot_command,
         "discord": handle_discord_command,
         "dashboard": handle_dashboard_command,
+        "all": handle_all_command,
         "check_positions": handle_check_positions_command,
         "check_odds": handle_check_odds_command,
         "test-webhook": handle_test_webhook_command,
@@ -1781,6 +2014,7 @@ def main():
         "bot": [storage, config, api_factory],
         "discord": [storage, config, api_factory],
         "dashboard": [storage, config],
+        "all": [storage, config, api_factory],
         "check_positions": [storage, config, api_factory],
         "check_odds": [storage, config, api_factory],
         "test-webhook": [storage, config],
@@ -1798,12 +2032,13 @@ def main():
         print("  python main.py refresh all")
         print("  python main.py check")
         print("  python main.py monitor")
+        print("  python main.py all    # Start everything")
         print("  python main.py history 0x123...")
         return
 
     # Start TaskManager only for long-running commands
     task_manager = None
-    long_running = {"monitor", "bot", "discord"}
+    long_running = {"monitor", "bot", "discord", "all"}
     if args.command in long_running:
         task_manager = TaskManager(api_factory)
         task_manager.start()

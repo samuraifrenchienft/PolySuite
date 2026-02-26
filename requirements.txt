@@ -1,5 +1,6 @@
 # Dependencies for PolySuite
 requests>=2.31.0
+eth-utils>=2.0.0
 solana>=0.30.0
 solders>=0.18.0
 aiohttp>=3.9.0
