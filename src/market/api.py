@@ -104,6 +104,9 @@ class PolymarketAPI:
                         f"[API] Rate limited (429) after {MAX_RETRIES} attempts: {url}"
                     )
                     return None
+                if resp.status_code == 422:
+                    # Gamma API returns 422 for /markets/{conditionId} - not a retryable error
+                    return None
                 if resp.status_code in (502, 503, 504):
                     if attempt < MAX_RETRIES - 1:
                         time.sleep(RETRY_BACKOFF * (2**attempt))
@@ -227,9 +230,46 @@ class PolymarketAPI:
         url = f"{GAMMA_API}/markets"
         return self._get_list(url, {"eventId": event_id}, use_cache=True)
 
+    def _is_condition_id(self, s: str) -> bool:
+        """True if s looks like a condition ID (0x + 64 hex chars)."""
+        if not s or not isinstance(s, str):
+            return False
+        s = s.strip()
+        return s.startswith("0x") and len(s) == 66 and all(c in "0123456789abcdef" for c in s[2:].lower())
+
     def get_market(self, market_id: str) -> Optional[Dict]:
-        """Get a specific market by ID."""
+        """Get a specific market by ID. Gamma API uses slug; condition IDs need CLOB fallback."""
+        if not market_id:
+            return None
+        market_id = str(market_id).strip()
+
+        # Gamma API: /markets/{conditionId} returns 422. CLOB API supports condition_id.
+        if self._is_condition_id(market_id):
+            try:
+                clob = PolymarketCLOB()
+                m = clob.get_market(market_id)
+                if m:
+                    # Normalize CLOB response to Gamma-like dict for callers
+                    q = m.get("question") or m.get("market_slug") or "Unknown"
+                    return {
+                        "id": m.get("id") or market_id,
+                        "conditionId": market_id,
+                        "question": q,
+                        "slug": m.get("slug") or m.get("market_slug"),
+                        "volume": m.get("volume", 0),
+                        "outcomePrices": m.get("outcome_prices") or m.get("outcomePrices") or "[]",
+                    }
+            except Exception as e:
+                print(f"[API] get_market (condition_id) CLOB: {e}")
+            return None
+
+        # Slug or numeric ID: Gamma path /markets/slug/{slug} or /markets/{id}
         url = f"{GAMMA_API}/markets/{market_id}"
+        result = self._get(url, use_cache=True)
+        if result:
+            return result
+        # Try slug path format (Gamma docs: /markets/slug/{slug})
+        url = f"{GAMMA_API}/markets/slug/{market_id}"
         return self._get(url, use_cache=True)
 
     def get_markets(
@@ -264,6 +304,7 @@ class PolymarketAPI:
         result = []
         seen = set()
         for ev in events:
+            ev_slug = ev.get("slug") or ev.get("eventSlug")
             for m in ev.get("markets") or []:
                 mid = m.get("conditionId") or m.get("id")
                 if mid and mid in seen:
@@ -272,6 +313,9 @@ class PolymarketAPI:
                     seen.add(mid)
                 m = dict(m)
                 m["id"] = mid or m.get("conditionId")
+                if ev_slug and not m.get("slug"):
+                    m["slug"] = ev_slug
+                    m["eventSlug"] = ev_slug
                 result.append(m)
                 if len(result) >= limit:
                     return result
@@ -301,6 +345,7 @@ class PolymarketAPI:
             result = []
             seen = set()
             for ev in events or []:
+                ev_slug = ev.get("slug") or ev.get("eventSlug")
                 for m in ev.get("markets") or []:
                     mid = m.get("conditionId") or m.get("id")
                     if mid and mid in seen:
@@ -324,6 +369,9 @@ class PolymarketAPI:
                         continue
                     m = dict(m)
                     m["id"] = mid or m.get("conditionId")
+                    if ev_slug and not m.get("slug"):
+                        m["slug"] = ev_slug
+                        m["eventSlug"] = ev_slug
                     result.append(m)
                     if len(result) >= limit:
                         return result

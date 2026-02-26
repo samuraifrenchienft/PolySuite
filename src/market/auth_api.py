@@ -227,15 +227,8 @@ class AuthenticatedPolymarketAPI:
         return []
 
     def get_market(self, market_id: str) -> Optional[Dict]:
-        """Get market details."""
-        try:
-            url = f"https://gamma-api.polymarket.com/markets/{market_id}"
-            resp = self.session.get(url, timeout=15)
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            print(f"Error fetching market: {e}")
-        return None
+        """Get market details. Delegates to public API (handles condition_id via CLOB)."""
+        return self._get_public_api().get_market(market_id)
 
     def get_markets(self, limit: int = 100, active: bool = True) -> List[Dict]:
         """Get markets."""

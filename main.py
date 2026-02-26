@@ -155,8 +155,10 @@ def refresh_all(
     print("\n[+] All wallets refreshed")
 
 
-def _generate_ai_market_report(polymarket_api, combined):
+def _generate_ai_market_report(polymarket_api, combined, config):
     """Generates and sends an AI market report."""
+    if not config.ai_report_enabled:
+        return
     print("\n[*] Generating AI market report...")
     try:
         # Fetch fresh markets (sort by volume client-side)
@@ -274,7 +276,11 @@ def _generate_ai_market_report(polymarket_api, combined):
 
             # Send report
             combined.send_to_alerts(report)
-            print(f"   AI Report sent with {len(top_5)} top picks")
+            print("[*] AI Report sent to alerts")
+        else:
+            # No high-volume markets - still confirm job ran
+            combined.send_to_alerts("📊 AI MARKET REPORT - No high-volume markets (>$50k) found this cycle.")
+            print("[*] AI Report sent (no high-volume markets)")
     except Exception as e:
         print(f"   AI Report error: {e}")
 
@@ -284,6 +290,8 @@ def monitor(
 ):
     """Run continuous monitoring mode with convergence detection."""
     print("Starting PolySuite monitor...")
+    if not (os.environ.get("GROQ_API_KEY") or os.environ.get("GROQ_api_key") or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("Openrouter_api_key")):
+        print("[!] AI disabled: set GROQ_API_KEY or OPENROUTER_API_KEY in .env for AI reports and analysis")
     print(f"Polling interval: {config.polling_interval}s")
     print(f"Win rate threshold: {config.win_rate_threshold}%")
     print(
@@ -485,7 +493,7 @@ def monitor(
 
             # AI Report every 30 minutes - optimal entry points with entry-zone analysis
             if current_time - last_ai_report > ai_report_interval:
-                _generate_ai_market_report(polymarket_api, combined)
+                _generate_ai_market_report(polymarket_api, combined, config)
                 last_ai_report = current_time
 
             # Whale trade alerts - use RECENT trades only (last 6h), not old positions
@@ -760,17 +768,21 @@ def monitor(
                     print("[*] Fetching Kalshi & Jupiter markets...")
                     kalshi_markets = aggregator.get_kalshi_markets(limit=50)
                     jupiter_markets = aggregator.get_jupiter_markets()
-                    # Kalshi: top 2 by volume (min $500)
-                    for m in sorted(
+                    # Kalshi: top 5 by volume (min $100)
+                    kalshi_sorted = sorted(
                         kalshi_markets,
                         key=lambda x: float(getattr(x, "volume", 0) or 0),
                         reverse=True,
-                    )[:2]:
-                        vol = float(getattr(m, "volume", 0) or 0)
-                        if vol >= 500:
-                            msg = formatter.format_kalshi_market(m)
-                            combined.send_to_alerts(msg, category="kalshi")
-                            print(f"   📊 Kalshi: {getattr(m, 'question', '')[:40]}...")
+                    )
+                    passed = [m for m in kalshi_sorted[:5] if float(getattr(m, "volume", 0) or 0) >= 100]
+                    if not passed and kalshi_sorted:
+                        passed = kalshi_sorted[:1]  # Send at least 1 to confirm pipeline
+                    k_count = len([x for x in kalshi_markets if float(getattr(x, "volume", 0) or 0) >= 100])
+                    print(f"[Kalshi] Fetched {len(kalshi_markets)} markets, {k_count} pass volume filter")
+                    for m in passed:
+                        msg = formatter.format_kalshi_market(m)
+                        combined.send_to_alerts(msg, category="kalshi")
+                        print(f"   📊 Kalshi: {getattr(m, 'question', '')[:40]}...")
                     # Jupiter: top 2 (often Polymarket-sourced)
                     for m in jupiter_markets[:2]:
                         msg = formatter.format_jupiter_market(m)

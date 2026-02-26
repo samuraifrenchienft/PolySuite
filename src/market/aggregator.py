@@ -247,7 +247,8 @@ class MarketAggregator:
     def _get_cached(self, key: str) -> Optional[List]:
         if key in self._cache:
             data, timestamp = self._cache[key]
-            if time.time() - timestamp < self._cache_ttl:
+            ttl = 30 if key in ("kalshi", "jupiter") else self._cache_ttl
+            if time.time() - timestamp < ttl:
                 return data
         return None
 
@@ -326,20 +327,30 @@ class MarketAggregator:
         if cached:
             return cached
 
+        endpoints = [
+            ("https://api.elections.kalshi.com/trade-api/v2/markets", {"limit": limit, "status": "open"}),
+            ("https://api.kalshi.com/trade-api/v2/markets", {"limit": limit, "status": "open"}),
+        ]
+        markets = []
+        for url, params in endpoints:
+            try:
+                resp = self.session.get(url, params=params, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    markets = data.get("markets", data.get("market", []))
+                    if isinstance(markets, dict):
+                        markets = [markets]
+                    if markets:
+                        break
+            except Exception as e:
+                print(f"[Kalshi] {url}: {e}")
+                continue
+
+        if not markets:
+            print("[Kalshi] No markets from any endpoint")
+            return []
+
         try:
-            # Use the correct endpoint: api.elections.kalshi.com
-            resp = self.session.get(
-                "https://api.elections.kalshi.com/trade-api/v2/markets",
-                params={"limit": limit, "status": "open"},
-                timeout=15,
-            )
-
-            if resp.status_code != 200:
-                print(f"[Kalshi] Error: status {resp.status_code}")
-                return []
-
-            data = resp.json()
-            markets = data.get("markets", [])
 
             alerts = []
             for m in markets:
@@ -400,15 +411,16 @@ class MarketAggregator:
                 ):
                     category = "politics"
 
+                vol = float(m.get("volume", m.get("volume_num", 0)) or 0)
                 alerts.append(
                     MarketAlert(
                         source="kalshi",
                         category=category,
                         question=title,
                         price=yes_price,
-                        volume=float(m.get("volume", 0) or 0),
+                        volume=vol,
                         created_at=m.get("created_time", ""),
-                        url=f"https://kalshi.com/markets/{ticker}",
+                        url=f"https://kalshi.com/markets/{ticker}" if ticker else "https://kalshi.com/markets",
                     )
                 )
 
@@ -437,36 +449,79 @@ class MarketAggregator:
                     timeout=15,
                 )
                 if resp.status_code != 200:
+                    if resp.status_code == 403:
+                        print("[Jupiter] 403 - API may be geo-restricted (US/SK blocked)")
                     continue
 
                 data = resp.json()
                 for e in data.get("data", []):
-                    title = e.get("metadata", {}).get("title", "")
+                    ev_title = e.get("metadata", {}).get("title", "")
                     for m in e.get("markets", []):
+                        if m.get("status") != "open":
+                            continue
                         market_title = m.get("metadata", {}).get("title", "")
-                        # Determine price from result
-                        result = m.get("result", "N/A")
-                        if result == "yes":
-                            price = 0.99
-                        elif result == "no":
-                            price = 0.01
+                        market_id = m.get("marketId", "")
+                        # Price from pricing.buyYesPriceUsd (in cents, 0-100000 = 0-100%)
+                        pricing = m.get("pricing", {}) or {}
+                        buy_yes = pricing.get("buyYesPriceUsd")
+                        if buy_yes is not None:
+                            price = float(buy_yes) / 100000.0  # 81000 -> 0.81
                         else:
-                            price = 0.5
+                            result = m.get("result")
+                            price = 0.99 if result == "yes" else (0.01 if result == "no" else 0.5)
+                        vol = float(pricing.get("volume", 0) or 0)
 
                         alerts.append(
                             MarketAlert(
                                 source="jupiter",
                                 category=cat,
-                                question=f"{title}: {market_title}",
-                                price=price,
-                                volume=0,  # Not provided by this API
+                                question=f"{ev_title}: {market_title}" if ev_title else market_title,
+                                price=min(1.0, max(0.0, price)),
+                                volume=vol,
                                 created_at="",
-                                url=f"https://jup.ag/prediction/{m.get('marketId', '')}",
+                                url=f"https://jup.ag/prediction/{market_id}" if market_id else "https://jup.ag/prediction",
                             )
                         )
             except Exception as e:
                 print(f"[Jupiter] Error: {e}")
                 continue
+
+        if not alerts:
+            # Fallback: try events endpoint without category
+            try:
+                resp = self.session.get(
+                    "https://prediction-market-api.jup.ag/api/v1/events",
+                    params={"limit": 20},
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for e in data.get("data", data.get("events", [])):
+                        ev_title = e.get("metadata", {}).get("title", "")
+                        for m in e.get("markets", []):
+                            if m.get("status") != "open":
+                                continue
+                            market_title = m.get("metadata", {}).get("title", "")
+                            market_id = m.get("marketId", "")
+                            pricing = m.get("pricing", {}) or {}
+                            buy_yes = pricing.get("buyYesPriceUsd")
+                            price = float(buy_yes) / 100000.0 if buy_yes is not None else 0.5
+                            vol = float(pricing.get("volume", 0) or 0)
+                            alerts.append(
+                                MarketAlert(
+                                    source="jupiter",
+                                    category="other",
+                                    question=f"{ev_title}: {market_title}" if ev_title else market_title,
+                                    price=min(1.0, max(0.0, price)),
+                                    volume=vol,
+                                    created_at="",
+                                    url=f"https://jup.ag/prediction/{market_id}" if market_id else "https://jup.ag/prediction",
+                                )
+                            )
+            except Exception as e:
+                print(f"[Jupiter] Fallback: {e}")
+            if not alerts:
+                print("[Jupiter] No markets (may be geo-restricted)")
 
         self._set_cached("jupiter", alerts)
         return alerts

@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     "whale_check_interval": 300,
     "whale_min_size": 50000,
     "ai_filter_low_value_alerts": False,
+    "ai_report_enabled": True,
     "trade_volume_threshold": 1000,
     "position_size_threshold": 1000,
     "leaderboard_import_interval": 3600,  # 1 hour
@@ -248,6 +249,11 @@ class Config:
     def ai_filter_low_value_alerts(self) -> bool:
         """Skip new market alerts when AI scores opportunity as LOW and volume < 5k."""
         return self.config.get("ai_filter_low_value_alerts", False)
+
+    @property
+    def ai_report_enabled(self) -> bool:
+        """Enable AI 30-min market report."""
+        return self.config.get("ai_report_enabled", True)
 
     @property
     def telegram_bot_token(self) -> str:

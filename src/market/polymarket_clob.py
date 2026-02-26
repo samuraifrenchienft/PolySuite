@@ -25,6 +25,22 @@ class PolymarketCLOB:
         """Close the client."""
         self._client = None
 
+    def get_market(self, condition_id: str) -> Optional[Dict]:
+        """Get market by condition_id (CLOB API supports this; Gamma does not)."""
+        try:
+            client = self._get_client()
+            market = client.get_market(condition_id)
+            if market is None:
+                return None
+            if hasattr(market, "__dict__"):
+                return vars(market)
+            if isinstance(market, dict):
+                return market
+            return None
+        except Exception as e:
+            print(f"[CLOB] get_market error: {e}")
+            return None
+
     def get_markets(self, limit: int = 100) -> List[Dict]:
         """Get markets from CLOB."""
         try:

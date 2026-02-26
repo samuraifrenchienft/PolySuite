@@ -13,11 +13,12 @@ from datetime import datetime
 
 def _polymarket_link(obj: dict) -> str:
     """Build working Polymarket URL. Prefer slug (event/market) over id/conditionId."""
-    slug = obj.get("slug") or obj.get("event_slug")
-    if slug:
+    slug = obj.get("slug") or obj.get("eventSlug") or obj.get("event_slug")
+    if slug and str(slug).strip():
         return f"https://polymarket.com/event/{slug}"
     mid = obj.get("conditionId") or obj.get("market_id") or obj.get("id") or obj.get("condition_id") or ""
     if mid:
+        mid = str(mid).strip()
         return f"https://polymarket.com/market/{mid}"
     return ""
 

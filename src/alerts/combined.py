@@ -222,7 +222,7 @@ class CombinedDispatcher:
                     "title": f"👥 Convergence {urgency}",
                     "description": msg,
                     "color": self.EMBED_COLORS["convergence"],
-                    "url": self._get_market_link(market_id) if market_id else None,
+                    "url": self._get_market_link(market) if market_id else None,
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }]
             }
