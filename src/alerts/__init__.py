@@ -12,7 +12,6 @@ COLORS = {
     "HIGH": 0xF97316,  # Orange - buy
     "NORMAL": 0x3B82F6,  # Blue - info
     "EARLY": 0x22C55E,  # Green - early entry
-    "ARB": 0x10B981,  # Emerald
 }
 
 
@@ -242,43 +241,6 @@ class AlertDispatcher:
 
         return {"embeds": [embed]}
 
-    def format_arb_alert(self, arb: Dict) -> Dict:
-        """Format arbitrage alert."""
-        profit = arb.get("profit_pct", 0)
-        volume = float(arb.get("volume", 0) or 0)
-        vol_emoji = get_volume_emoji(volume)
-        vol_label = get_volume_label(volume)
-
-        embed = {
-            "title": f"💰 Arbitrage: {profit:.1f}%",
-            "description": f"YES: **{arb.get('yes_price', 0):.2f}** | NO: **{arb.get('no_price', 0):.2f}**",
-            "color": COLORS["ARB"],
-            "fields": [
-                {
-                    "name": "Volume",
-                    "value": f"{vol_emoji} {vol_label} (${volume:,.0f})",
-                    "inline": True,
-                },
-                {
-                    "name": "Fees",
-                    "value": "⚠️ Check fees before trading",
-                    "inline": True,
-                },
-                {
-                    "name": "📊 Market",
-                    "value": arb.get("question", "Unknown")[:200],
-                    "inline": False,
-                },
-            ],
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-
-        market_id = arb.get("market_id") or arb.get("condition_id")
-        if market_id:
-            embed["url"] = f"https://polymarket.com/market/{market_id}"
-
-        return {"embeds": [embed]}
-
     def format_new_market_alert(self, market: Dict, category: str = None) -> Dict:
         """Format new market alert."""
         volume = float(market.get("volume", 0) or 0)
@@ -376,10 +338,6 @@ class AlertDispatcher:
             self.set_cooldown(market_id)
 
         return success
-
-    def send_arb_alert(self, arb: Dict) -> bool:
-        payload = self.format_arb_alert(arb)
-        return self.send_webhook(payload)
 
     def send_new_market_alert(self, market: Dict, category: str = None) -> bool:
         market_id = market.get("id") or market.get("conditionId") or "unknown"

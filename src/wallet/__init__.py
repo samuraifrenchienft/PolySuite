@@ -3,7 +3,7 @@
 Note: Tracked wallets are Polymarket wallets (Ethereum/Polygon addresses).
 Solana is used as the base chain for the tracker (future rewards via Jupiter).
 """
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from datetime import datetime
 from typing import Optional
 import json
@@ -25,6 +25,13 @@ class Wallet:
     bot_score: Optional[int] = None
     unresolved_exposure_usd: Optional[float] = None
     last_vetted_at: Optional[str] = None
+    total_pnl: Optional[float] = None
+    roi_pct: Optional[float] = None
+    conviction_score: Optional[float] = None
+    is_specialty: bool = False
+    specialty_note: Optional[str] = None
+    specialty_market_id: Optional[str] = None
+    specialty_category: Optional[str] = None
 
     def __post_init__(self):
         """Set timestamps on creation."""
@@ -47,7 +54,9 @@ class Wallet:
     @classmethod
     def from_dict(cls, data: dict) -> 'Wallet':
         """Create Wallet from dictionary."""
-        return cls(**data)
+        allowed = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in data.items() if k in allowed}
+        return cls(**filtered)
 
     def is_high_performer(self, threshold: float = 55.0) -> bool:
         """Check if wallet is a high performer based on win rate threshold."""

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect Polymarket – PolySuite</title>
+    <style>
+        :root { --bg: #0f0f14; --card: #1a1a24; --accent: #3498db; --text: #e8e8ed; --muted: #8888a0; }
+        * { box-sizing: border-box; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 2rem; }
+        h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+        .card { background: var(--card); border-radius: 12px; padding: 1.5rem; max-width: 480px; border: 1px solid rgba(255,255,255,0.06); }
+        label { display: block; margin-top: 1rem; color: var(--muted); font-size: 0.9rem; }
+        input, textarea { width: 100%; padding: 0.6rem; margin-top: 0.3rem; background: #0a0a0f; border: 1px solid #333; border-radius: 6px; color: var(--text); }
+        textarea { min-height: 80px; font-family: monospace; }
+        button { margin-top: 1.5rem; padding: 0.7rem 1.5rem; background: var(--accent); border: none; border-radius: 6px; color: #fff; cursor: pointer; font-size: 1rem; }
+        button:hover { opacity: 0.9; }
+        .help { font-size: 0.85rem; color: var(--muted); margin-top: 0.3rem; }
+        .msg { margin-top: 1rem; padding: 0.6rem; border-radius: 6px; }
+        .msg.ok { background: rgba(46,204,113,0.2); color: #2ecc71; }
+        .msg.err { background: rgba(231,76,60,0.2); color: #e74c3c; }
+        a { color: var(--accent); }
+    </style>
+</head>
+<body>
+    <h1>Connect Polymarket</h1>
+    <div class="card">
+        <p>Paste your Polymarket API credentials from <a href="https://polymarket.com/settings?tab=builder" target="_blank">Polymarket Settings / API Keys</a>.</p>
+        <form id="form">
+            <label>Your Discord or Telegram User ID</label>
+            <input type="text" name="user_id" placeholder="e.g. 123456789" required />
+            <span class="help">Use /link in Discord or Telegram to get your ID, or enter it manually.</span>
+
+            <label>API Key</label>
+            <input type="text" name="api_key" placeholder="API key" required />
+
+            <label>API Secret</label>
+            <input type="password" name="api_secret" placeholder="API secret" required />
+
+            <label>API Passphrase</label>
+            <input type="password" name="api_passphrase" placeholder="API passphrase" required />
+
+            <button type="submit">Save credentials</button>
+        </form>
+        <div id="msg"></div>
+    </div>
+    <p style="margin-top: 1rem;"><a href="/">Back to Dashboard</a></p>
+
+    <script>
+        const form = document.getElementById('form');
+        const msg = document.getElementById('msg');
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            msg.textContent = '';
+            msg.className = 'msg';
+            const fd = new FormData(form);
+            const body = {
+                user_id: fd.get('user_id').trim(),
+                api_key: fd.get('api_key').trim(),
+                api_secret: fd.get('api_secret').trim(),
+                api_passphrase: fd.get('api_passphrase').trim(),
+            };
+            const apiKey = new URLSearchParams(location.search).get('api_key') || '';
+            const headers = { 'Content-Type': 'application/json' };
+            if (apiKey) headers['X-API-Key'] = apiKey;
+            try {
+                const r = await fetch('/api/polymarket/store-credentials', { method: 'POST', headers, body: JSON.stringify(body) });
+                const data = await r.json().catch(function() { return {}; });
+                if (r.ok && data.ok) {
+                    msg.className = 'msg ok';
+                    msg.textContent = 'Credentials saved. You can use copy trading with this account.';
+                } else {
+                    msg.className = 'msg err';
+                    msg.textContent = data.error || 'Failed to save. Check your API key in the URL if auth is required.';
+                }
+            } catch (err) {
+                msg.className = 'msg err';
+                msg.textContent = 'Network error: ' + err.message;
+            }
+        });
+    </script>
+</body>
+</html>

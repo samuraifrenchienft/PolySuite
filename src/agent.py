@@ -79,8 +79,6 @@ class Agent:
                 return self._handle_convergence_query(message)
             elif "volume" in message_lower or "trending" in message_lower:
                 return self._handle_volume_query(message)
-            elif "arbitrage" in message_lower:
-                return self._handle_arbitrage_query(message)
             elif "jupiter" in message_lower or "solana" in message_lower:
                 return self._handle_jupiter_query(message)
             elif (
@@ -89,12 +87,6 @@ class Agent:
                 or "odds move" in message_lower
             ):
                 return self._handle_event_query(message)
-            elif (
-                "price" in message_lower
-                or "balance" in message_lower
-                or "crypto" in message_lower
-            ):
-                return self._handle_bankr_query(message)
             elif "help" in message_lower:
                 return self._get_help()
             else:
@@ -219,26 +211,6 @@ class Agent:
             results.append(f"**{m.get('question', 'Unknown')[:50]}**\n  ${volume:,.0f}")
 
         return "### Top Markets by Volume\n\n" + "\n\n".join(results)
-
-    def _handle_arbitrage_query(self, message: str) -> str:
-        if not self.api_factory:
-            return "Error: API not initialized"
-
-        from src.alerts.arbitrage import ArbitrageDetector
-
-        detector = ArbitrageDetector(self.api_factory)
-        opps = detector.get_top_opportunities(limit=5)
-
-        if not opps:
-            return "No arbitrage opportunities found"
-
-        results = []
-        for opp in opps:
-            results.append(
-                f"**{opp['profit_pct']:.2f}%** profit\n  YES: ${opp['yes_price']:.2f} | NO: ${opp['no_price']:.2f}"
-            )
-
-        return "### Arbitrage Opportunities\n\n" + "\n\n".join(results)
 
     def _handle_event_query(self, message: str) -> str:
         if not self.api_factory:
@@ -433,7 +405,7 @@ Provide a helpful answer about Polymarket prediction markets, smart money tracki
             return response["message"]["content"]
         except Exception as e:
             print(f"[Agent/LLM] Error: {e}")
-            return "AI temporarily unavailable. Try asking about: wallets, markets, convergence, volume, or arbitrage"
+            return "AI temporarily unavailable. Try asking about: wallets, markets, convergence, volume, or whale activity"
 
     def _get_help(self) -> str:
         return """## Available Commands
@@ -464,6 +436,5 @@ Provide a helpful answer about Polymarket prediction markets, smart money tracki
 ### General
 - **markets** / **questions** - Active prediction markets  
 - **volume** / **trending** - Highest volume markets
-- **arbitrage** - Cross-market opportunities
 
 Or ask anything else - I'll use the LLM with current data as context."""

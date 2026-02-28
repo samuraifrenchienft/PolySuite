@@ -6,6 +6,7 @@ Detects patterns that suggest informed trading:
 - Niche market activity
 """
 
+import logging
 import requests
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
@@ -233,7 +234,8 @@ class InsiderDetector:
                 else "OK",
             }
         except Exception as e:
-            return {"error": str(e)}
+            logging.getLogger(__name__).exception("InsiderDetector scan error")
+            return {"error": "Scan failed"}
 
 
 def check_token_honeypot(token_address: str, chain: str = "polygon") -> Dict:

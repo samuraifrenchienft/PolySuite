@@ -1,6 +1,6 @@
 # Prediction Suite (formerly PolySuite)
 
-A prediction market monitoring bot for Polymarket with wallet tracking, arbitrage detection, and AI integration.
+A prediction market monitoring bot for Polymarket with wallet tracking and AI integration.
 
 ## Quick Start
 
@@ -36,7 +36,6 @@ python main.py monitor    # Run market monitor (includes bots)
 
 - **Wallet Tracking** - Track wallets, get alerts on trades
 - **Smart Money Detection** - Identify high-performing wallets
-- **Arbitrage Detection** - Find cross-market opportunities
 - **Meme Coin Scanner** - Scan contract addresses (DexScreener, safety score)
 - **Insider Detection** - Detect suspicious wallet activity (fresh wallets, large trades)
 - **Convergence Alerts** - When multiple tracked wallets are in the same market

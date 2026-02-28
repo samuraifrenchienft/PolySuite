@@ -52,7 +52,14 @@ class WalletStorage:
                     trade_volume INTEGER DEFAULT 0,
                     bot_score INTEGER,
                     unresolved_exposure_usd REAL,
-                    last_vetted_at TEXT
+                    last_vetted_at TEXT,
+                    total_pnl REAL,
+                    roi_pct REAL,
+                    conviction_score REAL,
+                    is_specialty BOOLEAN DEFAULT FALSE,
+                    specialty_note TEXT,
+                    specialty_market_id TEXT,
+                    specialty_category TEXT
                 )
             """)
 
@@ -63,6 +70,13 @@ class WalletStorage:
                 ("bot_score", "ALTER TABLE wallets ADD COLUMN bot_score INTEGER"),
                 ("unresolved_exposure_usd", "ALTER TABLE wallets ADD COLUMN unresolved_exposure_usd REAL"),
                 ("last_vetted_at", "ALTER TABLE wallets ADD COLUMN last_vetted_at TEXT"),
+                ("total_pnl", "ALTER TABLE wallets ADD COLUMN total_pnl REAL"),
+                ("roi_pct", "ALTER TABLE wallets ADD COLUMN roi_pct REAL"),
+                ("conviction_score", "ALTER TABLE wallets ADD COLUMN conviction_score REAL"),
+                ("is_specialty", "ALTER TABLE wallets ADD COLUMN is_specialty BOOLEAN DEFAULT FALSE"),
+                ("specialty_note", "ALTER TABLE wallets ADD COLUMN specialty_note TEXT"),
+                ("specialty_market_id", "ALTER TABLE wallets ADD COLUMN specialty_market_id TEXT"),
+                ("specialty_category", "ALTER TABLE wallets ADD COLUMN specialty_category TEXT"),
             ]:
                 try:
                     conn.execute(sql)
@@ -90,8 +104,8 @@ class WalletStorage:
             try:
                 conn.execute(
                     """
-                    INSERT INTO wallets (address, nickname, total_trades, wins, win_rate, last_updated, created_at, is_smart_money, trade_volume, bot_score, unresolved_exposure_usd, last_vetted_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO wallets (address, nickname, total_trades, wins, win_rate, last_updated, created_at, is_smart_money, trade_volume, bot_score, unresolved_exposure_usd, last_vetted_at, total_pnl, roi_pct, conviction_score, is_specialty, specialty_note, specialty_market_id, specialty_category)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         wallet.address,
@@ -106,6 +120,13 @@ class WalletStorage:
                         getattr(wallet, "bot_score", None),
                         getattr(wallet, "unresolved_exposure_usd", None),
                         getattr(wallet, "last_vetted_at", None),
+                        getattr(wallet, "total_pnl", None),
+                        getattr(wallet, "roi_pct", None),
+                        getattr(wallet, "conviction_score", None),
+                        getattr(wallet, "is_specialty", False),
+                        getattr(wallet, "specialty_note", None),
+                        getattr(wallet, "specialty_market_id", None),
+                        getattr(wallet, "specialty_category", None),
                     ),
                 )
                 conn.commit()
@@ -149,6 +170,13 @@ class WalletStorage:
                     bot_score=row["bot_score"] if "bot_score" in row.keys() else None,
                     unresolved_exposure_usd=row["unresolved_exposure_usd"] if "unresolved_exposure_usd" in row.keys() else None,
                     last_vetted_at=row["last_vetted_at"] if "last_vetted_at" in row.keys() else None,
+                    total_pnl=row["total_pnl"] if "total_pnl" in row.keys() else None,
+                    roi_pct=row["roi_pct"] if "roi_pct" in row.keys() else None,
+                    conviction_score=row["conviction_score"] if "conviction_score" in row.keys() else None,
+                    is_specialty=bool(row["is_specialty"]) if "is_specialty" in row.keys() else False,
+                    specialty_note=row["specialty_note"] if "specialty_note" in row.keys() else None,
+                    specialty_market_id=row["specialty_market_id"] if "specialty_market_id" in row.keys() else None,
+                    specialty_category=row["specialty_category"] if "specialty_category" in row.keys() else None,
                 )
             return None
 
@@ -195,6 +223,13 @@ class WalletStorage:
                     last_vetted_at=row["last_vetted_at"]
                     if "last_vetted_at" in row.keys()
                     else None,
+                    total_pnl=row["total_pnl"] if "total_pnl" in row.keys() else None,
+                    roi_pct=row["roi_pct"] if "roi_pct" in row.keys() else None,
+                    conviction_score=row["conviction_score"] if "conviction_score" in row.keys() else None,
+                    is_specialty=bool(row["is_specialty"]) if "is_specialty" in row.keys() else False,
+                    specialty_note=row["specialty_note"] if "specialty_note" in row.keys() else None,
+                    specialty_market_id=row["specialty_market_id"] if "specialty_market_id" in row.keys() else None,
+                    specialty_category=row["specialty_category"] if "specialty_category" in row.keys() else None,
                 )
                 for row in rows
             ]
@@ -246,8 +281,15 @@ class WalletStorage:
         address: str,
         bot_score: Optional[int] = None,
         unresolved_exposure_usd: Optional[float] = None,
+        total_pnl: Optional[float] = None,
+        roi_pct: Optional[float] = None,
+        conviction_score: Optional[float] = None,
+        is_specialty: bool = False,
+        specialty_note: Optional[str] = None,
+        specialty_market_id: Optional[str] = None,
+        specialty_category: Optional[str] = None,
     ) -> bool:
-        """Persist vetting results (bot_score, unresolved_exposure_usd)."""
+        """Persist vetting results (bot_score, unresolved_exposure_usd, smart money metrics, specialty)."""
         from datetime import datetime
 
         last_vetted_at = datetime.utcnow().isoformat()
@@ -255,10 +297,13 @@ class WalletStorage:
             cursor = conn.execute(
                 """
                 UPDATE wallets
-                SET bot_score = ?, unresolved_exposure_usd = ?, last_vetted_at = ?
+                SET bot_score = ?, unresolved_exposure_usd = ?, last_vetted_at = ?,
+                    total_pnl = ?, roi_pct = ?, conviction_score = ?,
+                    is_specialty = ?, specialty_note = ?, specialty_market_id = ?, specialty_category = ?
                 WHERE address = ?
             """,
-                (bot_score, unresolved_exposure_usd, last_vetted_at, address),
+                (bot_score, unresolved_exposure_usd, last_vetted_at, total_pnl, roi_pct, conviction_score,
+                 is_specialty, specialty_note, specialty_market_id, specialty_category, address),
             )
             conn.commit()
             return cursor.rowcount > 0
@@ -297,6 +342,13 @@ class WalletStorage:
                     last_vetted_at=row["last_vetted_at"]
                     if "last_vetted_at" in row.keys()
                     else None,
+                    total_pnl=row["total_pnl"] if "total_pnl" in row.keys() else None,
+                    roi_pct=row["roi_pct"] if "roi_pct" in row.keys() else None,
+                    conviction_score=row["conviction_score"] if "conviction_score" in row.keys() else None,
+                    is_specialty=bool(row["is_specialty"]) if "is_specialty" in row.keys() else False,
+                    specialty_note=row["specialty_note"] if "specialty_note" in row.keys() else None,
+                    specialty_market_id=row["specialty_market_id"] if "specialty_market_id" in row.keys() else None,
+                    specialty_category=row["specialty_category"] if "specialty_category" in row.keys() else None,
                 )
                 for row in rows
             ]

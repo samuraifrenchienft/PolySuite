@@ -876,22 +876,54 @@ class EventAlerter:
             "silver",
             "commodity",
         ],
-        "science": [
+        "weather": [
             "earthquake",
             "hurricane",
+            "tornado",
             "weather",
+            "storm",
+            "flood",
+            "blizzard",
+            "rain",
+            "snow",
+            "temperature",
+            "forecast",
             "climate",
-            "science",
-            "nasa",
-            "space",
-            "moon",
-            "mars",
-            "vaccine",
-            "covid",
-            "pandemic",
-            "coronavirus",
-            "covid-19",
-            "covid",
+            "el nino",
+            "la nina",
+            "typhoon",
+            "cyclone",
+        ],
+        "esports": [
+            "esports",
+            "esport",
+            "league of legends",
+            "lol",
+            "valorant",
+            "csgo",
+            "cs2",
+            "counter-strike",
+            "dota",
+            "dota 2",
+            "overwatch",
+            "ow2",
+            "fortnite",
+            "apex legends",
+            "pubg",
+            "call of duty",
+            "cod",
+            "minecraft",
+            "roblox",
+            "twitch",
+            "steam",
+            "pgl",
+            "esl",
+            "blizzcon",
+            "worlds",
+            "msi",
+            "iem",
+            "eleague",
+            "major",
         ],
         "business": [
             "market cap",
@@ -930,22 +962,36 @@ class EventAlerter:
             "chart",
             "billboard",
         ],
-        "chess": [
-            "chess",
-            "carlsen",
-            "nakamura",
-            "nepomniachtchi",
-            "firouzja",
-            "caruana",
-            "giri",
-            "dubov",
-            "so",
-            "mvl",
-            "grischuk",
-            "norway chess",
-            "ftx crypto cup",
-            "chess.com",
-            "titled tuesday",
+        "esports": [
+            "esports",
+            "esport",
+            "league of legends",
+            "lol",
+            "valorant",
+            "csgo",
+            "cs2",
+            "counter-strike",
+            "dota",
+            "dota 2",
+            "overwatch",
+            "ow2",
+            "fortnite",
+            "apex legends",
+            "pubg",
+            "call of duty",
+            "cod",
+            "minecraft",
+            "roblox",
+            "twitch",
+            "steam",
+            "pgl",
+            "esl",
+            "blizzcon",
+            "worlds",
+            "msi",
+            "iem",
+            "eleague",
+            "major",
         ],
     }
 
@@ -1090,9 +1136,7 @@ class EventAlerter:
         new_markets.sort(key=lambda x: x.get("hours_old", 999))
         return new_markets
 
-    def fetch_markets_for_categories(
-        self, limit: int = 500
-    ) -> Dict[str, List[Dict]]:
+    def fetch_markets_for_categories(self, limit: int = 500) -> Dict[str, List[Dict]]:
         """Fetch markets once and return crypto, sports, politics + all_market_ids for cleanup.
         Sports: merge tag-based fetch (Polymarket /sports) with keyword filter for better coverage."""
         markets = self.api.get_active_markets(limit=limit) or []
@@ -1154,7 +1198,9 @@ class EventAlerter:
             if prices and len(prices) >= 2:
                 try:
                     m["yes_pct"] = float(prices[0])
-                    m["no_pct"] = float(prices[1]) if len(prices) > 1 else 1 - float(prices[0])
+                    m["no_pct"] = (
+                        float(prices[1]) if len(prices) > 1 else 1 - float(prices[0])
+                    )
                 except (ValueError, TypeError):
                     pass
             m["is_crypto_short_term"] = True
@@ -1633,30 +1679,24 @@ class EventAlerter:
                 "currency",
                 "forex",
             ],
-            "science": [
-                "science",
-                "research",
-                "discovery",
-                "nasa",
-                "space",
-                "mars",
-                "moon",
-                "climate",
+            "weather": [
                 "weather",
+                "climate",
                 "storm",
                 "hurricane",
                 "tornado",
                 "earthquake",
                 "volcano",
-                "cure",
-                "medical",
-                "health",
-                "pandemic",
-                "vaccine",
-                "drug",
-                "fda",
+                "flood",
+                "blizzard",
+                "temperature",
+                "forecast",
+                "el nino",
+                "la nina",
+                "cyclone",
+                "tsunami",
             ],
-            "weather": [
+            "esports": [
                 "weather",
                 "storm",
                 "hurricane",

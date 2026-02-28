@@ -2,6 +2,7 @@
 
 from typing import Dict, List, Optional
 from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import ApiCreds, OrderArgs, PartialCreateOrderOptions
 
 
 class PolymarketCLOB:
@@ -116,3 +117,42 @@ class PolymarketCLOB:
             return client.get_ok() is not None
         except Exception:
             return False
+
+
+class PolymarketCLOBTrading:
+    """Authenticated CLOB client for order placement. Requires API creds from Polymarket Settings."""
+
+    def __init__(
+        self,
+        host: str = "https://clob.polymarket.com",
+        api_key: str = None,
+        api_secret: str = None,
+        api_passphrase: str = None,
+    ):
+        if not all([api_key, api_secret, api_passphrase]):
+            raise ValueError("api_key, api_secret, and api_passphrase are required")
+        creds = ApiCreds(api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase)
+        self._client = ClobClient(host=host, creds=creds)
+
+    def create_and_post_order(
+        self,
+        token_id: str,
+        price: float,
+        size: float,
+        side: str,
+        neg_risk: bool = False,
+        tick_size: str = "0.01",
+    ) -> Optional[str]:
+        """Create and post a GTC order. Returns order ID or None on failure."""
+        try:
+            from py_clob_client.order_builder.constants import BUY, SELL
+            side_const = BUY if str(side).upper() == "BUY" else SELL
+            args = OrderArgs(token_id=token_id, price=price, size=size, side=side_const)
+            opts = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk)
+            resp = self._client.create_and_post_order(args, options=opts)
+            if isinstance(resp, dict):
+                return resp.get("orderID") or resp.get("order_id")
+            return str(resp) if resp is not None else None
+        except Exception as e:
+            print(f"[CLOB] create_and_post_order error: {e}")
+            return None

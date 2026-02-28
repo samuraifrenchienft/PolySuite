@@ -19,7 +19,7 @@ class TradeSignal:
     side: str  # "yes" or "no"
     amount: float
     odds: float
-    source: str  # "convergence", "arb", "manual"
+    source: str  # "convergence", "manual"
     confidence: float  # 0-100
     wallets: List[str]  # Wallet addresses that triggered this
 
@@ -163,40 +163,6 @@ class TradeExecutor:
             source="convergence",
             confidence=confidence,
             wallets=wallet_addresses,
-        )
-
-    def from_arb_signal(self, arb: Dict, amount: float = 50.0) -> Optional[TradeSignal]:
-        """Create trade signal from arbitrage alert."""
-        try:
-            profit_pct = float(arb.get("profit_pct", 0))
-        except (ValueError, TypeError):
-            profit_pct = 0
-
-        if not arb or profit_pct < 1.0:
-            return None
-
-        market_id = arb.get("market_id") or arb.get("condition_id") or ""
-        question = arb.get("question", "Unknown")
-
-        # For arb, we bet on the underpriced side
-        yes_price = arb.get("yes_price", 0.5)
-        no_price = arb.get("no_price", 0.5)
-
-        # Bet on the side that's underpriced relative to fair value
-        if yes_price < no_price:
-            side = "yes"
-        else:
-            side = "no"
-
-        return TradeSignal(
-            market_id=market_id,
-            market_question=question,
-            side=side,
-            amount=min(amount, self.max_trade_amount),
-            odds=yes_price if side == "yes" else no_price,
-            source="arb",
-            confidence=min(profit_pct * 10, 100),  # Convert profit % to confidence
-            wallets=[],
         )
 
     def enable_live_trading(self):

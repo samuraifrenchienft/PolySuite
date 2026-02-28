@@ -32,6 +32,11 @@ class TelegramBot:
         self.agent = Agent(config=config, storage=storage, api_factory=api_factory)
         self.user_timestamps = {}
         self.rate_limit_seconds = 10
+        # Connect flow: user_id -> {waiting: "polymarket"|"kalshi", since: float}
+        self._connect_pending: dict = {}
+        # Menu flow: user_id -> {action: str, since: float, chat_id: int}
+        self._menu_pending: dict = {}
+        self._connect_timeout = 300  # 5 min
 
         def rate_limited(handler):
             def wrapper(message):
@@ -56,6 +61,110 @@ class TelegramBot:
         @rate_limited
         def start(message):
             self.bot.reply_to(message, "Welcome to PolySuite!")
+
+        @self.bot.message_handler(commands=["menu"])
+        @rate_limited
+        def menu(message):
+            """Show menu with inline buttons."""
+            kb = telebot.types.InlineKeyboardMarkup()
+            kb.row(
+                telebot.types.InlineKeyboardButton("Status", callback_data="m:status"),
+                telebot.types.InlineKeyboardButton("Copy status", callback_data="m:copy_status"),
+            )
+            kb.row(
+                telebot.types.InlineKeyboardButton("Add wallet", callback_data="m:add"),
+                telebot.types.InlineKeyboardButton("Remove wallet", callback_data="m:remove"),
+            )
+            kb.row(
+                telebot.types.InlineKeyboardButton("Copy add", callback_data="m:copy_add"),
+                telebot.types.InlineKeyboardButton("Copy remove", callback_data="m:copy_remove"),
+                telebot.types.InlineKeyboardButton("Copy list", callback_data="m:copy_list"),
+            )
+            kb.row(
+                telebot.types.InlineKeyboardButton("Connect Polymarket", callback_data="m:conn_pm"),
+                telebot.types.InlineKeyboardButton("Connect Kalshi", callback_data="m:conn_k"),
+            )
+            kb.row(
+                telebot.types.InlineKeyboardButton("Copy kill", callback_data="m:copy_kill"),
+                telebot.types.InlineKeyboardButton("Copy settings", callback_data="m:copy_settings"),
+            )
+            kb.row(telebot.types.InlineKeyboardButton("Ask AI", callback_data="m:ai"))
+            self.bot.reply_to(message, "Choose an action:", reply_markup=kb)
+
+        @self.bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("m:"))
+        def menu_callback(callback):
+            """Handle menu button clicks."""
+            self.bot.answer_callback_query(callback.id)
+            uid = callback.from_user.id
+            chat_id = callback.message.chat.id
+            action = (callback.data or "").replace("m:", "")
+            if action == "status":
+                wallets = self.storage.list_wallets()
+                self.bot.send_message(chat_id, f"Tracking {len(wallets)} wallets.")
+            elif action == "copy_status":
+                try:
+                    from src.copy import list_copy_targets
+                    targets = list_copy_targets()
+                    enabled = (self.config or {}).get("copy_enabled", False)
+                    dry_run = (self.config or {}).get("copy_dry_run", True)
+                    msg = f"Copy: {'ON' if enabled else 'OFF'} | Dry run: {'Yes' if dry_run else 'No'}\nTargets: {len(targets)}"
+                    self.bot.send_message(chat_id, msg[:2000])
+                except Exception:
+                    self.bot.send_message(chat_id, "Copy status failed.")
+            elif action == "copy_list":
+                try:
+                    from src.copy import list_copy_targets
+                    targets = list_copy_targets()
+                    if not targets:
+                        self.bot.send_message(chat_id, "No copy targets.")
+                    else:
+                        msg = f"Copy targets ({len(targets)}):\n" + "\n".join(f"• {t.get('nickname', t.get('address','')[:10])}" for t in targets[:15])
+                        self.bot.send_message(chat_id, msg[:2000])
+                except Exception:
+                    self.bot.send_message(chat_id, "Copy list failed.")
+            elif action == "copy_kill":
+                try:
+                    if self.config and hasattr(self.config, "set"):
+                        self.config.set("copy_pause", True)
+                        if hasattr(self.config, "save"):
+                            self.config.save()
+                        self.bot.send_message(chat_id, "Copy PAUSED (kill switch). Use /copy resume to re-enable.")
+                    else:
+                        self.bot.send_message(chat_id, "Config not available.")
+                except Exception:
+                    self.bot.send_message(chat_id, "Failed.")
+            elif action == "copy_settings":
+                try:
+                    cfg = self.config.config if (self.config and hasattr(self.config, "config")) else (self.config or {})
+                    msg = "Copy settings:\n"
+                    msg += f"Max order: ${cfg.get('copy_max_order_usd', 100)}\n"
+                    msg += f"Size mult: {cfg.get('copy_size_multiplier', 1.0)}\n"
+                    msg += f"Throttle: {cfg.get('copy_max_trades_per_minute', 0) or 'off'}/min\n"
+                    msg += f"Risk reduction: after {cfg.get('copy_reduce_multiplier_after_trades', 0) or 0} trades -> {cfg.get('copy_reduced_multiplier', 0.5)}x\n"
+                    msg += f"Freeze: after {cfg.get('copy_freeze_after_trades', 0) or 0} trades for {cfg.get('copy_freeze_duration_minutes', 60)} min\n"
+                    msg += f"Fee: {cfg.get('copy_fee_pct', 0.77)}% | Referral: {cfg.get('copy_referral_discount_pct', 10)}%\n"
+                    msg += f"Paused: {cfg.get('copy_pause', False)}"
+                    self.bot.send_message(chat_id, msg[:2000])
+                except Exception:
+                    self.bot.send_message(chat_id, "Failed.")
+            elif action == "conn_pm":
+                if getattr(callback.message.chat, "type", "") != "private":
+                    self.bot.send_message(chat_id, "Use /connect polymarket in a DM for security.")
+                else:
+                    self._connect_pending[uid] = {"waiting": "polymarket", "since": time.time()}
+                    self.bot.send_message(chat_id, "Paste: api_key|api_secret|api_passphrase")
+            elif action == "conn_k":
+                if getattr(callback.message.chat, "type", "") != "private":
+                    self.bot.send_message(chat_id, "Use /connect kalshi in a DM for security.")
+                else:
+                    self._connect_pending[uid] = {"waiting": "kalshi", "since": time.time()}
+                    self.bot.send_message(chat_id, "Paste: api_key_id|private_key_pem")
+            elif action == "ai":
+                self.bot.send_message(chat_id, "Use /ai <your question> to ask.")
+            elif action in ("add", "remove", "copy_add", "copy_remove"):
+                self._menu_pending[uid] = {"action": action, "since": time.time(), "chat_id": chat_id}
+                prompts = {"add": "Send wallet address [nickname]", "remove": "Send wallet address to remove", "copy_add": "Send: address [nickname]", "copy_remove": "Send wallet address to remove from copy"}
+                self.bot.send_message(chat_id, prompts.get(action, "Send your input."))
 
         @self.bot.message_handler(commands=["status"])
         @rate_limited
@@ -115,6 +224,266 @@ class TelegramBot:
                     self.bot.reply_to(message, "Wallet not found.")
             except Exception:
                 self.bot.reply_to(message, "Usage: /remove <address>")
+
+        @self.bot.message_handler(commands=["copy"])
+        @rate_limited
+        def copy_cmd(message):
+            """Copy trading: /copy add <addr> [nick], /copy remove <addr>, /copy list, /copy status"""
+            try:
+                from src.copy import add_copy_target, remove_copy_target, list_copy_targets
+                parts = message.text.split(maxsplit=2)
+                sub = (parts[1].lower() if len(parts) > 1 else "").strip()
+                rest = (parts[2] if len(parts) > 2 else "").strip()
+
+                if sub == "add":
+                    add_parts = rest.split(maxsplit=1)
+                    addr = add_parts[0] if add_parts else ""
+                    nick = add_parts[1] if len(add_parts) > 1 else ""
+                    if not addr or not is_valid_eth_address(addr):
+                        self.bot.reply_to(message, "Usage: /copy add <address> [nickname]")
+                        return
+                    ok = add_copy_target(addr, nick)
+                    if ok:
+                        targets = list_copy_targets()
+                        self.bot.reply_to(message, f"Added {addr[:12]}... to copy targets ({len(targets)} total).")
+                    else:
+                        if any(t.get("address", "").lower() == addr.lower() for t in list_copy_targets()):
+                            self.bot.reply_to(message, "Already in copy targets.")
+                        else:
+                            self.bot.reply_to(message, "Limit reached (20 targets). Remove one first.")
+                    return
+
+                if sub == "remove":
+                    addr = rest.split()[0] if rest else ""
+                    if not addr or not is_valid_eth_address(addr):
+                        self.bot.reply_to(message, "Usage: /copy remove <address>")
+                        return
+                    ok = remove_copy_target(addr)
+                    if ok:
+                        targets = list_copy_targets()
+                        self.bot.reply_to(message, f"Removed {addr[:12]}... ({len(targets)} targets left).")
+                    else:
+                        self.bot.reply_to(message, "Not in copy targets.")
+                    return
+
+                if sub == "list":
+                    targets = list_copy_targets()
+                    if not targets:
+                        self.bot.reply_to(message, "No copy targets. Use /copy add <address> to add.")
+                        return
+                    msg = f"Copy targets ({len(targets)}):\n\n"
+                    for t in targets[:15]:
+                        addr = t.get("address", "?")[:10] + "..."
+                        nick = t.get("nickname", "")
+                        msg += f"• {nick or addr} ({addr})\n"
+                    if len(targets) > 15:
+                        msg += f"\n... and {len(targets) - 15} more"
+                    self.bot.reply_to(message, msg[:2000])
+                    return
+
+                if sub == "kill":
+                    try:
+                        if self.config and hasattr(self.config, "set"):
+                            self.config.set("copy_pause", True)
+                            if hasattr(self.config, "save"):
+                                self.config.save()
+                            self.bot.reply_to(message, "Copy trading PAUSED (kill switch). Use /copy resume to re-enable.")
+                        else:
+                            self.bot.reply_to(message, "Config not available for kill switch.")
+                    except Exception:
+                        self.bot.reply_to(message, "Failed to save config.")
+                    return
+
+                if sub == "resume":
+                    try:
+                        if self.config and hasattr(self.config, "set"):
+                            self.config.set("copy_pause", False)
+                            if hasattr(self.config, "save"):
+                                self.config.save()
+                            self.bot.reply_to(message, "Copy trading resumed.")
+                        else:
+                            self.bot.reply_to(message, "Config not available.")
+                    except Exception:
+                        self.bot.reply_to(message, "Failed to save config.")
+                    return
+
+                if sub == "settings":
+                    try:
+                        cfg = self.config.config if hasattr(self.config, "config") else (self.config or {})
+                        msg = "Copy settings:\n"
+                        msg += f"Max order: ${cfg.get('copy_max_order_usd', 100)}\n"
+                        msg += f"Size mult: {cfg.get('copy_size_multiplier', 1.0)}\n"
+                        msg += f"Throttle: {cfg.get('copy_max_trades_per_minute', 0) or 'off'}/min\n"
+                        msg += f"Risk reduction: after {cfg.get('copy_reduce_multiplier_after_trades', 0) or 0} trades -> {cfg.get('copy_reduced_multiplier', 0.5)}x\n"
+                        msg += f"Freeze: after {cfg.get('copy_freeze_after_trades', 0) or 0} trades for {cfg.get('copy_freeze_duration_minutes', 60)} min\n"
+                        msg += f"Fee: {cfg.get('copy_fee_pct', 0.77)}% | Referral: {cfg.get('copy_referral_discount_pct', 10)}%\n"
+                        msg += f"Paused: {cfg.get('copy_pause', False)}"
+                        self.bot.reply_to(message, msg[:2000])
+                    except Exception:
+                        self.bot.reply_to(message, "Failed.")
+                    return
+
+                if sub in ("status", ""):
+                    targets = list_copy_targets()
+                    enabled = (self.config or {}).get("copy_enabled", False)
+                    dry_run = (self.config or {}).get("copy_dry_run", True)
+                    msg = f"Copy: {'ON' if enabled else 'OFF'} | Dry run: {'Yes' if dry_run else 'No'}\n"
+                    msg += f"Targets: {len(targets)}"
+                    if targets:
+                        msg += "\nTop: " + ", ".join((t.get("nickname") or t.get("address", "")[:10]) for t in targets[:5])
+                    self.bot.reply_to(message, msg[:2000])
+                    return
+
+                self.bot.reply_to(message, "Usage: /copy add|remove|list|status|kill|resume|settings")
+            except Exception as e:
+                print(f"[Telegram/copy] Error: {e}")
+                self.bot.reply_to(message, "Copy command failed. Try /copy list or /copy status.")
+
+        @self.bot.message_handler(commands=["copystatus"])
+        @rate_limited
+        def copystatus(message):
+            try:
+                from src.copy import list_copy_targets
+                targets = list_copy_targets()
+                enabled = (self.config or {}).get("copy_enabled", False)
+                dry_run = (self.config or {}).get("copy_dry_run", True)
+                msg = f"Copy: {'ON' if enabled else 'OFF'} | Dry run: {'Yes' if dry_run else 'No'}\n"
+                msg += f"Targets: {len(targets)}"
+                if targets:
+                    msg += "\nTop: " + ", ".join((t.get("nickname") or t.get("address", "")[:10]) for t in targets[:5])
+                self.bot.reply_to(message, msg[:2000])
+            except Exception as e:
+                print(f"[Telegram/copystatus] Error: {e}")
+                self.bot.reply_to(message, "Failed.")
+
+        @self.bot.message_handler(commands=["connect"])
+        @rate_limited
+        def connect_cmd(message):
+            """Connect Polymarket or Kalshi: /connect polymarket, /connect kalshi. DM only."""
+            chat_type = message.chat.type if hasattr(message.chat, "type") else "private"
+            if chat_type != "private":
+                self.bot.reply_to(message, "For security, use /connect polymarket or /connect kalshi in a DM with me.")
+                return
+            parts = (message.text or "").split(maxsplit=1)
+            platform = (parts[1].lower().strip() if len(parts) > 1 else "")
+            if platform == "polymarket":
+                self._connect_pending[message.from_user.id] = {"waiting": "polymarket", "since": time.time()}
+                self.bot.reply_to(message, "Paste your Polymarket API credentials in one message:\napi_key|api_secret|api_passphrase\n(Separated by |, from polymarket.com/settings)")
+            elif platform == "kalshi":
+                self._connect_pending[message.from_user.id] = {"waiting": "kalshi", "since": time.time()}
+                self.bot.reply_to(message, "Paste your Kalshi API credentials in one message:\napi_key_id|private_key_pem\n(Private key: full PEM block. Use \\n for newlines if needed.)")
+            else:
+                self.bot.reply_to(message, "Usage: /connect polymarket or /connect kalshi (DM only)")
+
+        def _handle_menu_paste(message):
+            """Handle add/remove/copy input when user is in menu pending state."""
+            uid = message.from_user.id
+            if uid not in self._menu_pending:
+                return False
+            entry = self._menu_pending[uid]
+            if time.time() - entry["since"] > self._connect_timeout:
+                del self._menu_pending[uid]
+                return False
+            text = (message.text or "").strip()
+            if not text or text.startswith("/"):
+                return False
+            action = entry["action"]
+            chat_id = entry.get("chat_id", message.chat.id)
+            del self._menu_pending[uid]
+            try:
+                if action == "add":
+                    parts = text.split(maxsplit=1)
+                    addr = parts[0]
+                    nick = parts[1] if len(parts) > 1 else addr[:12] + "..."
+                    if not is_valid_eth_address(addr):
+                        self.bot.send_message(chat_id, "Invalid address.")
+                        return True
+                    if self.storage.get_wallet(addr):
+                        self.bot.send_message(chat_id, "Already tracking.")
+                        return True
+                    if len(self.storage.list_wallets()) >= MAX_WALLETS:
+                        self.bot.send_message(chat_id, f"Limit ({MAX_WALLETS}) reached.")
+                        return True
+                    self.storage.add_wallet(Wallet(address=addr, nickname=sanitize_nickname(nick) or nick))
+                    self.bot.send_message(chat_id, f"Added {nick}.")
+                elif action == "remove":
+                    if not is_valid_eth_address(text):
+                        self.bot.send_message(chat_id, "Invalid address.")
+                        return True
+                    ok = self.storage.remove_wallet(text)
+                    self.bot.send_message(chat_id, f"Removed {text[:12]}..." if ok else "Not found.")
+                elif action == "copy_add":
+                    from src.copy import add_copy_target, list_copy_targets
+                    parts = text.split(maxsplit=1)
+                    addr = parts[0]
+                    nick = parts[1] if len(parts) > 1 else ""
+                    if not is_valid_eth_address(addr):
+                        self.bot.send_message(chat_id, "Invalid address.")
+                        return True
+                    ok = add_copy_target(addr, nick)
+                    targets = list_copy_targets()
+                    self.bot.send_message(chat_id, f"Added ({len(targets)} targets)." if ok else "Already in list or limit reached.")
+                elif action == "copy_remove":
+                    from src.copy import remove_copy_target, list_copy_targets
+                    if not is_valid_eth_address(text):
+                        self.bot.send_message(chat_id, "Invalid address.")
+                        return True
+                    ok = remove_copy_target(text)
+                    targets = list_copy_targets()
+                    self.bot.send_message(chat_id, f"Removed ({len(targets)} left)." if ok else "Not in list.")
+                return True
+            except Exception as e:
+                print(f"[Telegram/menu] Error: {e}")
+                self.bot.send_message(chat_id, "Failed.")
+                return True
+
+        def _handle_connect_paste(message):
+            """Handle credential paste when user is in connect pending state."""
+            uid = message.from_user.id
+            if uid not in self._connect_pending:
+                return False
+            entry = self._connect_pending[uid]
+            if time.time() - entry["since"] > self._connect_timeout:
+                del self._connect_pending[uid]
+                return False
+            platform = entry["waiting"]
+            text = (message.text or "").strip()
+            if not text or text.startswith("/"):
+                return False
+            del self._connect_pending[uid]
+            try:
+                from src.auth.credential_store import store_credentials
+                user_id = str(uid)
+                if platform == "polymarket":
+                    parts = text.split("|", 2)
+                    if len(parts) < 3:
+                        self.bot.reply_to(message, "Format: api_key|api_secret|api_passphrase")
+                        return True
+                    store_credentials(user_id, "polymarket", {"api_key": parts[0].strip(), "api_secret": parts[1].strip(), "api_passphrase": parts[2].strip()})
+                    self.bot.reply_to(message, "Polymarket credentials saved.")
+                elif platform == "kalshi":
+                    parts = text.split("|", 1)
+                    if len(parts) < 2:
+                        self.bot.reply_to(message, "Format: api_key_id|private_key_pem")
+                        return True
+                    pem = parts[1].strip().replace("\\n", "\n")
+                    store_credentials(user_id, "kalshi", {"api_key_id": parts[0].strip(), "private_key_pem": pem})
+                    self.bot.reply_to(message, "Kalshi credentials saved.")
+                return True
+            except RuntimeError as e:
+                self.bot.reply_to(message, f"Credential storage not configured: {str(e)[:100]}")
+                return True
+            except Exception as e:
+                print(f"[Telegram/connect] Error: {e}")
+                self.bot.reply_to(message, "Failed to save. Check format and try again.")
+                return True
+
+        @self.bot.message_handler(func=lambda m: (m.text or "").strip() and not (m.text or "").strip().startswith("/"))
+        def paste_handler(message):
+            """Handle menu or connect paste (add/remove/copy/creds)."""
+            if _handle_menu_paste(message):
+                return
+            _handle_connect_paste(message)
 
         @self.bot.message_handler(commands=["ai", "ask"])
         def ask_ai(message):

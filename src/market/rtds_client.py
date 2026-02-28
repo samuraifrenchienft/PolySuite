@@ -1,111 +1,148 @@
-"""Minimal Polymarket RTDS WebSocket client for validation spike.
+"""Polymarket RTDS WebSocket client for activity:trades.
 
-RTDS: wss://ws-live-data.polymarket.com
-Docs: https://docs.polymarket.com/market-data/websocket/rtds
+Connects to wss://ws-live-data.polymarket.com, subscribes to activity:trades,
+invokes callback on each trade. PING every 10s to keep connection alive.
 """
 
 import json
+import logging
 import threading
 import time
-from typing import Callable, Optional, List
+from typing import Callable, Dict, Optional
 
-try:
-    import websockets
-    HAS_WEBSOCKETS = True
-except ImportError:
-    HAS_WEBSOCKETS = False
+logger = logging.getLogger(__name__)
 
 RTDS_URL = "wss://ws-live-data.polymarket.com"
-PING_INTERVAL = 5
+PING_INTERVAL = 10
 
 
 class RTDSClient:
-    """Minimal RTDS WebSocket client for feasibility validation."""
+    """WebSocket client for Polymarket Real-Time Data Socket (activity:trades)."""
 
-    def __init__(self, on_message: Optional[Callable] = None):
-        self.on_message = on_message or (lambda m: None)
-        self._running = False
+    def __init__(self, url: str = RTDS_URL, ping_interval: int = PING_INTERVAL):
+        self.url = url
+        self.ping_interval = ping_interval
+        self._ws = None
+        self._callback: Optional[Callable[[Dict], None]] = None
         self._thread: Optional[threading.Thread] = None
-        self._last_message_ts: Optional[float] = None
-        self._message_count = 0
+        self._stop = threading.Event()
 
-    @property
-    def last_message_latency_ms(self) -> Optional[float]:
-        """Seconds since last message (for latency check)."""
-        if self._last_message_ts is None:
-            return None
-        return (time.time() - self._last_message_ts) * 1000
+    def connect(self) -> None:
+        """Connect to RTDS WebSocket."""
+        try:
+            import websocket
+            self._ws = websocket.WebSocketApp(
+                self.url,
+                on_open=self._on_open,
+                on_message=self._on_message,
+                on_error=self._on_error,
+                on_close=self._on_close,
+            )
+        except ImportError:
+            raise ImportError("websocket-client required for RTDS. pip install websocket-client")
 
-    @property
-    def message_count(self) -> int:
-        return self._message_count
+    def subscribe_trades(self, callback: Callable[[Dict], None]) -> None:
+        """Subscribe to activity:trades and set callback for each trade."""
+        self._callback = callback
 
-    def _run_sync(self):
-        """Run WebSocket loop (blocking)."""
-        if not HAS_WEBSOCKETS:
-            print("[RTDS] websockets package not installed: pip install websockets")
-            return
-
-        import asyncio
-
-        async def _connect():
-            try:
-                async with websockets.connect(RTDS_URL) as ws:
-                    # Subscribe to activity (trade) topic - minimal subscription
-                    sub = {"type": "subscribe", "topic": "activity"}
-                    await ws.send(json.dumps(sub))
-                    last_ping = time.time()
-                    while self._running:
-                        try:
-                            msg = await asyncio.wait_for(ws.recv(), timeout=10)
-                            self._message_count += 1
-                            self._last_message_ts = time.time()
-                            try:
-                                data = json.loads(msg)
-                                self.on_message(data)
-                            except json.JSONDecodeError:
-                                pass
-                            # PING every 5s to keep alive
-                            if time.time() - last_ping >= PING_INTERVAL:
-                                await ws.send(json.dumps({"type": "ping"}))
-                                last_ping = time.time()
-                        except asyncio.TimeoutError:
-                            continue
-            except Exception as e:
-                print(f"[RTDS] Connection error: {e}")
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(_connect())
-
-    def start(self):
+    def start(self) -> None:
         """Start WebSocket in background thread."""
-        if not HAS_WEBSOCKETS:
-            return False
-        self._running = True
-        self._thread = threading.Thread(target=self._run_sync, daemon=True, name="rtds-client")
+        if self._ws is None:
+            self.connect()
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="RTDSClient")
         self._thread.start()
-        return True
+        logger.info("[RTDS] Client started")
 
-    def stop(self):
-        """Stop WebSocket."""
-        self._running = False
+    def stop(self) -> None:
+        """Stop WebSocket and thread."""
+        self._stop.set()
+        if self._ws:
+            try:
+                self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
         if self._thread:
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=5)
             self._thread = None
+        logger.info("[RTDS] Client stopped")
 
+    def close(self) -> None:
+        """Alias for stop."""
+        self.stop()
 
-def run_rtds_spike(duration_sec: float = 10) -> dict:
-    """Run RTDS spike: connect, count messages, measure latency. Returns summary."""
-    messages = []
-    client = RTDSClient(on_message=messages.append)
-    if not client.start():
-        return {"ok": False, "error": "websockets not installed"}
-    time.sleep(duration_sec)
-    client.stop()
-    return {
-        "ok": True,
-        "message_count": len(messages),
-        "duration_sec": duration_sec,
-        "messages_per_sec": round(len(messages) / duration_sec, 2) if duration_sec else 0,
-    }
+    def _run(self) -> None:
+        """Run WebSocket loop."""
+        try:
+            import websocket
+            while not self._stop.is_set() and self._ws:
+                self._ws.run_forever(ping_interval=self.ping_interval, ping_timeout=5)
+                if self._stop.is_set():
+                    break
+                logger.warning("[RTDS] Connection closed, reconnecting in 5s...")
+                time.sleep(5)
+                self.connect()
+                self._ws.run_forever(ping_interval=self.ping_interval, ping_timeout=5)
+        except Exception as e:
+            logger.exception("[RTDS] Run error: %s", e)
+
+    def _on_open(self, ws) -> None:
+        """Send subscribe message on connect."""
+        sub = {
+            "action": "subscribe",
+            "subscriptions": [
+                {"topic": "activity", "type": "trades"}
+            ],
+        }
+        try:
+            ws.send(json.dumps(sub))
+            logger.info("[RTDS] Subscribed to activity:trades")
+        except Exception as e:
+            logger.warning("[RTDS] Subscribe failed: %s", e)
+
+    def _on_message(self, ws, message: str) -> None:
+        """Parse message and invoke callback for trade events."""
+        try:
+            data = json.loads(message)
+        except json.JSONDecodeError:
+            return
+        topic = data.get("topic", "")
+        msg_type = data.get("type", "")
+        payload = data.get("payload") or {}
+        if topic == "activity" and msg_type == "trades":
+            trade = self._parse_trade(payload)
+            if trade and self._callback:
+                try:
+                    self._callback(trade)
+                except Exception as e:
+                    logger.warning("[RTDS] Callback error: %s", e)
+
+    def _parse_trade(self, payload: dict) -> Optional[Dict]:
+        """Extract trade fields for CopyEngine. Normalize to proxyWallet, market, asset_id, size, price, side."""
+        if not payload:
+            return None
+        # Polymarket trade payload shape varies; extract common fields
+        proxy_wallet = (
+            payload.get("proxyWallet")
+            or payload.get("proxy_wallet")
+            or payload.get("maker")
+            or payload.get("taker")
+        )
+        if not proxy_wallet:
+            return None
+        return {
+            "proxyWallet": proxy_wallet,
+            "market": payload.get("market") or payload.get("conditionId") or payload.get("market_id"),
+            "asset_id": payload.get("asset_id") or payload.get("assetId") or payload.get("token_id"),
+            "size": float(payload.get("size", 0) or payload.get("amount", 0) or 0),
+            "price": float(payload.get("price", 0) or payload.get("outcomePrice", 0) or 0),
+            "side": (payload.get("side") or payload.get("outcome") or "BUY").upper(),
+            "raw": payload,
+        }
+
+    def _on_error(self, ws, error) -> None:
+        logger.warning("[RTDS] WebSocket error: %s", error)
+
+    def _on_close(self, ws, close_status_code, close_msg) -> None:
+        logger.info("[RTDS] WebSocket closed: %s %s", close_status_code, close_msg or "")

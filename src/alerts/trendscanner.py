@@ -5,6 +5,7 @@ Monitors:
 - DexScreener trending (when available)
 """
 
+import logging
 import os
 import requests
 from typing import List, Dict
@@ -132,7 +133,8 @@ REASON: [1 sentence]"""
             return {"alert": False, "reason": result[:100] if result else "No signal"}
 
         except Exception as e:
-            return {"alert": False, "reason": str(e)[:50]}
+            logging.getLogger(__name__).exception("TrendScanner analyze_token error")
+            return {"alert": False, "reason": "Analysis failed"}
 
     def scan_new_tokens(self, limit: int = 20) -> List[Dict]:
         """Scan new pump.fun tokens for alerts."""

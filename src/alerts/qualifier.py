@@ -78,7 +78,6 @@ class Qualifier:
         market: dict,
         ai_analysis: Optional[Dict] = None,
         liquidity_result: Optional[Dict] = None,
-        arb_profit: float = 0,
         require_liquidity: bool = False,
     ) -> Tuple[bool, str]:
         """Qualify a new market. Returns (pass, rejection_reason).
@@ -97,7 +96,7 @@ class Qualifier:
 
         if self.strict_mode:
             opp = ai_analysis.get("opportunity", "")
-            if opp == "LOW" and volume < 5000 and arb_profit < 0.5:
+            if opp == "LOW" and volume < 5000:
                 return False, "AI opportunity LOW and volume < 5k"
 
         if require_liquidity and liquidity_result is not None:
@@ -120,24 +119,6 @@ class Qualifier:
             hours_left = (end_date - now).total_seconds() / 3600
             if hours_left < self.min_expiring_hours and hours_left > 0:
                 return False, f"expiring in < {self.min_expiring_hours}h"
-
-        return True, ""
-
-    def qualify_arb(
-        self,
-        arb: dict,
-        ai_analysis: Optional[Dict] = None,
-    ) -> Tuple[bool, str]:
-        """Qualify an arbitrage opportunity."""
-        ai_analysis = ai_analysis or {}
-        profit = float(arb.get("profit_pct", 0) or 0)
-        volume = float(arb.get("volume", 0) or 0)
-
-        if profit < 0.3:
-            return False, "profit too small"
-
-        if volume < 1000 and profit < 1.0:
-            return False, "low volume and profit"
 
         return True, ""
 

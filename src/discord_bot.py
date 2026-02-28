@@ -410,7 +410,356 @@ class DiscordBot(commands.Bot):
                 print(f"[Discord/ca] Error: {e}")
                 await interaction.followup.send("Token scan failed. Please try again.")
 
+        # === COPY TRADING (Phase D) ===
+        copy_group = app_commands.Group(name="copy", description="Copy trading commands")
+
+        @copy_group.command(name="add", description="Add wallet to copy targets")
+        @app_commands.describe(address="Wallet address to copy", nickname="Optional nickname")
+        async def copy_add_slash(interaction: discord.Interaction, address: str, nickname: str = None):
+            if not is_valid_eth_address(address):
+                await interaction.response.send_message("Invalid address.", ephemeral=True)
+                return
+            try:
+                from src.copy import add_copy_target
+                ok = add_copy_target(address, nickname or "")
+                if ok:
+                    from src.copy import list_copy_targets
+                    targets = list_copy_targets()
+                    await interaction.response.send_message(
+                        f"Added `{address[:12]}...` to copy targets ({len(targets)} total).",
+                        ephemeral=True,
+                    )
+                else:
+                    from src.copy import list_copy_targets
+                    if any(t.get("address", "").lower() == address.lower() for t in list_copy_targets()):
+                        await interaction.response.send_message("Already in copy targets.", ephemeral=True)
+                    else:
+                        await interaction.response.send_message("Limit reached (20 targets). Remove one first.", ephemeral=True)
+            except Exception as e:
+                print(f"[Discord/copy add] Error: {e}")
+                await interaction.response.send_message("Failed to add. Please try again.", ephemeral=True)
+
+        @copy_group.command(name="remove", description="Remove wallet from copy targets")
+        @app_commands.describe(address="Wallet address to remove")
+        async def copy_remove_slash(interaction: discord.Interaction, address: str):
+            if not is_valid_eth_address(address):
+                await interaction.response.send_message("Invalid address.", ephemeral=True)
+                return
+            try:
+                from src.copy import remove_copy_target, list_copy_targets
+                ok = remove_copy_target(address)
+                if ok:
+                    targets = list_copy_targets()
+                    await interaction.response.send_message(
+                        f"Removed `{address[:12]}...` ({len(targets)} targets left).",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.response.send_message("Not in copy targets.", ephemeral=True)
+            except Exception as e:
+                print(f"[Discord/copy remove] Error: {e}")
+                await interaction.response.send_message("Failed to remove. Please try again.", ephemeral=True)
+
+        @copy_group.command(name="list", description="List copy targets")
+        async def copy_list_slash(interaction: discord.Interaction):
+            try:
+                from src.copy import list_copy_targets
+                targets = list_copy_targets()
+                if not targets:
+                    await interaction.response.send_message("No copy targets. Use `/copy add` to add wallets.", ephemeral=True)
+                    return
+                msg = f"**Copy targets ({len(targets)})**\n\n"
+                for t in targets[:15]:
+                    addr = t.get("address", "?")[:10] + "..."
+                    nick = t.get("nickname", "")
+                    msg += f"• {nick or addr} (`{addr}`)\n"
+                if len(targets) > 15:
+                    msg += f"\n... and {len(targets) - 15} more"
+                await interaction.response.send_message(msg[:2000], ephemeral=True)
+            except Exception as e:
+                print(f"[Discord/copy list] Error: {e}")
+                await interaction.response.send_message("Failed to list. Please try again.", ephemeral=True)
+
+        @copy_group.command(name="kill", description="Kill switch: immediately pause all copy trading")
+        async def copy_kill_slash(interaction: discord.Interaction):
+            try:
+                if hasattr(self.config, "set"):
+                    self.config.set("copy_pause", True)
+                    if hasattr(self.config, "save"):
+                        self.config.save()
+                else:
+                    self.config["copy_pause"] = True
+                await interaction.response.send_message("Copy trading PAUSED (kill switch). Use `/copy resume` to re-enable.", ephemeral=True)
+            except Exception as e:
+                print(f"[Discord/copy kill] Error: {e}")
+                await interaction.response.send_message("Failed to save. Check config.", ephemeral=True)
+
+        @copy_group.command(name="resume", description="Resume copy trading after kill switch")
+        async def copy_resume_slash(interaction: discord.Interaction):
+            try:
+                if hasattr(self.config, "set"):
+                    self.config.set("copy_pause", False)
+                    if hasattr(self.config, "save"):
+                        self.config.save()
+                else:
+                    self.config["copy_pause"] = False
+                await interaction.response.send_message("Copy trading resumed.", ephemeral=True)
+            except Exception as e:
+                print(f"[Discord/copy resume] Error: {e}")
+                await interaction.response.send_message("Failed to save. Check config.", ephemeral=True)
+
+        @copy_group.command(name="settings", description="View copy trading safety settings")
+        async def copy_settings_slash(interaction: discord.Interaction):
+            try:
+                cfg = self.config.config if hasattr(self.config, "config") else self.config
+                msg = "**Copy settings:**\n"
+                msg += f"Max order: ${cfg.get('copy_max_order_usd', 100)}\n"
+                msg += f"Size multiplier: {cfg.get('copy_size_multiplier', 1.0)}\n"
+                msg += f"Throttle: {cfg.get('copy_max_trades_per_minute', 0) or 'off'} per min\n"
+                msg += f"Risk reduction: after {cfg.get('copy_reduce_multiplier_after_trades', 0) or 0} trades -> {cfg.get('copy_reduced_multiplier', 0.5)}x\n"
+                msg += f"Freeze: after {cfg.get('copy_freeze_after_trades', 0) or 0} trades for {cfg.get('copy_freeze_duration_minutes', 60)} min\n"
+                msg += f"Fee: {cfg.get('copy_fee_pct', 0.77)}% | Referral discount: {cfg.get('copy_referral_discount_pct', 10)}%\n"
+                msg += f"Paused: {cfg.get('copy_pause', False)}"
+                await interaction.response.send_message(msg[:2000], ephemeral=True)
+            except Exception as e:
+                print(f"[Discord/copy settings] Error: {e}")
+                await interaction.response.send_message("Failed.", ephemeral=True)
+
+        @self.tree.command(name="copystatus", description="Copy trading status")
+        async def copystatus_slash(interaction: discord.Interaction):
+            try:
+                from src.copy import list_copy_targets
+                targets = list_copy_targets()
+                enabled = self.config.get("copy_enabled", False)
+                dry_run = self.config.get("copy_dry_run", True)
+                msg = f"**Copy trading:** {'ON' if enabled else 'OFF'}\n"
+                msg += f"**Dry run:** {'Yes' if dry_run else 'No (live)'}\n"
+                msg += f"**Targets:** {len(targets)}\n"
+                if targets:
+                    msg += "\nTop: " + ", ".join((t.get("nickname") or t.get("address", "")[:10]) for t in targets[:5])
+                await interaction.response.send_message(msg[:2000], ephemeral=True)
+            except Exception as e:
+                print(f"[Discord/copystatus] Error: {e}")
+                await interaction.response.send_message("Failed. Please try again.", ephemeral=True)
+
+        self.tree.add_command(copy_group)
+
+        # === CONNECT (credential storage for copy trading) ===
+        class PolymarketConnectModal(discord.ui.Modal, title="Connect Polymarket"):
+            api_key = discord.ui.TextInput(label="API Key", placeholder="From polymarket.com/settings", max_length=255, required=True)
+            api_secret = discord.ui.TextInput(label="API Secret", placeholder="API secret", max_length=255, required=True, style=discord.TextStyle.short)
+            api_passphrase = discord.ui.TextInput(label="API Passphrase", placeholder="API passphrase", max_length=255, required=True, style=discord.TextStyle.short)
+
+            def __init__(self, user_id: int):
+                super().__init__()
+                self.user_id = str(user_id)
+
+            async def on_submit(self, interaction: discord.Interaction):
+                try:
+                    from src.auth.credential_store import store_credentials
+                    store_credentials(self.user_id, "polymarket", {
+                        "api_key": self.api_key.value.strip(),
+                        "api_secret": self.api_secret.value.strip(),
+                        "api_passphrase": self.api_passphrase.value.strip(),
+                    })
+                    await interaction.response.send_message("Polymarket credentials saved.", ephemeral=True)
+                except RuntimeError as e:
+                    await interaction.response.send_message(f"Credential storage not configured: {str(e)[:150]}", ephemeral=True)
+                except Exception as e:
+                    print(f"[Discord/connect polymarket] Error: {e}")
+                    await interaction.response.send_message("Failed to save. Try again.", ephemeral=True)
+
+        class KalshiConnectModal(discord.ui.Modal, title="Connect Kalshi"):
+            api_key_id = discord.ui.TextInput(label="API Key ID", placeholder="From kalshi.com/settings/api", max_length=255, required=True)
+            private_key = discord.ui.TextInput(label="Private Key (PEM)", placeholder="-----BEGIN RSA PRIVATE KEY-----\\n...\\n-----END RSA PRIVATE KEY-----", max_length=4000, required=True, style=discord.TextStyle.paragraph)
+
+            def __init__(self, user_id: int):
+                super().__init__()
+                self.user_id = str(user_id)
+
+            async def on_submit(self, interaction: discord.Interaction):
+                try:
+                    from src.auth.credential_store import store_credentials
+                    pem = self.private_key.value.strip().replace("\\n", "\n")
+                    store_credentials(self.user_id, "kalshi", {"api_key_id": self.api_key_id.value.strip(), "private_key_pem": pem})
+                    await interaction.response.send_message("Kalshi credentials saved.", ephemeral=True)
+                except RuntimeError as e:
+                    await interaction.response.send_message(f"Credential storage not configured: {str(e)[:150]}", ephemeral=True)
+                except Exception as e:
+                    print(f"[Discord/connect kalshi] Error: {e}")
+                    await interaction.response.send_message("Failed to save. Try again.", ephemeral=True)
+
+        connect_group = app_commands.Group(name="connect", description="Connect Polymarket or Kalshi for copy trading")
+
+        @connect_group.command(name="polymarket", description="Connect Polymarket API credentials")
+        async def connect_polymarket_slash(interaction: discord.Interaction):
+            modal = PolymarketConnectModal(interaction.user.id)
+            await interaction.response.send_modal(modal)
+
+        @connect_group.command(name="kalshi", description="Connect Kalshi API credentials")
+        async def connect_kalshi_slash(interaction: discord.Interaction):
+            modal = KalshiConnectModal(interaction.user.id)
+            await interaction.response.send_modal(modal)
+
+        self.tree.add_command(connect_group)
+
+        # === MENU (buttons for all options) ===
+        class MenuView(discord.ui.View):
+            def __init__(self, bot_self):
+                super().__init__(timeout=300)
+                self._bot = bot_self
+
+            @discord.ui.button(label="Status", style=discord.ButtonStyle.primary, row=0)
+            async def btn_status(self, interaction: discord.Interaction, button: discord.ui.Button):
+                wallets = self._bot.storage.list_wallets()
+                smart = [w for w in wallets if w.is_smart_money]
+                msg = f"Tracking {len(wallets)} wallets ({len(smart)} smart)"
+                if wallets:
+                    msg += "\n\nTop: " + ", ".join(f"{w.nickname}: {w.win_rate:.1f}%" for w in sorted(wallets, key=lambda x: x.win_rate, reverse=True)[:5])
+                await interaction.response.send_message(msg, ephemeral=True)
+
+            @discord.ui.button(label="Copy status", style=discord.ButtonStyle.secondary, row=0)
+            async def btn_copy_status(self, interaction: discord.Interaction, button: discord.ui.Button):
+                try:
+                    from src.copy import list_copy_targets
+                    targets = list_copy_targets()
+                    enabled = self._bot.config.get("copy_enabled", False)
+                    dry = self._bot.config.get("copy_dry_run", True)
+                    await interaction.response.send_message(f"Copy: {'ON' if enabled else 'OFF'} | Dry run: {'Yes' if dry else 'No'}\nTargets: {len(targets)}", ephemeral=True)
+                except Exception:
+                    await interaction.response.send_message("Failed.", ephemeral=True)
+
+            @discord.ui.button(label="Add wallet", style=discord.ButtonStyle.success, row=1)
+            async def btn_add(self, interaction: discord.Interaction, button: discord.ui.Button):
+                class AddModal(discord.ui.Modal, title="Add Wallet"):
+                    addr = discord.ui.TextInput(label="Address", placeholder="0x...", max_length=42, required=True)
+                    nick = discord.ui.TextInput(label="Nickname", placeholder="Optional", max_length=50, required=False)
+                    def __init__(self, storage):
+                        super().__init__()
+                        self._storage = storage
+                    async def on_submit(self, i: discord.Interaction):
+                        if not is_valid_eth_address(self.addr.value.strip()):
+                            await i.response.send_message("Invalid address.", ephemeral=True)
+                            return
+                        if self._storage.get_wallet(self.addr.value.strip()):
+                            await i.response.send_message("Already tracking.", ephemeral=True)
+                            return
+                        if len(self._storage.list_wallets()) >= 10:
+                            await i.response.send_message("Limit (10) reached.", ephemeral=True)
+                            return
+                        nick = sanitize_nickname(self.nick.value.strip()) or self.addr.value[:12] + "..."
+                        self._storage.add_wallet(Wallet(address=self.addr.value.strip(), nickname=nick))
+                        await i.response.send_message(f"Added {nick}.", ephemeral=True)
+                await interaction.response.send_modal(AddModal(self._bot.storage))
+
+            @discord.ui.button(label="Remove wallet", style=discord.ButtonStyle.danger, row=1)
+            async def btn_remove(self, interaction: discord.Interaction, button: discord.ui.Button):
+                class RemoveModal(discord.ui.Modal, title="Remove Wallet"):
+                    addr = discord.ui.TextInput(label="Address", placeholder="0x...", max_length=42, required=True)
+                    def __init__(self, storage):
+                        super().__init__()
+                        self._storage = storage
+                    async def on_submit(self, i: discord.Interaction):
+                        ok = self._storage.remove_wallet(self.addr.value.strip())
+                        await i.response.send_message(f"Removed." if ok else "Not found.", ephemeral=True)
+                await interaction.response.send_modal(RemoveModal(self._bot.storage))
+
+            @discord.ui.button(label="Copy add", style=discord.ButtonStyle.success, row=2)
+            async def btn_copy_add(self, interaction: discord.Interaction, button: discord.ui.Button):
+                class CopyAddModal(discord.ui.Modal, title="Copy Add"):
+                    addr = discord.ui.TextInput(label="Address", placeholder="0x...", max_length=42, required=True)
+                    nick = discord.ui.TextInput(label="Nickname", placeholder="Optional", max_length=32, required=False)
+                    async def on_submit(self, i: discord.Interaction):
+                        try:
+                            from src.copy import add_copy_target, list_copy_targets
+                            if not is_valid_eth_address(self.addr.value.strip()):
+                                await i.response.send_message("Invalid address.", ephemeral=True)
+                                return
+                            ok = add_copy_target(self.addr.value.strip(), self.nick.value.strip())
+                            t = list_copy_targets()
+                            await i.response.send_message(f"Added ({len(t)} targets)." if ok else "Already in list or limit reached.", ephemeral=True)
+                        except Exception as e:
+                            await i.response.send_message("Failed.", ephemeral=True)
+                await interaction.response.send_modal(CopyAddModal())
+
+            @discord.ui.button(label="Copy remove", style=discord.ButtonStyle.danger, row=2)
+            async def btn_copy_remove(self, interaction: discord.Interaction, button: discord.ui.Button):
+                class CopyRemoveModal(discord.ui.Modal, title="Copy Remove"):
+                    addr = discord.ui.TextInput(label="Address", placeholder="0x...", max_length=42, required=True)
+                    async def on_submit(self, i: discord.Interaction):
+                        try:
+                            from src.copy import remove_copy_target, list_copy_targets
+                            ok = remove_copy_target(self.addr.value.strip())
+                            t = list_copy_targets()
+                            await i.response.send_message(f"Removed ({len(t)} left)." if ok else "Not in list.", ephemeral=True)
+                        except Exception:
+                            await i.response.send_message("Failed.", ephemeral=True)
+                await interaction.response.send_modal(CopyRemoveModal())
+
+            @discord.ui.button(label="Copy list", style=discord.ButtonStyle.secondary, row=2)
+            async def btn_copy_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+                try:
+                    from src.copy import list_copy_targets
+                    targets = list_copy_targets()
+                    if not targets:
+                        await interaction.response.send_message("No copy targets.", ephemeral=True)
+                    else:
+                        msg = "**Copy targets:**\n" + "\n".join(f"• {t.get('nickname', t.get('address','')[:10])}" for t in targets[:15])
+                        await interaction.response.send_message(msg[:2000], ephemeral=True)
+                except Exception:
+                    await interaction.response.send_message("Failed.", ephemeral=True)
+
+            @discord.ui.button(label="Connect Polymarket", style=discord.ButtonStyle.primary, row=3)
+            async def btn_conn_pm(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await interaction.response.send_modal(PolymarketConnectModal(interaction.user.id))
+
+            @discord.ui.button(label="Connect Kalshi", style=discord.ButtonStyle.primary, row=3)
+            async def btn_conn_k(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await interaction.response.send_modal(KalshiConnectModal(interaction.user.id))
+
+            @discord.ui.button(label="Copy kill", style=discord.ButtonStyle.danger, row=4)
+            async def btn_copy_kill(self, interaction: discord.Interaction, button: discord.ui.Button):
+                try:
+                    if hasattr(self._bot.config, "set"):
+                        self._bot.config.set("copy_pause", True)
+                        if hasattr(self._bot.config, "save"):
+                            self._bot.config.save()
+                        await interaction.response.send_message("Copy PAUSED (kill switch). Use /copy resume to re-enable.", ephemeral=True)
+                    else:
+                        await interaction.response.send_message("Config not available.", ephemeral=True)
+                except Exception:
+                    await interaction.response.send_message("Failed.", ephemeral=True)
+
+            @discord.ui.button(label="Copy settings", style=discord.ButtonStyle.secondary, row=4)
+            async def btn_copy_settings(self, interaction: discord.Interaction, button: discord.ui.Button):
+                try:
+                    cfg = self._bot.config.config if hasattr(self._bot.config, "config") else self._bot.config
+                    msg = "**Copy settings:**\n"
+                    msg += f"Max order: ${cfg.get('copy_max_order_usd', 100)}\n"
+                    msg += f"Size mult: {cfg.get('copy_size_multiplier', 1.0)}\n"
+                    msg += f"Throttle: {cfg.get('copy_max_trades_per_minute', 0) or 'off'}/min\n"
+                    msg += f"Risk reduction: after {cfg.get('copy_reduce_multiplier_after_trades', 0) or 0} trades -> {cfg.get('copy_reduced_multiplier', 0.5)}x\n"
+                    msg += f"Freeze: after {cfg.get('copy_freeze_after_trades', 0) or 0} trades for {cfg.get('copy_freeze_duration_minutes', 60)} min\n"
+                    msg += f"Fee: {cfg.get('copy_fee_pct', 0.77)}% | Referral: {cfg.get('copy_referral_discount_pct', 10)}%\n"
+                    msg += f"Paused: {cfg.get('copy_pause', False)}"
+                    await interaction.response.send_message(msg[:2000], ephemeral=True)
+                except Exception:
+                    await interaction.response.send_message("Failed.", ephemeral=True)
+
+            @discord.ui.button(label="Ask AI", style=discord.ButtonStyle.secondary, row=5)
+            async def btn_ai(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await interaction.response.send_message("Use `/ask <your question>` to ask AI.", ephemeral=True)
+
+        @self.tree.command(name="menu", description="Show menu with buttons for all options")
+        async def menu_slash(interaction: discord.Interaction):
+            await interaction.response.send_message("Choose an action:", view=MenuView(self), ephemeral=True)
+
         # === MESSAGE COMMANDS (fallback) ===
+        @self.command(name="menu")
+        async def menu_msg(ctx):
+            view = MenuView(self)
+            await ctx.message.reply("Choose an action:", view=view)
+
         @self.command(name="ask")
         async def ask_msg(ctx, *, question: str):
             await ctx.message.reply("🤔 Thinking...")

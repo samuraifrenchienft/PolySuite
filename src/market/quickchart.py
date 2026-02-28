@@ -1,6 +1,9 @@
 """QuickChart integration for PolySuite."""
+import json
 import urllib.parse
 from typing import List, Dict, Optional
+
+import requests
 
 
 class QuickChartClient:
@@ -13,20 +16,23 @@ class QuickChartClient:
         self.api_key = api_key
 
     def generate_url(self, config: dict) -> str:
-        """Generate chart URL from config.
-
-        Args:
-            config: Chart.js compatible config
-
-        Returns:
-            Chart image URL
-        """
-        import json
+        """Generate chart URL from config. HIGH-006: Never include api_key in URL."""
         chart_config = urllib.parse.quote(json.dumps(config))
         url = f"{self.BASE_URL}?c={chart_config}"
-        if self.api_key:
-            url += f"&apiKey={self.api_key}"
         return url
+
+    def fetch_image(self, config: dict) -> Optional[bytes]:
+        """Fetch chart image via POST. HIGH-006: API key in body, not URL."""
+        try:
+            payload = {"chart": config, "format": "png"}
+            if self.api_key:
+                payload["key"] = self.api_key
+            resp = requests.post(self.BASE_URL, json=payload, timeout=15)
+            if resp.status_code == 200:
+                return resp.content
+        except Exception:
+            pass
+        return None
 
     def wallet_performance_chart(
         self,
@@ -98,17 +104,26 @@ class QuickChartClient:
     ) -> str:
         """Generate chart for convergence (traders in same market).
 
-        Args:
-            market_name: Market question
-            wallets: List of wallets in this market
-
         Returns:
-            Chart image URL
+            Chart image URL (no API key in URL; use fetch_convergence_chart for bytes)
         """
+        config = self._convergence_config(market_name, wallets)
+        return self.generate_url(config)
+
+    def fetch_convergence_chart(
+        self,
+        market_name: str,
+        wallets: List[Dict]
+    ) -> Optional[bytes]:
+        """Fetch convergence chart image via POST. HIGH-006: Key never in URL."""
+        config = self._convergence_config(market_name, wallets)
+        return self.fetch_image(config)
+
+    def _convergence_config(self, market_name: str, wallets: List[Dict]) -> dict:
+        """Build chart config for convergence."""
         labels = [w.get("nickname", w.get("address", "")[:8]) for w in wallets]
         win_rates = [round(w.get("win_rate", 0), 1) for w in wallets]
-
-        config = {
+        return {
             "type": "horizontalBar",
             "data": {
                 "labels": labels,
@@ -136,8 +151,6 @@ class QuickChartClient:
                 }
             }
         }
-
-        return self.generate_url(config)
 
     def market_volume_chart(
         self,

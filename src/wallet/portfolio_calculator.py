@@ -33,7 +33,8 @@ class PortfolioCalculator:
         positions = []
 
         for pos in raw_positions:
-            market_id = pos.get("market_id") or pos.get("conditionId") or pos.get("market")
+            # Polymarket API uses conditionId as primary; fallback to market_id, market
+            market_id = pos.get("conditionId") or pos.get("market_id") or pos.get("market")
             if not market_id:
                 continue
 

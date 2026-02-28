@@ -22,7 +22,6 @@ jobs:
 
       - name: Run pip audit
         run: pip audit
-        continue-on-error: true
 
   test:
     runs-on: ubuntu-latest

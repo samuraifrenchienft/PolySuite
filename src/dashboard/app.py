@@ -31,15 +31,17 @@ def _validate_telegram_init_data(init_data: str, bot_token: str) -> bool:
         hash_val = parsed.pop("hash", None)
         if not hash_val:
             return False
-        # CRIT-001: Reject initData older than INIT_DATA_MAX_AGE_SECONDS
+        # HIGH-005: Require auth_date for replay protection; reject if missing
         auth_date_str = parsed.get("auth_date")
-        if auth_date_str:
-            try:
-                auth_ts = int(auth_date_str)
-                if time.time() - auth_ts > INIT_DATA_MAX_AGE_SECONDS:
-                    return False
-            except (ValueError, TypeError):
+        if not auth_date_str:
+            return False
+        # CRIT-001: Reject initData older than INIT_DATA_MAX_AGE_SECONDS
+        try:
+            auth_ts = int(auth_date_str)
+            if time.time() - auth_ts > INIT_DATA_MAX_AGE_SECONDS:
                 return False
+        except (ValueError, TypeError):
+            return False
         data_check = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
         secret_key = hmac.new(
             bot_token.encode(), b"WebAppData", hashlib.sha256
@@ -89,7 +91,7 @@ class Dashboard:
 
         @self.app.before_request
         def _auth_middleware():
-            if request.path == "/" or request.path.startswith("/static"):
+            if request.path in ("/", "/connect-polymarket", "/connect-kalshi") or request.path.startswith("/static"):
                 if not _check_auth():
                     return "Unauthorized", 401
 
@@ -99,6 +101,59 @@ class Dashboard:
                 return "Unauthorized", 401
             wallets = self.storage.list_wallets()
             return render_template("index.html", wallets=wallets)
+
+        @self.app.route("/connect-polymarket")
+        def connect_polymarket():
+            if not _check_auth():
+                return "Unauthorized", 401
+            return render_template("connect_polymarket.html")
+
+        @self.app.route("/connect-kalshi")
+        def connect_kalshi():
+            if not _check_auth():
+                return "Unauthorized", 401
+            return render_template("connect_kalshi.html")
+
+        @self.app.route("/api/polymarket/store-credentials", methods=["POST"])
+        def store_polymarket_creds():
+            if not _check_auth():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 401
+            try:
+                data = request.get_json() or {}
+                user_id = (data.get("user_id") or "").strip()
+                api_key = (data.get("api_key") or "").strip()
+                api_secret = (data.get("api_secret") or "").strip()
+                api_passphrase = (data.get("api_passphrase") or "").strip()
+                if not user_id or not api_key or not api_secret or not api_passphrase:
+                    return jsonify({"ok": False, "error": "Missing user_id, api_key, api_secret, or api_passphrase"}), 400
+                from src.auth.credential_store import store_credentials
+                store_credentials(user_id, "polymarket", {"api_key": api_key, "api_secret": api_secret, "api_passphrase": api_passphrase})
+                return jsonify({"ok": True})
+            except RuntimeError as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
+            except Exception as e:
+                logger.exception("store_polymarket_creds: %s", e)
+                return jsonify({"ok": False, "error": "Failed to store credentials"}), 500
+
+        @self.app.route("/api/kalshi/store-credentials", methods=["POST"])
+        def store_kalshi_creds():
+            if not _check_auth():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 401
+            try:
+                data = request.get_json() or {}
+                user_id = (data.get("user_id") or "").strip()
+                api_key_id = (data.get("api_key_id") or "").strip()
+                private_key_pem = (data.get("private_key_pem") or "").strip()
+                if not user_id or not api_key_id or not private_key_pem:
+                    return jsonify({"ok": False, "error": "Missing user_id, api_key_id, or private_key_pem"}), 400
+                from src.auth.credential_store import store_credentials
+                store_credentials(user_id, "kalshi", {"api_key_id": api_key_id, "private_key_pem": private_key_pem})
+                return jsonify({"ok": True})
+            except RuntimeError as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
+            except Exception as e:
+                logger.exception("store_kalshi_creds: %s", e)
+                return jsonify({"ok": False, "error": "Failed to store credentials"}), 500
 
         @self.app.route("/api/verify", methods=["POST"])
         def verify_init_data():
@@ -129,7 +184,7 @@ class Dashboard:
 
         @self.socketio.on("connect")
         def handle_connect():
-            """HIGH-003: Require initData or API key for Socket.IO."""
+            """HIGH-003: Require initData or API key for Socket.IO. LOW-006: Never log initData value."""
             init_data = request.args.get("initData", "")
             api_key = request.headers.get("X-API-Key", "")
             bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()

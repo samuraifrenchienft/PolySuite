@@ -1,5 +1,6 @@
 # Dependencies for PolySuite
 requests>=2.31.0
+cryptography>=41.0.0
 eth-utils>=2.0.0
 solana>=0.30.0
 solders>=0.18.0
@@ -13,7 +14,8 @@ apscheduler>=3.10.0
 pyTelegramBotAPI>=4.2.0
 python-dotenv>=1.0.0
 discord.py>=2.0.0
-Flask>=2.0.0
+Flask>=2.2.5,<3.0.0
 flask-cors>=4.0.0
 Flask-SocketIO>=5.3.6
+websocket-client>=1.6.0
 ollama>=0.1.0

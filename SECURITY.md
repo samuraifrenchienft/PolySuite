@@ -19,3 +19,12 @@ User Bankr API keys (from `/connect` or similar) are stored **in memory only**. 
 
 - **Ethereum:** `is_valid_eth_address()` enforces length (42 chars) and optional EIP-55 checksum.
 - **Solana:** `is_valid_solana_address()` validates base58 format and length (32–44 chars).
+
+## Flask Secret Key (MED-007)
+
+In production, set `FLASK_SECRET_KEY` in `.env` to a stable value (e.g. `openssl rand -hex 32`). Without it, Flask uses a new random key per restart, invalidating sessions and signed cookies.
+
+## Credential Storage (Copy Trading)
+
+- **CREDENTIAL_ENCRYPTION_KEY:** Required for storing Polymarket/Kalshi API credentials. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Store in `.env` only. **Never log or expose this key.**
+- Credentials are encrypted with AES (Fernet) and stored in `data/polysuite.db` in the `user_credentials` table.

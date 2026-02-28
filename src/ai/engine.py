@@ -3,7 +3,6 @@
 Uses Groq (primary) and OpenRouter Qwen (backup) for:
 - Market categorization
 - Opportunity scoring
-- Arbitrage detection
 - Sentiment analysis
 """
 
@@ -16,20 +15,17 @@ SYSTEM_MESSAGE = """You are the AI Engine for Prediction Suite, a prediction mar
 
 TASKS (use exact format):
 1. CATEGORIZE: Return CATEGORY: [crypto/sports/politics/economy/entertainment/other]
-2. SCORE: Return SCORE: [0-100] and REASON: [1 sentence]  
-3. ARBITRAGE: Return ARB: [YES/NO], DIFF: [percent], BET: [which side]
-4. SENTIMENT: Return SENTIMENT: [BULLISH/BEARISH/NEUTRAL], REASON: [1 sentence]
-5. WALLET: Return STRATEGY: [brief], CONFIDENCE: [high/medium/low], REASON: [1-2 sentences]
-6. ANOMALY: Return ANOMALY: [YES/NO], TYPE: [if yes], REASON: [1 sentence]
-7. SUMMARY: Return SUMMARY: [3 sentences], TOP_PICKS: [2-3 markets]
-8. ANALYZE ARB: Check triggers (profit < 0.5% = too small, > 2% = suspicious, volume, news timing)
-9. ANALYZE WHALE: Check triggers (CONVERGENCE, WHALE_ENTRY, EARLY_MOVER, CONTRARIAN)
-10. ANALYZE MARKET: Check triggers (LIQUID, TRENDING, MOVEMENT, CATEGORY)
-11. ENTRY_ZONE: Return ENTRY_ZONE: [BUY_YES/BUY_NO/WAIT/AVOID], REASON: [1-2 sentences], CONFIDENCE: [high/medium/low]
+2. SCORE: Return SCORE: [0-100] and REASON: [1 sentence]
+3. SENTIMENT: Return SENTIMENT: [BULLISH/BEARISH/NEUTRAL], REASON: [1 sentence]
+4. WALLET: Return STRATEGY: [brief], CONFIDENCE: [high/medium/low], REASON: [1-2 sentences]
+5. ANOMALY: Return ANOMALY: [YES/NO], TYPE: [if yes], REASON: [1 sentence]
+6. SUMMARY: Return SUMMARY: [3 sentences], TOP_PICKS: [2-3 markets]
+7. ANALYZE WHALE: Check triggers (CONVERGENCE, WHALE_ENTRY, EARLY_MOVER, CONTRARIAN)
+8. ANALYZE MARKET: Check triggers (LIQUID, TRENDING, MOVEMENT, CATEGORY)
+9. ENTRY_ZONE: Return ENTRY_ZONE: [BUY_YES/BUY_NO/WAIT/AVOID], REASON: [1-2 sentences], CONFIDENCE: [high/medium/low]
 
 TRIGGERS TO LOOK FOR:
-- ARB: profit threshold, volume, news correlation
-- WHALE: convergence (>2 whales same market), large size, early entry, contrarian
+- CURATED: convergence (>2 wallets same market), large size, early entry, contrarian
 - MARKET: volume > $10k, trending topic, probability movement
 
 RULES:
@@ -154,21 +150,6 @@ class AIFilter:
                     reason = line.split("REASON:")[1].strip()
         return score, reason
 
-    def detect_arbitrage(self, market1: Dict, market2: Dict) -> Dict:
-        """Task 3: Detect arbitrage."""
-        prompt = f"""ARBITRAGE: 
-Market 1 ({market1.get("source")}): {market1.get("question", "")[:50]} @ {market1.get("price")}
-Market 2 ({market2.get("source")}): {market2.get("question", "")[:50]} @ {market2.get("price")}"""
-
-        result = self._call(prompt)
-        if not result:
-            return {"arb": False, "diff": 0, "bet": None}
-
-        arb = "YES" in result.upper()
-        diff = abs(market1.get("price", 0) - market2.get("price", 0))
-
-        return {"arb": arb, "diff": diff, "bet": None, "analysis": result}
-
     def analyze_sentiment(self, question: str, price: float = None) -> str:
         """Task 4: Sentiment analysis."""
         prompt = f"SENTIMENT: {question}"
@@ -183,80 +164,10 @@ Market 2 ({market2.get("source")}): {market2.get("question", "")[:50]} @ {market
                 return "bearish"
         return "neutral"
 
-    def analyze_arb_opportunity(self, arb: Dict) -> Dict:
-        """Task 8: Analyze arbitrage - present facts, let user decide.
-
-        Shows: profit at different bet sizes, volume level, risks, fee warning.
-        """
-        question = arb.get("question", "")[:80]
-        yes_price = float(arb.get("yes_price", 0))
-        no_price = float(arb.get("no_price", 0))
-        profit = float(arb.get("profit_pct", 0))
-        volume = float(arb.get("volume", 0) or 0)
-
-        # Check for fee-risk markets (short timeframe)
-        fee_risk = False
-        question_lower = question.lower()
-        if any(
-            t in question_lower
-            for t in ["5 min", "15 min", "1 hour", "hourly", "5min", "15min"]
-        ):
-            if (
-                "crypto" in question_lower
-                or "bitcoin" in question_lower
-                or "btc" in question_lower
-            ):
-                fee_risk = True
-
-        # Volume level
-        vol_level = "LOW"
-        if volume > 10000:
-            vol_level = "MEDIUM"
-        if volume > 100000:
-            vol_level = "HIGH"
-
-        prompt = f"""ANALYZE ARB - Present facts only, NO verdicts:
-Market: {question}
-YES: ${yes_price:.2f} | NO: ${no_price:.2f}
-Profit: {profit:.2f}%
-Volume: ${volume:,.0f} ({vol_level})
-
-FACTS:
-- Profit margin: {profit:.2f}%
-- At $100 bet = ${100 * profit / 100:.2f} profit
-- At $1,000 bet = ${1000 * profit / 100:.2f} profit  
-- At $10,000 bet = ${10000 * profit / 100:.2f} profit
-- Volume: {vol_level} (${volume:,.0f})
-
-RISKS:
-{fee_risk and "⚠️ HIGH FEE RISK: Short timeframe - fees compound on frequent trades" or "✓ No obvious fee risk"}
-
-Reply format:
-FACTS: [profit at $100/$1k/$10k, volume level]
-RISKS: [fee risk if applicable, low volume if applicable, other risks]
-USER_DECIDES: [let user decide based on their criteria]"""
-
-        result = self._call(prompt, max_tokens=250)
-        # Extract one-line OPPORTUNITY or RISK summary
-        summary = ""
-        if result:
-            for line in result.split("\n"):
-                if "OPPORTUNITY:" in line.upper() or "RISK:" in line.upper():
-                    summary = line.split(":")[-1].strip() if ":" in line else ""
-                    break
-        return {
-            "worth": True,
-            "facts": f"${100 * profit / 100:.2f} / ${1000 * profit / 100:.2f} / ${10000 * profit / 100:.2f}",
-            "volume": vol_level,
-            "fee_risk": fee_risk,
-            "analysis": result[:250] if result else "",
-            "summary": summary or (result[:80] if result else ""),
-        }
-
     def analyze_whale_trades(self, trades: List[Dict]) -> str:
-        """Task 9: Analyze whale activity - patterns and risks.
+        """Task 9: Analyze curated wallet activity - patterns and risks.
 
-        Detects: convergence, whale entry, early mover, contrarian
+        Detects: convergence, large entry, early mover, contrarian
         """
         if not trades:
             return ""
@@ -286,13 +197,13 @@ USER_DECIDES: [let user decide based on their criteria]"""
 {summary}
 
 PATTERNS:
-- CONVERGENCE: {len(convergence_markets)} markets with multiple whales
+- CONVERGENCE: {len(convergence_markets)} markets with multiple wallets
 - WHALE_ENTRY: {any(t.get("size", 0) > 50000 for t in trades) and "Yes (> $50k)" or "No"}
 - LARGE_ACTIVITY: Total ${sum(t.get("size", 0) for t in trades):,.0f} across {len(trades)} trades
 
 Reply format:
 PATTERN: [CONVERGENCE/LARGE_ACTIVITY/NONE]
-DETAILS: [which markets, whale sizes]
+DETAILS: [which markets, trade sizes]
 RISKS: [any copy trade risks]"""
 
         result = self._call(prompt, max_tokens=250)

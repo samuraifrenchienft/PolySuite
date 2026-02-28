@@ -3,6 +3,7 @@
 Scans token contract addresses for safety analysis.
 """
 
+import logging
 import requests
 import time
 from typing import Dict, Optional
@@ -107,7 +108,8 @@ class MemeCoinScanner:
                     }
             return {"found": False}
         except Exception as e:
-            return {"found": False, "error": str(e)}
+            logging.getLogger(__name__).exception("MemeScanner DexScreener error")
+            return {"found": False, "error": "Data fetch failed"}
 
     def _get_token_info(self, address: str) -> Dict:
         """Get basic token info from different sources."""
@@ -153,7 +155,8 @@ class MemeCoinScanner:
                     "simulation_success": data.get("simulationSuccess", False),
                 }
         except Exception as e:
-            return {"error": str(e), "is_honeypot": None}
+            logging.getLogger(__name__).exception("MemeScanner honeypot check error")
+            return {"error": "Honeypot check failed", "is_honeypot": None}
         return {"is_honeypot": None}
 
     def _assess_safety(

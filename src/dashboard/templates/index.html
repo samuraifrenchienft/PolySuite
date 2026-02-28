@@ -146,7 +146,8 @@
             }
         });
 
-        const socket = io();
+        const initData = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) || '';
+        const socket = io({ query: initData ? { initData: initData } : {} });
         socket.on('connect', function() {
             console.log('Connected to server');
         });

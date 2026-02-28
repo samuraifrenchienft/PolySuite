@@ -15,7 +15,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from flask_socketio import SocketIO
 
 from src.alerts import AlertDispatcher
-from src.alerts.arbitrage import ArbitrageDetector
 from src.alerts.convergence import ConvergenceDetector
 from src.alerts.odds import OddsAlerter
 from src.alerts.position import PositionAlerter
@@ -159,6 +158,33 @@ def refresh_all(
             print(f"- {wallet.nickname}: No trades")
 
     print("\n[+] All wallets refreshed")
+
+
+def _dispatch_market_alerts(markets, min_volume, top_n, ai_filter, formatter_fn, combined, category, source_label):
+    """Helper: qualify, AI analyze, format, dispatch for Kalshi/Jupiter-style markets."""
+    passed = sorted(
+        [m for m in markets if float(getattr(m, "volume", 0) or 0) >= min_volume],
+        key=lambda x: float(getattr(x, "volume", 0) or 0),
+        reverse=True,
+    )[:top_n]
+    for m in passed:
+        entry_zone, conviction, entry_reason = "", "", ""
+        try:
+            q = getattr(m, "question", "Unknown")
+            vol = float(getattr(m, "volume", 0) or 0)
+            price = float(getattr(m, "price", 0.5) or 0.5)
+            market_dict = {"question": q, "volume": vol, "outcomePrices": [price, 1 - price]}
+            zones = ai_filter.analyze_entry_zones([market_dict])
+            if zones:
+                z = zones[0]
+                entry_zone = z.get("entry_zone", "")
+                conviction = z.get("confidence", "")
+                entry_reason = (z.get("reason", "") or "")[:100]
+        except Exception:
+            pass
+        msg = formatter_fn(m, entry_zone=entry_zone, conviction=conviction, entry_reason=entry_reason)
+        combined.send_to_alerts(msg, category=category)
+        print(f"   {source_label}: {getattr(m, 'question', '')[:40]}...")
 
 
 def _generate_ai_market_report(polymarket_api, combined, config):
@@ -339,7 +365,6 @@ def monitor(
         max_market_age_hours=config.convergence_max_market_age_hours,
         early_entry_minutes=config.convergence_early_entry_minutes,
     )
-    arb_detector = ArbitrageDetector(api_factory)
     discovery = MarketDiscovery(api_factory, config.tracked_categories)
     leaderboard_importer = LeaderboardImporter(api_factory)
     smart_money_detector = SmartMoneyDetector(api_factory)
@@ -362,13 +387,19 @@ def monitor(
 
     # Track markets we've alerted on
     alerted_markets: set = set()
-    alerted_arbs: set = set()  # Track alerted arbitrage opps
+    alerted_insider_wallets: set = set()
+
+    # Insider signal (high priority for copy traders)
+    last_insider_signal_check = 0
+    insider_signal_interval = config.get("insider_signal_interval", 300)  # 5 min
+
+    # Contrarian long-shot (high vol one side, high payout other)
+    last_contrarian_check = 0
+    contrarian_interval = config.get("contrarian_interval", 600)
 
     # Track last imports
     last_smart_money_import = 0  # Import immediately on first run
     import_interval = config.leaderboard_import_interval
-    last_arb_check = 0
-    arb_check_interval = 60  # Check arbitrage every 1 minute (was 5)
 
     # Health check / heartbeat
     last_health_check = 0
@@ -390,6 +421,12 @@ def monitor(
     # Background vetting - vet leaderboard wallets, build curated list (no auto-add)
     last_background_vetting = 0
     background_vetting_interval = config.background_vetting_interval
+
+    # Weekly wallet list - 10-30 vetted wallets to Discord/Telegram
+    last_wallet_list_sent = 0
+    wallet_list_interval = config.wallet_list_interval
+    wallet_list_min = config.wallet_list_min
+    wallet_list_max = config.wallet_list_max
 
     # Alert check intervals - more aggressive
     new_market_check_interval = 60  # Check for new markets every 1 min
@@ -431,6 +468,31 @@ def monitor(
         discord_thread.start()
         print("[*] Discord bot started - /bankr, /markets commands available")
 
+    # Copy trading (Phase D): RTDS -> qualify -> execute
+    copy_engine = None
+    if config.get("copy_enabled"):
+        try:
+            from src.copy.engine import CopyEngine
+            from src.copy.storage import get_copy_target_addresses
+            from src.auth.credential_store import CredentialStore
+            if get_copy_target_addresses():
+                cred_store = CredentialStore()
+                cfg = config.config if hasattr(config, "config") else config
+                copy_engine = CopyEngine(cfg, credential_store=cred_store)
+                copy_engine.start()
+                print("[*] Copy engine started (RTDS + CLOB)")
+            else:
+                print("[*] Copy enabled but no targets - add via /copy add")
+        except RuntimeError as e:
+            if "CREDENTIAL_ENCRYPTION_KEY" in str(e):
+                print("[*] Copy enabled but CREDENTIAL_ENCRYPTION_KEY not set - copy in dry-run only")
+            else:
+                print(f"[!] Copy engine error: {e}")
+        except Exception as e:
+            print(f"[!] Copy engine failed to start: {e}")
+
+    # --- Monitor loop: INGEST (API) → PROCESS (qualifier/AI/vetting) → DISPATCH (CombinedDispatcher queue → worker) ---
+    # See RESEARCH.md §9 for architecture and target pipeline (API → Worker → DB → Worker → Cache → Worker).
     while True:
         try:
             import traceback
@@ -455,6 +517,7 @@ def monitor(
                 if config.ai_daily_summary_enabled and current_time - last_ai_summary > 86400:  # 24 hours
                     try:
                         print("\n[*] Generating AI daily summary...")
+                        # INGEST: API → aggregator.get_polymarkets
                         markets = aggregator.get_polymarkets(limit=20)
                         if markets:
                             summary = ai_filter.summarize_markets(markets)
@@ -517,19 +580,28 @@ def monitor(
                     min_bet = getattr(config, "min_bet_size", 10.0) or 10.0
                     traders = importer.fetch_leaderboard(limit=20)
                     curated = []
+                    shared_market_cache = {}
                     for t in traders:
                         addr = t.get("address")
                         if not addr:
                             continue
-                        result = vetter.vet_wallet(addr, min_bet=min_bet)
+                        result = vetter.vet_wallet(addr, min_bet=min_bet, market_cache=shared_market_cache)
                         if result and result.get("passed"):
-                            curated.append({
+                            entry = {
                                 "address": addr,
                                 "nickname": t.get("userName") or t.get("username") or addr[:12] + "...",
                                 "bot_score": result.get("bot_score"),
                                 "win_rate_real": result.get("win_rate_real"),
                                 "avg_bet_size": result.get("avg_bet_size"),
-                            })
+                                "total_pnl": result.get("total_pnl"),
+                                "roi_pct": result.get("roi_pct"),
+                                "conviction_score": result.get("conviction_score"),
+                                "estimated_fees_paid": result.get("estimated_fees_paid"),
+                                "top_category": result.get("top_category"),
+                            }
+                            if result.get("specialty_or_hot_streak_note"):
+                                entry["specialty_or_hot_streak_note"] = result.get("specialty_or_hot_streak_note")
+                            curated.append(entry)
                     if curated:
                         vetting_path = Path("data/vetted_leaderboard.json")
                         vetting_path.parent.mkdir(parents=True, exist_ok=True)
@@ -541,18 +613,76 @@ def monitor(
                     print(f"[Background vetting] Error: {e}")
                     last_background_vetting = current_time  # Avoid rapid retries
 
+            # Weekly wallet list - re-vet at broadcast time, send 10-30 to Discord & Telegram
+            if current_time - last_wallet_list_sent >= wallet_list_interval:
+                try:
+                    print("\n[*] Weekly wallet list: vetting leaderboard...")
+                    importer = LeaderboardImporter(api_factory)
+                    vetter = WalletVetting(api_factory)
+                    min_bet = getattr(config, "min_bet_size", 10.0) or 10.0
+                    traders = importer.fetch_leaderboard(limit=50)
+                    passed = []
+                    shared_market_cache = {}
+                    for t in traders:
+                        addr = t.get("address")
+                        if not addr:
+                            continue
+                        result = vetter.vet_wallet(addr, min_bet=min_bet, market_cache=shared_market_cache)
+                        if result and result.get("passed"):
+                            passed.append({
+                                "address": addr,
+                                "nickname": t.get("userName") or t.get("username") or addr[:12] + "...",
+                                "bot_score": result.get("bot_score"),
+                                "win_rate_real": result.get("win_rate_real"),
+                                "avg_bet_size": result.get("avg_bet_size"),
+                                "top_category": result.get("top_category"),
+                            })
+                    passed.sort(key=lambda x: (x.get("win_rate_real") or 0, x.get("avg_bet_size") or 0), reverse=True)
+                    to_send = passed[:wallet_list_max]
+                    if len(to_send) >= wallet_list_min:
+                        msg = formatter.format_wallet_list(to_send)
+                        if msg:
+                            combined.send_to_alerts(msg)
+                            print(f"[*] Weekly wallet list: sent {len(to_send)} wallets to Discord & Telegram")
+                            last_wallet_list_sent = current_time
+                    else:
+                        print(f"[*] Weekly wallet list: only {len(to_send)} passed (min {wallet_list_min}), skipping")
+                        last_wallet_list_sent = current_time  # Avoid retrying every loop
+                except Exception as e:
+                    print(f"[Weekly wallet list] Error: {e}")
+                    last_wallet_list_sent = current_time  # Avoid rapid retries
+
             # AI Report every 30 minutes - optimal entry points with entry-zone analysis
             if current_time - last_ai_report > ai_report_interval:
                 _generate_ai_market_report(polymarket_api, combined, config)
                 last_ai_report = current_time
 
-            # Whale trade alerts - gated until curated AI-vetted wallet list
+            # Curated wallet activity - gated to vetted/curated wallets when enabled
             if config.whale_alerts_enabled and current_time - last_smart_money_import > whale_check_interval:
-                print("\n[*] Checking tracked wallets for recent whale trades...")
+                print("\n[*] Checking curated wallets for recent activity...")
 
-                wallets = storage.list_wallets()
+                # Whale pivot: prefer vetted_leaderboard.json; fallback to tracked wallets
+                wallets = []
+                vetting_path = Path("data/vetted_leaderboard.json")
+                if vetting_path.exists():
+                    try:
+                        with open(vetting_path) as f:
+                            data = json.load(f)
+                        vetted = data.get("wallets", [])
+                        if vetted:
+                            from src.wallet import Wallet
+                            wallets = [
+                                Wallet(address=v["address"], nickname=v.get("nickname", v["address"][:12] + "..."))
+                                for v in vetted if v.get("address")
+                            ]
+                            print(f"   Using {len(wallets)} vetted wallets from {vetting_path}")
+                    except Exception as e:
+                        print(f"   Vetted load error: {e}")
+                if not wallets:
+                    wallets = storage.list_wallets()
                 pm = polymarket_api
 
+                # INGEST: DB (vetted_leaderboard.json) + API (polymarket_api.get_wallet_trades)
                 # Only trades from last 6 hours
                 import time as _time
                 whale_hours_window = 6
@@ -605,7 +735,7 @@ def monitor(
 
                 # Send batched whale alerts (to alerts channel) - respect cooldown
                 if whale_trades and (current_time - last_whale_alert_time) >= whale_alert_cooldown:
-                    print(f"    -> Sending {len(whale_trades)} whale trades in batch")
+                    print(f"    -> Sending {len(whale_trades)} curated wallet trades in batch")
 
                     # AI summary with triggers (skip for small batches to reduce API calls)
                     ai_summary = ""
@@ -620,15 +750,35 @@ def monitor(
                         except Exception:
                             pass
 
-                    msg = formatter.format_whale_batch(whale_trades, ai_summary)
+                    # Entry zone from top trade's market
+                    entry_zone, conviction, entry_reason = "", "", ""
+                    if whale_trades:
+                        try:
+                            top = max(whale_trades, key=lambda t: t.get("size", 0))
+                            q = top.get("question", "Unknown")
+                            ep = top.get("entry_price")
+                            price = float(ep) if ep is not None else 0.5
+                            vol = sum(t.get("size", 0) for t in whale_trades if t.get("question") == q)
+                            market_dict = {"question": q, "volume": vol, "outcomePrices": [price, 1 - price]}
+                            zones = ai_filter.analyze_entry_zones([market_dict])
+                            if zones:
+                                z = zones[0]
+                                entry_zone = z.get("entry_zone", "")
+                                conviction = z.get("confidence", "")
+                                entry_reason = (z.get("reason", "") or "")[:100]
+                        except Exception:
+                            pass
+
+                    # PROCESS: formatter; DISPATCH: combined.send_to_alerts → queue → worker
+                    msg = formatter.format_whale_batch(whale_trades, ai_summary, entry_zone=entry_zone, conviction=conviction, entry_reason=entry_reason)
                     combined.send_to_alerts(msg)
                     last_whale_alert_time = current_time
                 elif whale_trades and (current_time - last_whale_alert_time) < whale_alert_cooldown:
-                    print(f"    -> Skipping whale alert (cooldown: {whale_alert_cooldown}s)")
+                    print(f"    -> Skipping curated wallet alert (cooldown: {whale_alert_cooldown}s)")
 
                 last_smart_money_import = current_time
 
-            # Kalshi & Jupiter - run regardless of wallet count (moved above high-performer gate)
+            # Kalshi & Jupiter - INGEST (API) → PROCESS (qualifier/AI) → DISPATCH (combined)
             if current_time - last_kalshi_jupiter_check >= kalshi_jupiter_interval:
                 last_kalshi_jupiter_check = current_time
                 try:
@@ -638,27 +788,18 @@ def monitor(
                     print(f"[Kalshi] Fetched {len(kalshi_markets)} markets")
                     print(f"[Jupiter] Fetched {len(jupiter_markets)} markets")
                     # Kalshi: top 3 by volume, only send if volume >= $100 (trade signal)
-                    kalshi_sorted = sorted(
-                        kalshi_markets,
-                        key=lambda x: float(getattr(x, "volume", 0) or 0),
-                        reverse=True,
+                    _dispatch_market_alerts(
+                        kalshi_markets, 100, 3,
+                        ai_filter, formatter.format_kalshi_market,
+                        combined, "kalshi", "Kalshi",
                     )
-                    kalshi_passed = [m for m in kalshi_sorted[:10] if float(getattr(m, "volume", 0) or 0) >= 100][:3]
-                    for m in kalshi_passed:
-                        msg = formatter.format_kalshi_market(m)
-                        combined.send_to_alerts(msg, category="kalshi")
-                        print(f"   Kalshi: {getattr(m, 'question', '')[:40]}...")
                     # Jupiter: top 3, only send if volume >= $100 (trade signal)
                     if config.jupiter_alerts_enabled:
-                        jupiter_passed = sorted(
-                            [m for m in jupiter_markets if float(getattr(m, "volume", 0) or 0) >= 100],
-                            key=lambda x: float(getattr(x, "volume", 0) or 0),
-                            reverse=True,
-                        )[:3]
-                        for m in jupiter_passed:
-                            msg = formatter.format_jupiter_market(m)
-                            combined.send_to_alerts(msg, category="jupiter")
-                            print(f"   Jupiter: {getattr(m, 'question', '')[:40]}...")
+                        _dispatch_market_alerts(
+                            jupiter_markets, 100, 3,
+                            ai_filter, formatter.format_jupiter_market,
+                            combined, "jupiter", "Jupiter",
+                        )
                 except Exception as e:
                     print(f"[Kalshi/Jupiter] Error: {e}")
 
@@ -679,180 +820,63 @@ def monitor(
                 time.sleep(config.polling_interval)
                 continue
 
-            # ===== PRIORITY 1: NEW EVENTS (1hr) - ALWAYS ALERT, CHECK ARB FIRST =====
-            print("\n[*] Checking for new events...")
-            new_events = event_alerter.check_new_events(hours=1, limit=200)
-            # Collect events that pass filters for batch entry zone analysis
-            to_send = []
-            for event in new_events:
-                event_id = event.get("id")
-                if not event_id:
-                    continue
-
-                arb = arb_detector.check_market_arb(event_id)
+            # ===== PRIORITY 1: INSIDER SIGNAL (high priority for copy traders) =====
+            if config.get("insider_signal_enabled", True) and current_time - last_insider_signal_check >= insider_signal_interval:
+                last_insider_signal_check = current_time
                 try:
-                    profit = float(arb.get("profit_pct", 0)) if arb else 0
-                except (ValueError, TypeError):
-                    profit = 0
+                    print("\n[*] Checking for insider signals...")
+                    from src.alerts.insider_signal import InsiderSignalDetector
+                    from src.alerts.insider import InsiderDetector
 
-                sentiment = ""
-                ai_insight = ""
-                category = ""
-                nm_analysis = {}
+                    hashdive = None
+                    if config.get("hashdive_api_key"):
+                        hashdive = api_factory.get_hashdive_client() if hasattr(api_factory, "get_hashdive_client") else None
+                    detector = InsiderSignalDetector(
+                        hashdive_client=hashdive,
+                        polymarket_api=polymarket_api,
+                        insider_detector=InsiderDetector(),
+                        api_factory=api_factory,
+                        min_trade_usd=getattr(config, "insider_signal_min_trade_usd", 5000),
+                        fresh_max_trades=getattr(config, "insider_signal_fresh_max_trades", 10),
+                        liquidity_threshold=config.get("weird_wallet_liquidity_threshold", 0.02),
+                        niche_volume_max=config.get("weird_wallet_niche_volume_max", 50000),
+                    )
+                    # INGEST: PolymarketWhaleClient/HashDive + polymarket_api; PROCESS: InsiderSignalDetector; DISPATCH: combined
+                    signals = detector.scan_for_signals(limit=5)
+                    for sig in signals:
+                        addr = sig.get("address", "")
+                        if addr and addr not in alerted_insider_wallets:
+                            msg = formatter.format_insider_signal(sig)
+                            combined.send_to_alerts(msg, category="insider")
+                            alerted_insider_wallets.add(addr)
+                            print(f"   🔴 INSIDER: {addr[:16]}...")
+                except Exception as e:
+                    print(f"[InsiderSignal] Error: {e}")
+
+            # ===== CONTRARIAN LONG-SHOT (when enabled) =====
+            if config.get("contrarian_alerts_enabled", False) and current_time - last_contrarian_check >= contrarian_interval:
+                last_contrarian_check = current_time
                 try:
-                    sentiment = ai_filter.analyze_sentiment(
-                        event.get("question", ""),
-                        event.get("probability", 0.5) or 0.5,
+                    from src.alerts.contrarian import ContrarianDetector
+
+                    detector = ContrarianDetector(
+                        polymarket_api=polymarket_api,
+                        min_volume=getattr(config, "contrarian_min_volume", 10000) or 10000,
+                        min_imbalance=getattr(config, "contrarian_min_imbalance", 0.6) or 0.6,
+                        payout_range=(
+                            getattr(config, "contrarian_payout_min", 0.20) or 0.20,
+                            getattr(config, "contrarian_payout_max", 0.40) or 0.40,
+                        ),
+                        limit=3,
                     )
-                    nm_analysis = ai_filter.analyze_new_market(event)
-                    ai_insight = nm_analysis.get("analysis", "") or ""
-                    category = nm_analysis.get("category", "") or ""
-                except Exception:
-                    pass
-
-                is_crypto_st = event_alerter.is_crypto_short_term(
-                    event.get("question", "")
-                )
-                if is_crypto_st:
-                    raw_p = event.get("outcomePrices")
-                    if raw_p:
-                        try:
-                            p = json.loads(raw_p) if isinstance(raw_p, str) else raw_p
-                            if p and len(p) >= 2:
-                                event = dict(event)
-                                event["yes_pct"] = float(p[0])
-                        except Exception:
-                            pass
-
-                # Liquidity check (Zigma-style) when enabled
-                liquidity_result = None
-                if config.require_liquidity_check:
-                    market_for_liq = event
-                    if not (event.get("clobTokenIds") or event.get("clob_token_ids")):
-                        m = polymarket_api.get_market(event_id)
-                        if m:
-                            market_for_liq = dict(event)
-                            market_for_liq["clobTokenIds"] = m.get("clobTokenIds")
-                    liquidity_result = check_liquidity_depth(
-                        market_for_liq,
-                        api_factory,
-                        min_liquidity_depth_usd=config.min_liquidity_depth_usd,
-                        max_spread_pct=config.max_spread_pct,
-                    )
-                    if not liquidity_result.get("pass", True):
-                        continue
-
-                # Multi-layer qualification (Zigma-style)
-                passed, reject_reason = qualifier.qualify_new_market(
-                    event,
-                    ai_analysis=nm_analysis,
-                    liquidity_result=liquidity_result if config.require_liquidity_check else None,
-                    arb_profit=profit,
-                    require_liquidity=config.require_liquidity_check,
-                )
-                if not passed:
-                    continue
-
-                to_send.append({
-                    "event": event,
-                    "arb": arb,
-                    "profit": profit,
-                    "sentiment": sentiment,
-                    "ai_insight": ai_insight,
-                    "category": category,
-                    "is_crypto_st": is_crypto_st,
-                })
-
-            # Batch entry zone analysis for top 5 (Zigma-style BUY/SELL/HOLD)
-            entry_zones = []
-            if to_send:
-                try:
-                    batch = [item["event"] for item in to_send[:5]]
-                    entry_zones = ai_filter.analyze_entry_zones(batch)
-                    # Pad to match to_send length
-                    while len(entry_zones) < len(to_send):
-                        entry_zones.append({"entry_zone": "WAIT", "reason": "", "confidence": "low"})
-                except Exception:
-                    entry_zones = [{"entry_zone": "WAIT", "reason": "", "confidence": "low"}] * len(to_send)
-
-            for i, item in enumerate(to_send):
-                event = item["event"]
-                arb = item["arb"]
-                profit = item["profit"]
-                sentiment = item["sentiment"]
-                ai_insight = item["ai_insight"]
-                category = item["category"]
-                is_crypto_st = item["is_crypto_st"]
-                event_id = event.get("id")
-
-                ez = entry_zones[i] if i < len(entry_zones) else {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
-                entry_zone = ez.get("entry_zone", "WAIT")
-                conviction = ez.get("confidence", "low")
-                entry_reason = ez.get("reason", "")
-
-                if is_crypto_st:
-                    msg = formatter.format_crypto_short_term(
-                        event,
-                        entry_zone=entry_zone,
-                        conviction=conviction,
-                        entry_reason=entry_reason,
-                    )
-                else:
-                    msg = formatter.format_new_market(
-                        event,
-                        has_arb=profit >= 0.5,
-                        arb_profit=profit,
-                        sentiment=sentiment,
-                        ai_insight=ai_insight,
-                        category=category,
-                        entry_zone=entry_zone,
-                        conviction=conviction,
-                        entry_reason=entry_reason,
-                    )
-
-                if profit >= 0.5:
-                    combined.send_to_alerts(
-                        msg, category="crypto" if is_crypto_st else None
-                    )
-                    combined.send_arb(arb)
-                else:
-                    combined.send_to_alerts(
-                        msg, category="crypto" if is_crypto_st else None
-                    )
-
-                if sentiment and sentiment != "neutral":
-                    print(f"   🤖 AI: {sentiment.upper()}")
-
-                print(f"🆕 {event.get('question', '')[:50]}...")
-                alerted_arbs.add(f"new_{event_id}")
-
-            # ===== END NEW EVENTS - AI ANALYSIS =====
-            # AI analyze top new markets for opportunities with triggers
-            if new_events:
-                try:
-                    top_events = sorted(
-                        new_events,
-                        key=lambda x: float(x.get("volume", 0) or 0),
-                        reverse=True,
-                    )[:3]
-                    for ev in top_events:
-                        analysis = ai_filter.analyze_new_market(ev)
-                        trigger = analysis.get("trigger", "")
-
-                        if analysis.get("opportunity") == "HIGH":
-                            if "TRIGGER:" in trigger:
-                                trig = (
-                                    trigger.split("TRIGGER:")[1].split("\n")[0].strip()
-                                )
-                                print(
-                                    f"   ⭐ {trig}: {analysis.get('reason', '')[:60]}"
-                                )
-                            else:
-                                print(f"   ⭐ HIGH: {analysis.get('reason', '')[:70]}")
-                        elif analysis.get("opportunity") == "LOW":
-                            print(f"   ⚠️ LOW: {analysis.get('reason', '')[:60]}")
-                except Exception:
-                    pass
+                    # INGEST: polymarket_api; PROCESS: ContrarianDetector; DISPATCH: combined
+                    signals = detector.scan()
+                    for sig in signals:
+                        msg = formatter.format_contrarian(sig)
+                        combined.send_to_alerts(msg, category="contrarian")
+                        print(f"   📊 Contrarian: {sig.get('question', '')[:40]}...")
+                except Exception as e:
+                    print(f"[Contrarian] Error: {e}")
 
             # ===== PRIORITY 2: CRYPTO 5MIN/15MIN MARKETS =====
             # Batch fetch: 1 API call for crypto/sports/politics instead of 3
@@ -1079,39 +1103,7 @@ def monitor(
                     except:
                         pass
 
-            # ===== PRIORITY 3: SPORTS/GAMES EXPIRING SOON =====
-            # Only alert if < 1 hour left (was 2 hours)
-            print("[*] Checking expiring events...")
-            expiring = event_alerter.check_expiring_events(
-                hours=1, limit=10
-            )  # Was 2hrs, 20 limit
-            for event in expiring:
-                try:
-                    hours_left = float(event.get("hours_left", 0))
-                except (ValueError, TypeError):
-                    hours_left = 0
-                # Only alert if < 30 mins left
-                if hours_left < 0.5:
-                    event_title = event.get("event_title", "") or ""
-                    yes_pct = event.get("yes_pct")
-                    spread = None
-                    # Optional: fetch spread if token_id available (market may not have it)
-                    token_id = event.get("clobTokenIds") or event.get("token_id")
-                    if token_id:
-                        if isinstance(token_id, (list, tuple)):
-                            token_id = token_id[0] if token_id else None
-                        if token_id:
-                            spread = polymarket_api.get_market_spread(token_id)
-                    msg = formatter.format_expiring(
-                        event,
-                        event_title=event_title,
-                        yes_pct=yes_pct,
-                        spread=spread,
-                    )
-                    combined.send_to_alerts(msg)
-                    print(msg[:80] + "..." if len(msg) > 80 else msg)
-
-            # ===== PRIORITY 4: CONVERGENCE (tracked wallets in same event) =====
+            # ===== PRIORITY 3: CONVERGENCE (tracked wallets in same event) =====
             # Only alert HIGH/CRITICAL - skip NORMAL
             print("[*] Checking convergence...")
             convergences = detector.find_convergences(min_wallets=2)
@@ -1135,6 +1127,7 @@ def monitor(
 
                 # AI analysis for convergence
                 ai_analysis = ""
+                entry_zone, conviction, entry_reason = "", "", ""
                 try:
                     if wallets:
                         trade_summary = [
@@ -1150,11 +1143,21 @@ def monitor(
                         if wallet_analysis and wallet_analysis.get("analysis"):
                             ai_analysis = wallet_analysis["analysis"][:100]
                             print(f"   🤖 Strategy: {ai_analysis[:60]}")
+                        # Entry zone for RECOMMENDATION
+                        zones = ai_filter.analyze_entry_zones([market])
+                        if zones:
+                            z = zones[0]
+                            entry_zone = z.get("entry_zone", "")
+                            conviction = z.get("confidence", "")
+                            entry_reason = z.get("reason", "")[:100]
                 except Exception:
                     pass
 
-                # Format and send with AI reasoning
-                msg = formatter.format_convergence(market, wallets, conv, ai_analysis)
+                # Format and send with AI reasoning and RECOMMENDATION
+                msg = formatter.format_convergence(
+                    market, wallets, conv, ai_analysis,
+                    entry_zone=entry_zone, conviction=conviction, entry_reason=entry_reason,
+                )
                 combined.send_to_alerts(
                     msg,
                     category="convergence",
@@ -1165,129 +1168,7 @@ def monitor(
                 )
                 alerted_markets.add(conv["market_id"])
 
-            # ===== FULL MARKET SCANS (arbitrage, volume, odds) - CAN RUN IN ANY ORDER =====
-
-            # Check arbitrage on ALL markets
-            if current_time - last_arb_check > arb_check_interval:
-                print("[*] Checking arbitrage (all markets)...")
-                arb_opps = arb_detector.get_top_opportunities(limit=20)
-
-                for a in arb_opps:
-                    try:
-                        backtest_storage.log_arb(
-                            market_id=str(a.get("market_id") or a.get("condition_id") or ""),
-                            question=a.get("question", "")[:200],
-                            yes_price=float(a.get("yes_price") or 0),
-                            no_price=float(a.get("no_price") or 0),
-                            profit_pct=float(a.get("profit_pct") or 0),
-                            volume=float(a.get("volume") or 0),
-                        )
-                    except (ValueError, TypeError):
-                        pass
-
-                # AI-driven filtering - score each arb opportunity
-                scored_arbs = []
-                for a in arb_opps:
-                    profit = float(a.get("profit_pct", 0) or 0)
-                    if profit < 0.3:  # Skip too small
-                        continue
-
-                    # AI analysis to decide if worth alerting
-                    try:
-                        ai_analysis = ai_filter.analyze_arb_opportunity(a)
-                        worth = (
-                            ai_analysis.get("worth", True) if profit >= 1.0 else True
-                        )
-                        analysis = ai_analysis.get("analysis", "") or ""
-
-                        if worth or profit >= 1.5:  # Always alert high profit
-                            scored_arbs.append(
-                                {
-                                    "arb": a,
-                                    "profit": profit,
-                                    "ai_analysis": analysis,
-                                    "score": profit + (1.0 if worth else 0),
-                                }
-                            )
-                    except:
-                        # If AI fails, still alert on high profit
-                        if profit >= 1.0:
-                            scored_arbs.append(
-                                {
-                                    "arb": a,
-                                    "profit": profit,
-                                    "ai_analysis": "",
-                                    "score": profit,
-                                }
-                            )
-
-                # Sort by AI score
-                scored_arbs.sort(key=lambda x: x["score"], reverse=True)
-                filtered_arbs = [s["arb"] for s in scored_arbs[:5]]
-
-                for arb_data in scored_arbs[:5]:  # Limit to top 5
-                    arb = arb_data["arb"]
-                    market_id = arb.get("market_id") or arb.get("condition_id")
-                    if market_id and market_id not in alerted_arbs:
-                        try:
-                            profit = float(arb.get("profit_pct", 0))
-                        except (ValueError, TypeError):
-                            profit = 0
-
-                        # Color code: 0.5% orange, 1% blue, 1.5%+ green
-                        emoji = (
-                            "🟢" if profit >= 1.5 else ("🔵" if profit >= 1.0 else "🟠")
-                        )
-
-                        # AI analysis reasoning
-                        ai_reasoning = arb_data.get("ai_analysis", "")
-                        if ai_reasoning:
-                            print(f"   🤖 {ai_reasoning[:60]}...")
-
-                        msg = formatter.format_arb(arb, ai_reasoning)
-                        combined.send_to_alerts(
-                            msg,
-                            category="arb",
-                            backtest_meta={
-                                "alert_type": "arb",
-                                "market_id": arb.get("market_id") or arb.get("condition_id"),
-                            },
-                        )
-
-                        print(
-                            f"{emoji}💰 ARB ({profit:.2f}%): {arb.get('question', '')[:40]}..."
-                        )
-                        alerted_arbs.add(market_id)
-
-                # ===== END ARB SCAN - AI ANALYSIS =====
-                # AI analyze top arb opportunities - show facts only
-                if filtered_arbs:
-                    try:
-                        top_arbs = sorted(
-                            filtered_arbs,
-                            key=lambda x: float(x.get("profit_pct", 0)),
-                            reverse=True,
-                        )[:3]
-                        for arb in top_arbs:
-                            analysis = ai_filter.analyze_arb_opportunity(arb)
-
-                            facts = analysis.get("facts", "")
-                            vol = analysis.get("volume", "")
-                            fee_risk = analysis.get("fee_risk", False)
-
-                            # Show facts to user
-                            print(
-                                f"   📊 {facts} | Vol: {vol}"
-                                + (fee_risk and " ⚠️ FEE RISK" or "")
-                            )
-                            if analysis.get("analysis"):
-                                print(f"   -> {analysis.get('analysis', '')[:80]}")
-                    except Exception as e:
-                        pass
-
-                last_arb_check = current_time
-
-            # Check volume spikes - REMOVED, too noisy
+            # ===== FULL MARKET SCANS (volume, odds) =====
 
             # Clean old markets from alerted set - reuse IDs from batch fetch
             if all_market_ids:
@@ -1429,7 +1310,16 @@ def import_leaderboard(
         if storage.add_wallet(wallet):
             if result:
                 storage.update_wallet_vetting(
-                    addr, bot_score=result.get("bot_score"), unresolved_exposure_usd=None
+                    addr,
+                    bot_score=result.get("bot_score"),
+                    unresolved_exposure_usd=None,
+                    total_pnl=result.get("total_pnl"),
+                    roi_pct=result.get("roi_pct"),
+                    conviction_score=result.get("conviction_score"),
+                    is_specialty=result.get("is_specialty", False),
+                    specialty_note=result.get("specialty_note"),
+                    specialty_market_id=result.get("specialty_market_id"),
+                    specialty_category=result.get("specialty_category"),
                 )
             print(f"[+] Added: {wallet.nickname} ({wallet.address[:10]}...)")
             added += 1
@@ -1728,6 +1618,13 @@ def handle_vet_command(
         print(f"   Resolved markets: {result['resolved_markets_traded']}")
         print(f"   Bot score: {result['bot_score']}%")
         print(f"   Unsettled losses: {result['unsettled_loses']}")
+        print(f"   Wins/Losses: {result.get('total_wins', 0)}/{result.get('total_losses', 0)}")
+        if "total_pnl" in result:
+            print(f"   PnL: ${result.get('total_pnl', 0):.2f} | ROI: {result.get('roi_pct', 0):.1f}% | Conviction: {result.get('conviction_score', 0):.1f} | Trades/day: {result.get('trades_per_day', 0):.1f}")
+        if result.get("estimated_fees_paid", 0) > 0:
+            print(f"   Est. fees paid: ${result.get('estimated_fees_paid', 0):.2f}")
+        if result.get("specialty_or_hot_streak_note"):
+            print(f"   {result['specialty_or_hot_streak_note']}")
         if result["issues"]:
             print(f"   Issues: {', '.join(result['issues'])}")
         # Persist vetting results (Phase 2) - only if wallet is tracked
@@ -1736,6 +1633,13 @@ def handle_vet_command(
                 addr,
                 bot_score=result.get("bot_score"),
                 unresolved_exposure_usd=None,
+                total_pnl=result.get("total_pnl"),
+                roi_pct=result.get("roi_pct"),
+                conviction_score=result.get("conviction_score"),
+                is_specialty=result.get("is_specialty", False),
+                specialty_note=result.get("specialty_note"),
+                specialty_market_id=result.get("specialty_market_id"),
+                specialty_category=result.get("specialty_category"),
             )
         print()
 
@@ -1930,7 +1834,7 @@ def setup_argument_parser():
     )
 
     # Backtest
-    backtest_p = subparsers.add_parser("backtest", help="Backtest arb opportunities")
+    backtest_p = subparsers.add_parser("backtest", help="Backtest alert log (historical)")
     backtest_p.add_argument("action", choices=["replay"], help="Action to perform")
     backtest_p.add_argument("--fee-bps", type=float, default=30, help="Fee in basis points (default 30)")
 
@@ -1957,6 +1861,14 @@ def main():
     if not args.command:
         parser.print_help()
         print("\nExamples:")
+        print("  python main.py add 0x123... BigTrader")
+        print("  python main.py list")
+        print("  python main.py refresh all")
+        print("  python main.py check")
+        print("  python main.py monitor")
+        print("  python main.py all    # Start everything")
+        print("  python main.py history 0x123...")
+        return
 
     # Initialize core components
     config = Config(args.config)

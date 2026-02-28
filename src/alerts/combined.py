@@ -68,12 +68,16 @@ class CombinedDispatcher:
             market_id = ""
             if alert_type == "convergence" and len(data) >= 4:
                 market_id = str((data[3] or {}).get("market_id", ""))
-            elif alert_type == "arb" and data:
-                market_id = str((data[0] or {}).get("market_id") or (data[0] or {}).get("condition_id", ""))
-            elif alert_type in ("new_market", "volume_spike", "market_resolved") and data:
-                market_id = str((data[0] or {}).get("id") or (data[0] or {}).get("conditionId", ""))
+            elif (
+                alert_type in ("new_market", "volume_spike", "market_resolved") and data
+            ):
+                market_id = str(
+                    (data[0] or {}).get("id") or (data[0] or {}).get("conditionId", "")
+                )
             elif alert_type == "whale_batch" and data and data[0]:
-                market_id = str((data[0][0] or {}).get("market_id", "")) if data[0] else ""
+                market_id = (
+                    str((data[0][0] or {}).get("market_id", "")) if data[0] else ""
+                )
             content_hash = str(hash(str(data)))[:64]
             self.backtest_storage.log_alert(alert_type, content_hash, market_id)
         except Exception:
@@ -86,8 +90,6 @@ class CombinedDispatcher:
                 alert_type, data = self._queue.get(timeout=1)
                 if alert_type == "convergence":
                     self._send_convergence(*data)
-                elif alert_type == "arb":
-                    self._send_arb(*data)
                 elif alert_type == "new_market":
                     self._send_new_market(*data)
                 elif alert_type == "health":
@@ -145,14 +147,16 @@ class CombinedDispatcher:
 
     # Discord embed colors per alert type (left edge bar)
     EMBED_COLORS = {
-        "crypto": 0x3498DB,   # Blue
-        "sports": 0x2ECC71,   # Green
-        "politics": 0x9B59B6, # Purple
-        "arb": 0xF1C40F,     # Gold
+        "crypto": 0x3498DB,  # Blue
+        "sports": 0x2ECC71,  # Green
+        "politics": 0x9B59B6,  # Purple
+        "weather": 0x00CED1,  # Dark Turquoise
+        "esports": 0xFF6B6B,  # Coral Red
         "convergence": 0xE67E22,  # Orange
-        "whale": 0xE67E22,   # Orange
+        "whale": 0xE67E22,  # Orange (curated wallet)
+        "insider": 0xEF4444,  # Red - high priority
         "kalshi": 0x1ABC9C,  # Teal
-        "jupiter": 0x9B59B6, # Purple (Jupiter brand)
+        "jupiter": 0x9B59B6,  # Purple (Jupiter brand)
         "default": 0x5865F2,  # Discord blurple
     }
 
@@ -177,7 +181,11 @@ class CombinedDispatcher:
         """Get Polymarket link. Prefer slug when obj has it (dict with slug/conditionId/id)."""
         if isinstance(market_id_or_obj, dict):
             from src.alerts.formatter import _polymarket_link
-            return _polymarket_link(market_id_or_obj) or f"https://polymarket.com/market/{market_id_or_obj.get('id') or market_id_or_obj.get('conditionId') or ''}"
+
+            return (
+                _polymarket_link(market_id_or_obj)
+                or f"https://polymarket.com/market/{market_id_or_obj.get('id') or market_id_or_obj.get('conditionId') or ''}"
+            )
         return f"https://polymarket.com/market/{market_id_or_obj}"
 
     def _send_convergence(
@@ -243,79 +251,15 @@ class CombinedDispatcher:
         )
         if webhook:
             payload = {
-                "embeds": [{
-                    "title": f"👥 Convergence {urgency}",
-                    "description": msg,
-                    "color": self.EMBED_COLORS["convergence"],
-                    "url": self._get_market_link(market) if market_id else None,
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                }]
-            }
-            t1 = threading.Thread(
-                target=lambda: self._send_discord_webhook(payload, url=webhook)
-            )
-        else:
-            t1 = threading.Thread(target=self._send_discord, args=(msg,))
-        t2 = threading.Thread(target=self._send_telegram, args=(msg,))
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
-
-    def _send_arb(self, arb: dict):
-        """Send arbitrage alert to all channels. Discord: gold embed edge."""
-        market_id = arb.get("market_id") or arb.get("condition_id") or ""
-
-        yes_ask = arb.get("yes_ask", arb.get("yes_price", 0))
-        no_ask = arb.get("no_ask", arb.get("no_price", 0))
-        spread = abs((yes_ask + no_ask) - 1.0) * 100 if yes_ask and no_ask else 0
-
-        try:
-            profit = float(arb.get("profit_pct", 0))
-        except (ValueError, TypeError):
-            profit = 0
-
-        # Color coding based on profit
-        if profit >= 2.0:
-            emoji = "🟢"
-        elif profit >= 1.0:
-            emoji = "🔵"
-        else:
-            emoji = "🟠"
-
-        lines = [
-            f"{emoji} ARBITRAGE: **{profit:.2f}%**",
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"YES: **${yes_ask:.2f}** | NO: **${no_ask:.2f}**",
-            f"Spread: {spread:.2f}% | Total: ${arb.get('total', 0):,.0f}",
-            "",
-            f"📈 **{arb.get('question', 'Unknown')[:180]}**",
-        ]
-
-        volume = arb.get("volume", 0)
-        if volume:
-            lines.append(f"💵 Volume: **${volume:,.0f}**")
-
-        # Add link
-        if market_id:
-            lines.append(f"[Trade →]({self._get_market_link(market_id)})")
-
-        msg = "\n".join(lines)
-
-        # Discord: colored embed (gold for arb)
-        webhook = (
-            getattr(self.config, "discord_alerts_webhook_url", None)
-            or self.config.discord_webhook_url
-        )
-        if webhook:
-            payload = {
-                "embeds": [{
-                    "title": "💰 Arbitrage",
-                    "description": msg,
-                    "color": self.EMBED_COLORS["arb"],
-                    "url": self._get_market_link(market_id) if market_id else None,
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                }]
+                "embeds": [
+                    {
+                        "title": f"👥 Convergence {urgency}",
+                        "description": msg,
+                        "color": self.EMBED_COLORS["convergence"],
+                        "url": self._get_market_link(market) if market_id else None,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    }
+                ]
             }
             t1 = threading.Thread(
                 target=lambda: self._send_discord_webhook(payload, url=webhook)
@@ -497,12 +441,14 @@ class CombinedDispatcher:
 
         # Build embed - color per type
         embed = {
-            "title": "🐋 Whale Activity",
+            "title": "📊 Curated Wallet Activity",
             "description": f"**{len(trades)} new trades detected from {len(by_wallet)} wallet(s)**",
             "color": 0xE67E22,
             "fields": [],
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "footer": {"text": "PolySuite • " + time.strftime("%H:%M UTC", time.gmtime())},
+            "footer": {
+                "text": "PolySuite • " + time.strftime("%H:%M UTC", time.gmtime())
+            },
         }
 
         for wallet, wallet_trades in by_wallet.items():
@@ -534,7 +480,7 @@ class CombinedDispatcher:
                     timeout=10,
                 )
             except Exception as e:
-                logger.warning("[WhaleBatch] Discord error: %s", type(e).__name__)
+                logger.warning("[CuratedWallet] Discord error: %s", type(e).__name__)
 
         # Send to Telegram
         if self.has_telegram and self.telegram_health_chat:
@@ -564,7 +510,12 @@ class CombinedDispatcher:
         t1.join()
         t2.join()
 
-    def send_to_alerts(self, message: str, category: Optional[str] = None, backtest_meta: Optional[dict] = None):
+    def send_to_alerts(
+        self,
+        message: str,
+        category: Optional[str] = None,
+        backtest_meta: Optional[dict] = None,
+    ):
         """Send to alerts channel. Use channel_overrides when category has a dedicated channel.
         Discord: uses colored embed when category is provided (crypto=blue, sports=green, politics=purple).
         backtest_meta: optional {alert_type, market_id} for alert_log."""
@@ -587,11 +538,15 @@ class CombinedDispatcher:
                 self._wait_for_rate_limit("discord")
                 color = self.EMBED_COLORS.get(category, self.EMBED_COLORS["default"])
                 payload = {
-                    "embeds": [{
-                        "description": message,
-                        "color": color,
-                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    }]
+                    "embeds": [
+                        {
+                            "description": message,
+                            "color": color,
+                            "timestamp": time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                            ),
+                        }
+                    ]
                 }
                 self._send_discord_webhook(payload, url=webhook)
             except Exception as e:
@@ -654,9 +609,6 @@ class CombinedDispatcher:
         self, market: dict, wallets: list, threshold: float, convergence: dict
     ):
         self._queue.put(("convergence", (market, wallets, threshold, convergence)))
-
-    def send_arb(self, arb: dict):
-        self._queue.put(("arb", (arb,)))
 
     def send_new_market(self, market: dict):
         self._queue.put(("new_market", (market,)))

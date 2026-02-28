@@ -25,6 +25,18 @@ DEFAULT_CONFIG = {
     "whale_check_interval": 300,
     "whale_min_size": 50000,
     "whale_alerts_enabled": False,  # Disabled until curated AI-vetted wallet list
+    "insider_signal_enabled": True,  # High priority: fresh wallet + large trade + winning
+    "insider_signal_interval": 300,  # 5 min
+    "insider_signal_min_trade_usd": 5000,
+    "insider_signal_fresh_max_trades": 10,
+    "weird_wallet_liquidity_threshold": 0.02,  # Flag size anomaly if trade > 2% of order book
+    "weird_wallet_niche_volume_max": 50000,  # Flag niche market if volume < $50k
+    "contrarian_alerts_enabled": False,  # Long-shot: high vol one side, high payout other
+    "contrarian_interval": 600,  # 10 min
+    "contrarian_min_volume": 10000,
+    "contrarian_min_imbalance": 0.6,
+    "contrarian_payout_min": 0.20,
+    "contrarian_payout_max": 0.40,
     "trend_scanner_enabled": False,  # Deprioritized - meme coins, different use case
     "ai_daily_summary_enabled": False,  # Deprioritized - overlaps with 30-min report
     "jupiter_alerts_enabled": True,  # Jupiter prediction market alerts (set False if geo-restricted)
@@ -39,14 +51,49 @@ DEFAULT_CONFIG = {
     "position_size_threshold": 1000,
     "leaderboard_import_interval": 3600,  # 1 hour
     "background_vetting_interval": 86400,  # 24 hours - vet leaderboard in background
+    "vet_min_pnl": 0,  # Minimum realized PnL (USD) to qualify as vetted
+    "vet_min_roi_pct": 0,  # Minimum ROI % (0 = no filter initially)
+    "vet_max_trades_per_day": 100,  # Reject arbitrage-like frequency
+    "vet_min_conviction": 0,  # Minimum conviction score 0-100 (0 = no filter)
+    "vet_min_recent_wins": 3,  # Min wins in last N resolved trades to qualify via recent-wins path
+    "vet_recent_wins_window": 10,  # Look at last N resolved trades for recent-wins
+    "vet_min_specialty_wins": 3,  # Min wins in a market to qualify as specialty
+    "vet_min_specialty_streak": 2,  # Min wins in a row in that market
+    "vet_max_specialty_losses": 1,  # Max losses in that market for specialty (low losses)
+    "vet_min_estimated_fees": 0,  # Min estimated fees paid (Polymarket only; Kalshi/Jupiter bypass)
+    "vet_min_trades_won": 5,  # Min total wins in resolved markets
+    "vet_max_losses": 0,  # Max total losses allowed (0 = no limit)
+    "wallet_list_interval": 604800,  # Weekly (7 days) - seconds between wallet list broadcasts
+    "wallet_list_min": 10,  # Min wallets to include in weekly list
+    "wallet_list_max": 30,  # Max wallets in weekly list
+    # Copy trading (Phase D)
+    "copy_enabled": False,
+    "copy_size_multiplier": 1.0,
+    "copy_max_order_usd": 100,
+    "copy_min_odds": 0.05,
+    "copy_max_odds": 0.95,
+    "copy_min_liquidity_usd": 2000,
+    "copy_pause": False,
+    "copy_dry_run": True,
+    "copy_default_user_id": "",  # Discord/Telegram user ID for copy execution (optional)
+    # Safety controls
+    "copy_max_trades_per_minute": 0,  # 0 = no throttle
+    "copy_reduce_multiplier_after_trades": 0,  # 0 = disabled; after N trades in window, use reduced multiplier
+    "copy_reduced_multiplier": 0.5,
+    "copy_reduction_window_minutes": 60,
+    "copy_freeze_after_trades": 0,  # 0 = disabled; freeze new positions after N trades in window
+    "copy_freeze_duration_minutes": 60,
+    "copy_fee_pct": 0.77,  # Fee % on copy trades (future monetization)
+    "copy_referral_discount_pct": 10,  # Referral discount % (future)
 }
 
 # Shared Bankr client instance
 _bankr_client = None
 
 
-def get_bankr_client(api_key: str = None) -> "BankrClient":
-    """Get or create shared Bankr client."""
+def get_bankr_client(api_key: str = None) -> "BankrClient | None":
+    """Get or create shared Bankr client. Returns None if api_key is empty or unset.
+    Callers must guard: if not bankr or not bankr.is_configured(): ..."""
     global _bankr_client
     if _bankr_client is None and api_key:
         from src.market.bankr import BankrClient
@@ -119,6 +166,10 @@ class Config:
             env_value = os.getenv(key.upper())
             if env_value:
                 config[key] = env_value
+
+        # Env overrides for copy trading
+        if os.getenv("COPY_DEFAULT_USER_ID"):
+            config["copy_default_user_id"] = os.getenv("COPY_DEFAULT_USER_ID").strip()
 
         # MED-001: Warn if secrets came from file (config.json) instead of env
         if os.getenv("POLYSUITE_STRICT_SECRETS", "").lower() in ("1", "true", "yes"):
@@ -194,10 +245,6 @@ class Config:
     @property
     def alert_cooldown_convergence(self) -> int:
         return self.config.get("alert_cooldown_convergence", 1800)
-
-    @property
-    def alert_cooldown_arb(self) -> int:
-        return self.config.get("alert_cooldown_arb", 900)
 
     @property
     def alert_cooldown_new_market(self) -> int:
@@ -422,6 +469,81 @@ class Config:
     @property
     def min_bet_size(self) -> float:
         return self.config.get("min_bet_size", 10.0)
+
+    @property
+    def vet_min_pnl(self) -> float:
+        """Minimum realized PnL (USD) to qualify as vetted."""
+        return float(self.config.get("vet_min_pnl", 0))
+
+    @property
+    def vet_min_roi_pct(self) -> float:
+        """Minimum ROI % to qualify (0 = no filter)."""
+        return float(self.config.get("vet_min_roi_pct", 0))
+
+    @property
+    def vet_max_trades_per_day(self) -> float:
+        """Reject arbitrage-like wallets above this trades/day."""
+        return float(self.config.get("vet_max_trades_per_day", 100))
+
+    @property
+    def vet_min_conviction(self) -> float:
+        """Minimum conviction score 0-100 (0 = no filter)."""
+        return float(self.config.get("vet_min_conviction", 0))
+
+    @property
+    def vet_min_recent_wins(self) -> int:
+        """Min wins in last N resolved trades to qualify via recent-wins path."""
+        return int(self.config.get("vet_min_recent_wins", 3))
+
+    @property
+    def vet_recent_wins_window(self) -> int:
+        """Look at last N resolved trades for recent-wins."""
+        return int(self.config.get("vet_recent_wins_window", 10))
+
+    @property
+    def vet_min_specialty_wins(self) -> int:
+        """Min wins in a market to qualify as specialty."""
+        return int(self.config.get("vet_min_specialty_wins", 3))
+
+    @property
+    def vet_min_specialty_streak(self) -> int:
+        """Min wins in a row in that market for specialty."""
+        return int(self.config.get("vet_min_specialty_streak", 2))
+
+    @property
+    def vet_max_specialty_losses(self) -> int:
+        """Max losses in that market for specialty (low losses)."""
+        return int(self.config.get("vet_max_specialty_losses", 1))
+
+    @property
+    def vet_min_estimated_fees(self) -> float:
+        """Min estimated fees paid (Polymarket only; Kalshi/Jupiter bypass)."""
+        return float(self.config.get("vet_min_estimated_fees", 0))
+
+    @property
+    def vet_min_trades_won(self) -> int:
+        """Min total wins in resolved markets."""
+        return int(self.config.get("vet_min_trades_won", 5))
+
+    @property
+    def vet_max_losses(self) -> int:
+        """Max total losses allowed (0 = no limit)."""
+        return int(self.config.get("vet_max_losses", 0))
+
+    @property
+    def wallet_list_interval(self) -> int:
+        """Seconds between weekly wallet list broadcasts (default 7 days)."""
+        return int(self.config.get("wallet_list_interval", 604800))
+
+    @property
+    def wallet_list_min(self) -> int:
+        """Minimum wallets to include in weekly list."""
+        return int(self.config.get("wallet_list_min", 10))
+
+    @property
+    def wallet_list_max(self) -> int:
+        """Maximum wallets in weekly list."""
+        return int(self.config.get("wallet_list_max", 30))
 
     @property
     def convergence_time_window_hours(self) -> int:

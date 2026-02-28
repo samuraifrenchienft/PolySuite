@@ -61,6 +61,23 @@ class TelegramDispatcher:
             print(f"Telegram photo error: {e}")
             return False
 
+    def send_photo_bytes(self, image_bytes: bytes, caption: str = "") -> bool:
+        """Send photo to Telegram from bytes. HIGH-006: Use when API key set to avoid URL/key exposure."""
+        if not self.is_configured():
+            return False
+
+        try:
+            url = f"{self.api_url}/sendPhoto"
+            files = {"photo": ("chart.png", image_bytes, "image/png")}
+            data = {"chat_id": self.chat_id, "parse_mode": "Markdown"}
+            if caption:
+                data["caption"] = caption
+            resp = requests.post(url, data=data, files=files, timeout=30)
+            return resp.status_code == 200
+        except requests.RequestException as e:
+            print(f"Telegram photo error: {e}")
+            return False
+
     def send_message(self, text: str, parse_mode: str = "Markdown") -> bool:
         """Send message to Telegram.
 
@@ -154,54 +171,27 @@ class TelegramDispatcher:
 
         return "\n".join(lines)
 
-    def format_arb_alert(self, arb: Dict) -> str:
-        """Format arbitrage alert for Telegram."""
-        profit = arb.get("profit_pct", 0)
-        volume = float(arb.get("volume", 0) or 0)
-        vol_emoji = "🟢" if volume >= 100000 else ("🟡" if volume >= 10000 else "🔴")
-        vol_label = (
-            "High" if volume >= 100000 else ("Medium" if volume >= 10000 else "Low")
-        )
-
-        lines = [
-            f"💰 *ARBITRAGE: {profit:.1f}%*",
-            "",
-            f"*YES:* {arb.get('yes_price', 0):.2f} | *NO:* {arb.get('no_price', 0):.2f}",
-            f"*Volume:* {vol_emoji} {vol_label}",
-            f"*⚠️* Check fees before trading",
-            "",
-            arb.get("question", "Unknown")[:200],
-        ]
-
-        market_id = arb.get("market_id") or arb.get("condition_id")
-        if market_id:
-            lines.append(
-                f"[View on Polymarket](https://polymarket.com/market/{market_id})"
-            )
-
-        return "\n".join(lines)
-
-    def send_arb_alert(self, arb: Dict) -> bool:
-        """Send arbitrage alert."""
-        text = self.format_arb_alert(arb)
-        return self.send_message(text)
-
     def send_convergence_alert(
         self, market: Dict, wallets: List[Dict], threshold: float
     ) -> bool:
-        """Send convergence alert with chart."""
+        """Send convergence alert with chart. HIGH-006: Use fetch+bytes when api_key set."""
         text = self.format_convergence_alert(market, wallets, threshold)
 
-        # Send alert with chart
         try:
             chart = self._get_chart()
             market_name = market.get("question", "Unknown")
-            chart_url = chart.convergence_chart(market_name, wallets)
 
-            # Send chart first, then text
-            self.send_photo(chart_url, caption=text[:1024])
+            if chart.api_key:
+                # HIGH-006: Fetch server-side; key never leaves server; avoid rate limits
+                img_bytes = chart.fetch_convergence_chart(market_name, wallets)
+                if img_bytes:
+                    self.send_photo_bytes(img_bytes, caption=text[:1024])
+                else:
+                    self.send_message(text)
+            else:
+                chart_url = chart.convergence_chart(market_name, wallets)
+                self.send_photo(chart_url, caption=text[:1024])
         except Exception as e:
-            # Fallback to text only
             print(f"Chart error: {e}")
 
         return self.send_message(text)

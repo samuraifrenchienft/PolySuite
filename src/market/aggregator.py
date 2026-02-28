@@ -174,17 +174,20 @@ class MarketAggregator:
             "oil",
             "gold",
         ],
-        "science": [
-            "covid",
-            "coronavirus",
-            "vaccine",
+        "weather": [
             "earthquake",
             "hurricane",
+            "tornado",
             "weather",
+            "storm",
+            "flood",
+            "blizzard",
             "climate",
-            "science",
-            "space",
-            "nasa",
+            "temperature",
+            "forecast",
+            "el nino",
+            "la nina",
+            "cyclone",
         ],
         "business": [
             "market cap",
@@ -211,12 +214,27 @@ class MarketAggregator:
             "billboard",
             "streaming",
         ],
-        "chess": [
-            "chess",
-            "carlsen",
-            "nakamura",
-            "norway chess",
-            "ftx crypto cup",
+        "esports": [
+            "esports",
+            "esport",
+            "league of legends",
+            "lol",
+            "valorant",
+            "csgo",
+            "cs2",
+            "counter-strike",
+            "dota",
+            "dota 2",
+            "overwatch",
+            "fortnite",
+            "apex legends",
+            "call of duty",
+            "twitch",
+            "steam",
+            "pgl",
+            "esl",
+            "worlds",
+            "msi",
         ],
     }
 
@@ -229,9 +247,9 @@ class MarketAggregator:
         "US-current-affairs": "politics",
         "Global Politics": "politics",
         "Business": "business",
-        "Coronavirus": "science",
-        "Science": "science",
-        "Chess": "chess",
+        "Coronavirus": "weather",
+        "Science": "weather",
+        "Chess": "esports",
         "NFTs": "other",
         "Art": "other",
         "Poker": "other",
@@ -328,8 +346,14 @@ class MarketAggregator:
             return cached
 
         endpoints = [
-            ("https://api.elections.kalshi.com/trade-api/v2/markets", {"limit": limit, "status": "open"}),
-            ("https://api.kalshi.com/trade-api/v2/markets", {"limit": limit, "status": "open"}),
+            (
+                "https://api.elections.kalshi.com/trade-api/v2/markets",
+                {"limit": limit, "status": "open"},
+            ),
+            (
+                "https://api.kalshi.com/trade-api/v2/markets",
+                {"limit": limit, "status": "open"},
+            ),
         ]
         markets = []
         for url, params in endpoints:
@@ -351,7 +375,6 @@ class MarketAggregator:
             return []
 
         try:
-
             alerts = []
             for m in markets:
                 title = m.get("title", m.get("question", ""))
@@ -367,7 +390,9 @@ class MarketAggregator:
                         )
                         if price_resp.status_code == 200:
                             market_data = price_resp.json()
-                            yes_price = market_data.get("yes_ask") or market_data.get("last_price", 0.5)
+                            yes_price = market_data.get("yes_ask") or market_data.get(
+                                "last_price", 0.5
+                            )
                         else:
                             yes_price = 0.5
                     except Exception:
@@ -399,9 +424,22 @@ class MarketAggregator:
                 elif any(
                     k in title_lower
                     for k in [
-                        "game", "match", "win", "score", "nfl", "nba", "sport",
-                        "cfb", "college football", "college basketball", "college baseball",
-                        "march madness", "final four", "ncaa", "sec", "big ten",
+                        "game",
+                        "match",
+                        "win",
+                        "score",
+                        "nfl",
+                        "nba",
+                        "sport",
+                        "cfb",
+                        "college football",
+                        "college basketball",
+                        "college baseball",
+                        "march madness",
+                        "final four",
+                        "ncaa",
+                        "sec",
+                        "big ten",
                     ]
                 ):
                     category = "sports"
@@ -420,7 +458,9 @@ class MarketAggregator:
                         price=yes_price,
                         volume=vol,
                         created_at=m.get("created_time", ""),
-                        url=f"https://kalshi.com/markets/{ticker}" if ticker else "https://kalshi.com/markets",
+                        url=f"https://kalshi.com/markets/{ticker}"
+                        if ticker
+                        else "https://kalshi.com/markets",
                     )
                 )
 
@@ -450,7 +490,9 @@ class MarketAggregator:
                 )
                 if resp.status_code != 200:
                     if resp.status_code == 403:
-                        print("[Jupiter] 403 - API may be geo-restricted (US/SK blocked)")
+                        print(
+                            "[Jupiter] 403 - API may be geo-restricted (US/SK blocked)"
+                        )
                     continue
 
                 data = resp.json()
@@ -468,18 +510,26 @@ class MarketAggregator:
                             price = float(buy_yes) / 100000.0  # 81000 -> 0.81
                         else:
                             result = m.get("result")
-                            price = 0.99 if result == "yes" else (0.01 if result == "no" else 0.5)
+                            price = (
+                                0.99
+                                if result == "yes"
+                                else (0.01 if result == "no" else 0.5)
+                            )
                         vol = float(pricing.get("volume", 0) or 0)
 
                         alerts.append(
                             MarketAlert(
                                 source="jupiter",
                                 category=cat,
-                                question=f"{ev_title}: {market_title}" if ev_title else market_title,
+                                question=f"{ev_title}: {market_title}"
+                                if ev_title
+                                else market_title,
                                 price=min(1.0, max(0.0, price)),
                                 volume=vol,
                                 created_at="",
-                                url=f"https://jup.ag/prediction/{market_id}" if market_id else "https://jup.ag/prediction",
+                                url=f"https://jup.ag/prediction/{market_id}"
+                                if market_id
+                                else "https://jup.ag/prediction",
                             )
                         )
             except Exception as e:
@@ -505,17 +555,25 @@ class MarketAggregator:
                             market_id = m.get("marketId", "")
                             pricing = m.get("pricing", {}) or {}
                             buy_yes = pricing.get("buyYesPriceUsd")
-                            price = float(buy_yes) / 100000.0 if buy_yes is not None else 0.5
+                            price = (
+                                float(buy_yes) / 100000.0
+                                if buy_yes is not None
+                                else 0.5
+                            )
                             vol = float(pricing.get("volume", 0) or 0)
                             alerts.append(
                                 MarketAlert(
                                     source="jupiter",
                                     category="other",
-                                    question=f"{ev_title}: {market_title}" if ev_title else market_title,
+                                    question=f"{ev_title}: {market_title}"
+                                    if ev_title
+                                    else market_title,
                                     price=min(1.0, max(0.0, price)),
                                     volume=vol,
                                     created_at="",
-                                    url=f"https://jup.ag/prediction/{market_id}" if market_id else "https://jup.ag/prediction",
+                                    url=f"https://jup.ag/prediction/{market_id}"
+                                    if market_id
+                                    else "https://jup.ag/prediction",
                                 )
                             )
             except Exception as e:

@@ -150,6 +150,23 @@ class PolymarketAPI:
         url = f"{DATA_API}/positions"
         return self._get_list(url, {"user": address})
 
+    def get_closed_positions(
+        self, address: str, limit: int = 50, offset: int = 0
+    ) -> List[Dict]:
+        """Get closed positions for a wallet with realized PnL.
+
+        Polymarket Data API: /closed-positions returns realizedPnl per position.
+        """
+        url = f"{DATA_API}/closed-positions"
+        params = {
+            "user": address,
+            "limit": limit,
+            "offset": offset,
+            "sortBy": "REALIZEDPNL",
+            "sortDirection": "DESC",
+        }
+        return self._get_list(url, params)
+
     def get_wallet_trades(
         self, address: str, limit: int = 100, after: int = None
     ) -> List[Dict]:
@@ -497,6 +514,11 @@ class PolymarketAPI:
         except Exception as e:
             print(f"[API] get_market_spread error: {e}")
         return None
+
+
+def get_api() -> "PolymarketAPI":
+    """Legacy: return a PolymarketAPI instance for mapper and other callers."""
+    return PolymarketAPI()
 
 
 from src.config import Config
