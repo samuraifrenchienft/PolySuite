@@ -33,7 +33,10 @@ RULES:
 - Be concise - max 2 sentences
 - Only prediction market analysis
 - No financial advice
-- Always check for TRIGGERS above"""
+- Always check for TRIGGERS above
+- Provide a confidence score for all predictions
+- Explain the reasoning behind your predictions
+"""
 
 
 class AIFilter:
@@ -51,6 +54,10 @@ class AIFilter:
         )
         self.openrouter_url = "https://openrouter.ai/api/v1"
         self.openrouter_model = "qwen/qwen3-vl-30b-a3b-thinking"
+
+        # Ollama for local models
+        self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        self.ollama_model = os.getenv("OLLAMA_MODEL", "dolphin-phi:latest")
 
     def _call_groq(self, prompt: str, max_tokens: int = 200) -> Optional[str]:
         if not self.groq_key:
@@ -106,13 +113,38 @@ class AIFilter:
             print(f"[AI-OpenRouter] Error: {e}")
         return None
 
+    def _call_ollama(self, prompt: str, max_tokens: int = 200) -> Optional[str]:
+        try:
+            import ollama
+
+            response = ollama.chat(
+                model=self.ollama_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_MESSAGE},
+                    {"role": "user", "content": prompt},
+                ],
+                options={"temperature": 0.3, "num_predict": max_tokens},
+            )
+            return response["message"]["content"]
+        except ImportError:
+            print(
+                "[AI-Ollama] Ollama SDK not installed. Please run `pip install ollama`"
+            )
+        except Exception as e:
+            print(f"[AI-Ollama] Error: {e}")
+        return None
+
     def _call(self, prompt: str, max_tokens: int = 200) -> Optional[str]:
         # Try Groq first (primary)
         result = self._call_groq(prompt, max_tokens)
         if result:
             return result
         # Fallback to OpenRouter
-        return self._call_openrouter(prompt, max_tokens)
+        result = self._call_openrouter(prompt, max_tokens)
+        if result:
+            return result
+        # Fallback to Ollama
+        return self._call_ollama(prompt, max_tokens)
 
     def categorize(self, question: str) -> str:
         """Task 1: Categorize market."""
@@ -223,7 +255,11 @@ RISKS: [any copy trade risks]"""
         raw_prices = market.get("outcomePrices")
         if raw_prices:
             try:
-                prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+                prices = (
+                    json.loads(raw_prices)
+                    if isinstance(raw_prices, str)
+                    else raw_prices
+                )
                 if prices and len(prices) >= 1:
                     prob = float(prices[0])
             except (ValueError, TypeError):
@@ -401,7 +437,7 @@ REASON: [1-2 sentences]
                 trade_summary = f" Recent flow: {', '.join(str(s) for s in sides[:5])}"
 
             market_inputs.append(
-                f"- {q} | Vol: ${vol:,.0f} | YES: {yes_pct:.0%} NO: {no_pct:.0%}{trade_summary}"
+                f"- {q} | Vol: ${vol:,.0f} | YES: {yes_pct:.0%} NO: {no_pct:.0%}{trade_summary}\n  Social Media Sentiment: [Placeholder]\n  News Analysis: [Placeholder]"
             )
 
         prompt = f"""ENTRY ZONE ANALYSIS - Prediction market strategy:
@@ -411,13 +447,15 @@ For each market, consider:
 2. Volume level - liquidity for entry/exit
 3. Recent trades (if provided) - flow direction
 4. Timeframe - 5M/15M = fee risk
+5. Social Media Sentiment - is the community bullish or bearish?
+6. News Analysis - are there any relevant news articles?
 
 Markets:
 {chr(10).join(market_inputs)}
 
 Return for EACH market (one block per market):
 ENTRY_ZONE: [BUY_YES/BUY_NO/WAIT/AVOID]
-REASON: [1-2 sentences based on sentiment, volume, strategy]
+REASON: [1-2 sentences based on sentiment, volume, news, and other data points]
 CONFIDENCE: [high/medium/low]"""
 
         result = self._call(prompt, max_tokens=500)
@@ -455,11 +493,62 @@ CONFIDENCE: [high/medium/low]"""
                     )
                     current = {}
 
+        # Post-process: Auto-detect clear opportunities even if AI says WAIT
+        # High volume + extreme odds = actionable
+        for i, m in enumerate(markets):
+            if i >= len(results):
+                break
+            raw_prices = m.get("outcomePrices")
+            prices = (
+                json.loads(raw_prices)
+                if isinstance(raw_prices, str)
+                else (raw_prices or [])
+            )
+            yes_pct = float(prices[0]) if prices and len(prices) >= 1 else 0.5
+            volume = float(m.get("volume", 0) or 0)
+
+            # High volume threshold for actionable alerts
+            high_volume = volume > 1_000_000  # $1M+
+
+            # If extremely lopsided AND high volume, auto-recommend regardless of AI's WAIT
+            if yes_pct < 0.15 and high_volume:
+                # YES is cheap = opportunity is NO
+                if results[i].get("entry_zone") in ("WAIT", "AVOID"):
+                    results[i]["entry_zone"] = "BUY_NO"
+                    results[i]["reason"] = f"NO at {yes_pct:.0%} implied odds - clear value play on high volume ${volume/1e6:.1f}M market"
+                    results[i]["confidence"] = "high"
+                elif results[i].get("entry_zone") == "BUY_YES":
+                    results[i]["entry_zone"] = "BUY_NO"
+                    results[i]["reason"] = (
+                        f"NO at {yes_pct:.0%} implied - clear value vs YES"
+                        + (
+                            f" ({results[i].get('reason', '')})"
+                            if results[i].get("reason")
+                            else ""
+                        )
+                    )
+                    results[i]["confidence"] = "high"
+            elif yes_pct > 0.85 and high_volume:
+                # YES is expensive = opportunity is YES (short) or NO (long)
+                if results[i].get("entry_zone") in ("WAIT", "AVOID"):
+                    results[i]["entry_zone"] = "BUY_YES"
+                    results[i]["reason"] = f"YES at {yes_pct:.0%} implied odds - clear value on high volume ${volume/1e6:.1f}M market"
+                    results[i]["confidence"] = "high"
+                elif results[i].get("entry_zone") == "BUY_NO":
+                    results[i]["entry_zone"] = "BUY_YES"
+                    results[i]["reason"] = (
+                        f"YES at {yes_pct:.0%} implied - clear value vs NO"
+                        + (
+                            f" ({results[i].get('reason', '')})"
+                            if results[i].get("reason")
+                            else ""
+                        )
+                    )
+                    results[i]["confidence"] = "high"
+
         # Pad if we got fewer than markets
         while len(results) < len(markets):
-            results.append(
-                {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
-            )
+            results.append({"entry_zone": "WAIT", "reason": "", "confidence": "low"})
         return results[: len(markets)]
 
 

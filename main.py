@@ -160,7 +160,16 @@ def refresh_all(
     print("\n[+] All wallets refreshed")
 
 
-def _dispatch_market_alerts(markets, min_volume, top_n, ai_filter, formatter_fn, combined, category, source_label):
+def _dispatch_market_alerts(
+    markets,
+    min_volume,
+    top_n,
+    ai_filter,
+    formatter_fn,
+    combined,
+    category,
+    source_label,
+):
     """Helper: qualify, AI analyze, format, dispatch for Kalshi/Jupiter-style markets."""
     passed = sorted(
         [m for m in markets if float(getattr(m, "volume", 0) or 0) >= min_volume],
@@ -173,7 +182,11 @@ def _dispatch_market_alerts(markets, min_volume, top_n, ai_filter, formatter_fn,
             q = getattr(m, "question", "Unknown")
             vol = float(getattr(m, "volume", 0) or 0)
             price = float(getattr(m, "price", 0.5) or 0.5)
-            market_dict = {"question": q, "volume": vol, "outcomePrices": [price, 1 - price]}
+            market_dict = {
+                "question": q,
+                "volume": vol,
+                "outcomePrices": [price, 1 - price],
+            }
             zones = ai_filter.analyze_entry_zones([market_dict])
             if zones:
                 z = zones[0]
@@ -182,7 +195,9 @@ def _dispatch_market_alerts(markets, min_volume, top_n, ai_filter, formatter_fn,
                 entry_reason = (z.get("reason", "") or "")[:100]
         except Exception:
             pass
-        msg = formatter_fn(m, entry_zone=entry_zone, conviction=conviction, entry_reason=entry_reason)
+        msg = formatter_fn(
+            m, entry_zone=entry_zone, conviction=conviction, entry_reason=entry_reason
+        )
         combined.send_to_alerts(msg, category=category)
         print(f"   {source_label}: {getattr(m, 'question', '')[:40]}...")
 
@@ -195,9 +210,7 @@ def _generate_ai_market_report(polymarket_api, combined, config):
     try:
         # Fetch fresh markets (sort by volume client-side)
         all_markets = polymarket_api.get_markets(limit=200, active=True) or []
-        all_markets.sort(
-            key=lambda x: float(x.get("volume", 0) or 0), reverse=True
-        )
+        all_markets.sort(key=lambda x: float(x.get("volume", 0) or 0), reverse=True)
 
         # Get prices for analysis
         scored = []
@@ -211,11 +224,7 @@ def _generate_ai_market_report(polymarket_api, combined, config):
             odds_info = {}
             if prices:
                 try:
-                    p = (
-                        json.loads(prices)
-                        if isinstance(prices, str)
-                        else prices
-                    )
+                    p = json.loads(prices) if isinstance(prices, str) else prices
                     if p and len(p) >= 2:
                         yes_odds = float(p[0])
                         odds_info = {
@@ -251,9 +260,7 @@ def _generate_ai_market_report(polymarket_api, combined, config):
             mid = m.get("id")
             if mid:
                 try:
-                    trades = polymarket_api.get_market_trades(
-                        mid, limit=20
-                    ) or []
+                    trades = polymarket_api.get_market_trades(mid, limit=20) or []
                     m["recent_trades"] = trades
                 except Exception:
                     m["recent_trades"] = []
@@ -265,13 +272,41 @@ def _generate_ai_market_report(polymarket_api, combined, config):
         entry_zones = []
         if markets_for_entry:
             try:
-                entry_zones = ai_filter.analyze_entry_zones(
-                    markets_for_entry
-                )
+                entry_zones = ai_filter.analyze_entry_zones(markets_for_entry)
             except Exception:
                 entry_zones = [
                     {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
                 ] * len(markets_for_entry)
+
+        # Auto-fix: override AI's WAIT for extreme odds (<15% or >85%) using actual market odds
+        import json as json_mod
+        for idx, m in enumerate(markets_for_entry):
+            if idx >= len(entry_zones):
+                break
+            # Get yes_pct from market's outcomePrices, not a separate field
+            raw_prices = m.get("outcomePrices")
+            prices = None
+            if raw_prices:
+                try:
+                    prices = json_mod.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+                except Exception:
+                    pass
+            yes_pct = float(prices[0]) if prices and len(prices) >= 1 else None
+            volume = float(m.get("volume", 0) or 0)
+
+            if yes_pct is not None and volume > 50000:
+                if yes_pct < 0.15:
+                    entry_zones[idx] = {
+                        "entry_zone": "BUY_NO",
+                        "confidence": "high",
+                        "reason": f"Clear value: NO at {(1 - yes_pct) * 100:.0f}% on ${volume/1e6:.1f}M market",
+                    }
+                elif yes_pct > 0.85:
+                    entry_zones[idx] = {
+                        "entry_zone": "BUY_YES",
+                        "confidence": "high",
+                        "reason": f"Clear value: YES at {yes_pct * 100:.0f}% - high conviction on ${volume/1e6:.1f}M market",
+                    }
 
         if top_5:
             report = "📊 AI MARKET REPORT - Optimal Entry Points\n\n"
@@ -281,11 +316,25 @@ def _generate_ai_market_report(polymarket_api, combined, config):
                 v = item["volume"]
                 odds = item["odds"]
                 ana = item["analysis"]
-                ez = (
-                    entry_zones[i - 1]
-                    if i <= len(entry_zones)
-                    else {}
-                )
+                ez = entry_zones[i - 1] if i <= len(entry_zones) else {}
+
+                # Get odds directly from market for override logic
+                import json as json_mod
+                raw_prices = m.get("outcomePrices")
+                prices = None
+                if raw_prices:
+                    try:
+                        prices = json_mod.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+                    except:
+                        pass
+                yes_pct = float(prices[0]) if prices and len(prices) >= 1 else (odds.get('yes') if odds else None)
+
+                # FORCE override for extreme odds with decent volume
+                if yes_pct is not None and v > 50000:
+                    if yes_pct < 0.15:
+                        ez = {"entry_zone": "BUY_NO", "confidence": "high", "reason": f"Clear value: NO at {(1-yes_pct)*100:.0f}% implied"}
+                    elif yes_pct > 0.85:
+                        ez = {"entry_zone": "BUY_YES", "confidence": "high", "reason": f"Clear value: YES at {yes_pct*100:.0f}% implied"}
 
                 report += f"{i}. {q}\n"
                 report += f"   Vol: ${v:,.0f} | "
@@ -295,7 +344,11 @@ def _generate_ai_market_report(polymarket_api, combined, config):
 
                 # Entry zone from AI
                 zone = ez.get("entry_zone", "")
-                reason = ez.get("reason", "") or ana.get("analysis", "") or ana.get("trigger", "")
+                reason = (
+                    ez.get("reason", "")
+                    or ana.get("analysis", "")
+                    or ana.get("trigger", "")
+                )
                 conf = ez.get("confidence", "")
                 if zone:
                     report += f"   ENTRY: {zone}"
@@ -311,7 +364,9 @@ def _generate_ai_market_report(polymarket_api, combined, config):
             print("[*] AI Report sent to alerts")
         else:
             # No high-volume markets - still confirm job ran
-            combined.send_to_alerts("📊 AI MARKET REPORT - No high-volume markets (>$50k) found this cycle.")
+            combined.send_to_alerts(
+                "📊 AI MARKET REPORT - No high-volume markets (>$50k) found this cycle."
+            )
             print("[*] AI Report sent (no high-volume markets)")
     except Exception as e:
         print(f"   AI Report error: {e}")
@@ -322,8 +377,15 @@ def monitor(
 ):
     """Run continuous monitoring mode with convergence detection."""
     print("Starting PolySuite monitor...")
-    if not (os.environ.get("GROQ_API_KEY") or os.environ.get("GROQ_api_key") or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("Openrouter_api_key")):
-        print("[!] AI disabled: set GROQ_API_KEY or OPENROUTER_API_KEY in .env for AI reports and analysis")
+    if not (
+        os.environ.get("GROQ_API_KEY")
+        or os.environ.get("GROQ_api_key")
+        or os.environ.get("OPENROUTER_API_KEY")
+        or os.environ.get("Openrouter_api_key")
+    ):
+        print(
+            "[!] AI disabled: set GROQ_API_KEY or OPENROUTER_API_KEY in .env for AI reports and analysis"
+        )
     print(f"Polling interval: {config.polling_interval}s")
     print(f"Win rate threshold: {config.win_rate_threshold}%")
     print(
@@ -369,8 +431,6 @@ def monitor(
     leaderboard_importer = LeaderboardImporter(api_factory)
     smart_money_detector = SmartMoneyDetector(api_factory)
 
-
-
     event_alerter = EventAlerter(
         api_factory,
         new_market_hours=config.new_market_alert_hours,
@@ -385,9 +445,15 @@ def monitor(
 
     calculator = WalletCalculator(api_factory)
 
-    # Track markets we've alerted on
-    alerted_markets: set = set()
+    # Track markets we've alerted on - with timestamps for expiration
+    alerted_markets: dict = {}  # market_id -> last_alert_time
     alerted_insider_wallets: set = set()
+    alerted_crypto_markets: dict = {}
+    alerted_sports_markets: dict = {}
+    alerted_politics_markets: dict = {}
+    alerted_kalshi_markets: dict = {}
+    alerted_jupiter_markets: dict = {}
+    ALERT_EXPIRY_MINUTES = 720  # 12 hours = twice per day
 
     # Insider signal (high priority for copy traders)
     last_insider_signal_check = 0
@@ -475,6 +541,7 @@ def monitor(
             from src.copy.engine import CopyEngine
             from src.copy.storage import get_copy_target_addresses
             from src.auth.credential_store import CredentialStore
+
             if get_copy_target_addresses():
                 cred_store = CredentialStore()
                 cfg = config.config if hasattr(config, "config") else config
@@ -485,7 +552,9 @@ def monitor(
                 print("[*] Copy enabled but no targets - add via /copy add")
         except RuntimeError as e:
             if "CREDENTIAL_ENCRYPTION_KEY" in str(e):
-                print("[*] Copy enabled but CREDENTIAL_ENCRYPTION_KEY not set - copy in dry-run only")
+                print(
+                    "[*] Copy enabled but CREDENTIAL_ENCRYPTION_KEY not set - copy in dry-run only"
+                )
             else:
                 print(f"[!] Copy engine error: {e}")
         except Exception as e:
@@ -514,7 +583,10 @@ def monitor(
                     last_health_check = current_time
 
                 # AI Daily Summary (once per day) - deprioritized, gated by config
-                if config.ai_daily_summary_enabled and current_time - last_ai_summary > 86400:  # 24 hours
+                if (
+                    config.ai_daily_summary_enabled
+                    and current_time - last_ai_summary > 86400
+                ):  # 24 hours
                     try:
                         print("\n[*] Generating AI daily summary...")
                         # INGEST: API → aggregator.get_polymarkets
@@ -533,7 +605,10 @@ def monitor(
                         print(f"[AI Summary] Error: {e}")
 
             # Trend scanner (pump.fun) - deprioritized, gated by config
-            if config.trend_scanner_enabled and current_time - last_trend_scan > trend_scan_interval:
+            if (
+                config.trend_scanner_enabled
+                and current_time - last_trend_scan > trend_scan_interval
+            ):
                 try:
                     print("\n[*] Scanning for trends...")
                     alerts = trendscanner.scan_all()
@@ -585,29 +660,51 @@ def monitor(
                         addr = t.get("address")
                         if not addr:
                             continue
-                        result = vetter.vet_wallet(addr, min_bet=min_bet, market_cache=shared_market_cache)
+                        # Use source as platform (polymarket/jupiter/kalshi)
+                        platform = t.get("source", "polymarket")
+                        result = vetter.vet_wallet(
+                            addr,
+                            min_bet=min_bet,
+                            market_cache=shared_market_cache,
+                            platform=platform,
+                        )
                         if result and result.get("passed"):
                             entry = {
                                 "address": addr,
-                                "nickname": t.get("userName") or t.get("username") or addr[:12] + "...",
+                                "nickname": t.get("userName")
+                                or t.get("username")
+                                or addr[:12] + "...",
                                 "bot_score": result.get("bot_score"),
                                 "win_rate_real": result.get("win_rate_real"),
                                 "avg_bet_size": result.get("avg_bet_size"),
                                 "total_pnl": result.get("total_pnl"),
                                 "roi_pct": result.get("roi_pct"),
                                 "conviction_score": result.get("conviction_score"),
-                                "estimated_fees_paid": result.get("estimated_fees_paid"),
+                                "estimated_fees_paid": result.get(
+                                    "estimated_fees_paid"
+                                ),
                                 "top_category": result.get("top_category"),
                             }
                             if result.get("specialty_or_hot_streak_note"):
-                                entry["specialty_or_hot_streak_note"] = result.get("specialty_or_hot_streak_note")
+                                entry["specialty_or_hot_streak_note"] = result.get(
+                                    "specialty_or_hot_streak_note"
+                                )
                             curated.append(entry)
                     if curated:
                         vetting_path = Path("data/vetted_leaderboard.json")
                         vetting_path.parent.mkdir(parents=True, exist_ok=True)
                         with open(vetting_path, "w") as f:
-                            json.dump({"updated": datetime.utcnow().isoformat(), "wallets": curated}, f, indent=2)
-                        print(f"[*] Background vetting: {len(curated)} passed, saved to {vetting_path}")
+                            json.dump(
+                                {
+                                    "updated": datetime.utcnow().isoformat(),
+                                    "wallets": curated,
+                                },
+                                f,
+                                indent=2,
+                            )
+                        print(
+                            f"[*] Background vetting: {len(curated)} passed, saved to {vetting_path}"
+                        )
                     last_background_vetting = current_time
                 except Exception as e:
                     print(f"[Background vetting] Error: {e}")
@@ -627,27 +724,45 @@ def monitor(
                         addr = t.get("address")
                         if not addr:
                             continue
-                        result = vetter.vet_wallet(addr, min_bet=min_bet, market_cache=shared_market_cache)
+                        result = vetter.vet_wallet(
+                            addr, min_bet=min_bet, market_cache=shared_market_cache
+                        )
                         if result and result.get("passed"):
-                            passed.append({
-                                "address": addr,
-                                "nickname": t.get("userName") or t.get("username") or addr[:12] + "...",
-                                "bot_score": result.get("bot_score"),
-                                "win_rate_real": result.get("win_rate_real"),
-                                "avg_bet_size": result.get("avg_bet_size"),
-                                "top_category": result.get("top_category"),
-                            })
-                    passed.sort(key=lambda x: (x.get("win_rate_real") or 0, x.get("avg_bet_size") or 0), reverse=True)
+                            passed.append(
+                                {
+                                    "address": addr,
+                                    "nickname": t.get("userName")
+                                    or t.get("username")
+                                    or addr[:12] + "...",
+                                    "bot_score": result.get("bot_score"),
+                                    "win_rate_real": result.get("win_rate_real"),
+                                    "avg_bet_size": result.get("avg_bet_size"),
+                                    "top_category": result.get("top_category"),
+                                }
+                            )
+                    passed.sort(
+                        key=lambda x: (
+                            x.get("win_rate_real") or 0,
+                            x.get("avg_bet_size") or 0,
+                        ),
+                        reverse=True,
+                    )
                     to_send = passed[:wallet_list_max]
                     if len(to_send) >= wallet_list_min:
                         msg = formatter.format_wallet_list(to_send)
                         if msg:
                             combined.send_to_alerts(msg)
-                            print(f"[*] Weekly wallet list: sent {len(to_send)} wallets to Discord & Telegram")
+                            print(
+                                f"[*] Weekly wallet list: sent {len(to_send)} wallets to Discord & Telegram"
+                            )
                             last_wallet_list_sent = current_time
                     else:
-                        print(f"[*] Weekly wallet list: only {len(to_send)} passed (min {wallet_list_min}), skipping")
-                        last_wallet_list_sent = current_time  # Avoid retrying every loop
+                        print(
+                            f"[*] Weekly wallet list: only {len(to_send)} passed (min {wallet_list_min}), skipping"
+                        )
+                        last_wallet_list_sent = (
+                            current_time  # Avoid retrying every loop
+                        )
                 except Exception as e:
                     print(f"[Weekly wallet list] Error: {e}")
                     last_wallet_list_sent = current_time  # Avoid rapid retries
@@ -658,7 +773,10 @@ def monitor(
                 last_ai_report = current_time
 
             # Curated wallet activity - gated to vetted/curated wallets when enabled
-            if config.whale_alerts_enabled and current_time - last_smart_money_import > whale_check_interval:
+            if (
+                config.whale_alerts_enabled
+                and current_time - last_smart_money_import > whale_check_interval
+            ):
                 print("\n[*] Checking curated wallets for recent activity...")
 
                 # Whale pivot: prefer vetted_leaderboard.json; fallback to tracked wallets
@@ -671,11 +789,20 @@ def monitor(
                         vetted = data.get("wallets", [])
                         if vetted:
                             from src.wallet import Wallet
+
                             wallets = [
-                                Wallet(address=v["address"], nickname=v.get("nickname", v["address"][:12] + "..."))
-                                for v in vetted if v.get("address")
+                                Wallet(
+                                    address=v["address"],
+                                    nickname=v.get(
+                                        "nickname", v["address"][:12] + "..."
+                                    ),
+                                )
+                                for v in vetted
+                                if v.get("address")
                             ]
-                            print(f"   Using {len(wallets)} vetted wallets from {vetting_path}")
+                            print(
+                                f"   Using {len(wallets)} vetted wallets from {vetting_path}"
+                            )
                     except Exception as e:
                         print(f"   Vetted load error: {e}")
                 if not wallets:
@@ -685,6 +812,7 @@ def monitor(
                 # INGEST: DB (vetted_leaderboard.json) + API (polymarket_api.get_wallet_trades)
                 # Only trades from last 6 hours
                 import time as _time
+
                 whale_hours_window = 6
                 after_ts = int(_time.time()) - (whale_hours_window * 3600)
 
@@ -693,9 +821,12 @@ def monitor(
 
                 for wallet in wallets:
                     try:
-                        trades = pm.get_wallet_trades(
-                            wallet.address, limit=100, after=after_ts
-                        ) or []
+                        trades = (
+                            pm.get_wallet_trades(
+                                wallet.address, limit=100, after=after_ts
+                            )
+                            or []
+                        )
 
                         for t in trades:
                             mid = str(t.get("conditionId") or t.get("market") or "")
@@ -704,7 +835,9 @@ def monitor(
                             size = float(t.get("size", 0) or 0)
                             price = float(t.get("price", 0) or 0)
                             # USD value: size*price (size in shares) or use value/amount if present
-                            trade_usd = float(t.get("value") or t.get("amount") or 0) or (size * price if price else size)
+                            trade_usd = float(
+                                t.get("value") or t.get("amount") or 0
+                            ) or (size * price if price else size)
                             if trade_usd < whale_min_size:
                                 continue
 
@@ -712,7 +845,11 @@ def monitor(
                             if mid not in market_cache:
                                 m = pm.get_market(mid) or pm.get_market_details(mid)
                                 market_cache[mid] = {
-                                    "question": (m.get("question") or m.get("title") or "Unknown")[:35] if m else "Unknown",
+                                    "question": (
+                                        m.get("question") or m.get("title") or "Unknown"
+                                    )[:35]
+                                    if m
+                                    else "Unknown",
                                     "slug": m.get("slug", "") if m else "",
                                 }
 
@@ -734,17 +871,26 @@ def monitor(
                         print(f"Whale check error {wallet.address[:12]}...: {e}")
 
                 # Send batched whale alerts (to alerts channel) - respect cooldown
-                if whale_trades and (current_time - last_whale_alert_time) >= whale_alert_cooldown:
-                    print(f"    -> Sending {len(whale_trades)} curated wallet trades in batch")
+                if (
+                    whale_trades
+                    and (current_time - last_whale_alert_time) >= whale_alert_cooldown
+                ):
+                    print(
+                        f"    -> Sending {len(whale_trades)} curated wallet trades in batch"
+                    )
 
                     # AI summary with triggers (skip for small batches to reduce API calls)
                     ai_summary = ""
                     if len(whale_trades) >= 2:
                         try:
-                            ai_summary = ai_filter.analyze_whale_trades(whale_trades[:10])
+                            ai_summary = ai_filter.analyze_whale_trades(
+                                whale_trades[:10]
+                            )
                             if ai_summary and "TRIGGER:" in ai_summary:
                                 trig = (
-                                    ai_summary.split("TRIGGER:")[1].split("\n")[0].strip()
+                                    ai_summary.split("TRIGGER:")[1]
+                                    .split("\n")[0]
+                                    .strip()
                                 )
                                 print(f"   🐋 Trigger: {trig}")
                         except Exception:
@@ -758,8 +904,16 @@ def monitor(
                             q = top.get("question", "Unknown")
                             ep = top.get("entry_price")
                             price = float(ep) if ep is not None else 0.5
-                            vol = sum(t.get("size", 0) for t in whale_trades if t.get("question") == q)
-                            market_dict = {"question": q, "volume": vol, "outcomePrices": [price, 1 - price]}
+                            vol = sum(
+                                t.get("size", 0)
+                                for t in whale_trades
+                                if t.get("question") == q
+                            )
+                            market_dict = {
+                                "question": q,
+                                "volume": vol,
+                                "outcomePrices": [price, 1 - price],
+                            }
                             zones = ai_filter.analyze_entry_zones([market_dict])
                             if zones:
                                 z = zones[0]
@@ -770,11 +924,22 @@ def monitor(
                             pass
 
                     # PROCESS: formatter; DISPATCH: combined.send_to_alerts → queue → worker
-                    msg = formatter.format_whale_batch(whale_trades, ai_summary, entry_zone=entry_zone, conviction=conviction, entry_reason=entry_reason)
+                    msg = formatter.format_whale_batch(
+                        whale_trades,
+                        ai_summary,
+                        entry_zone=entry_zone,
+                        conviction=conviction,
+                        entry_reason=entry_reason,
+                    )
                     combined.send_to_alerts(msg)
                     last_whale_alert_time = current_time
-                elif whale_trades and (current_time - last_whale_alert_time) < whale_alert_cooldown:
-                    print(f"    -> Skipping curated wallet alert (cooldown: {whale_alert_cooldown}s)")
+                elif (
+                    whale_trades
+                    and (current_time - last_whale_alert_time) < whale_alert_cooldown
+                ):
+                    print(
+                        f"    -> Skipping curated wallet alert (cooldown: {whale_alert_cooldown}s)"
+                    )
 
                 last_smart_money_import = current_time
 
@@ -789,16 +954,26 @@ def monitor(
                     print(f"[Jupiter] Fetched {len(jupiter_markets)} markets")
                     # Kalshi: top 3 by volume, only send if volume >= $100 (trade signal)
                     _dispatch_market_alerts(
-                        kalshi_markets, 100, 3,
-                        ai_filter, formatter.format_kalshi_market,
-                        combined, "kalshi", "Kalshi",
+                        kalshi_markets,
+                        100,
+                        3,
+                        ai_filter,
+                        formatter.format_kalshi_market,
+                        combined,
+                        "kalshi",
+                        "Kalshi",
                     )
                     # Jupiter: top 3, only send if volume >= $100 (trade signal)
                     if config.jupiter_alerts_enabled:
                         _dispatch_market_alerts(
-                            jupiter_markets, 100, 3,
-                            ai_filter, formatter.format_jupiter_market,
-                            combined, "jupiter", "Jupiter",
+                            jupiter_markets,
+                            100,
+                            3,
+                            ai_filter,
+                            formatter.format_jupiter_market,
+                            combined,
+                            "jupiter",
+                            "Jupiter",
                         )
                 except Exception as e:
                     print(f"[Kalshi/Jupiter] Error: {e}")
@@ -821,7 +996,10 @@ def monitor(
                 continue
 
             # ===== PRIORITY 1: INSIDER SIGNAL (high priority for copy traders) =====
-            if config.get("insider_signal_enabled", True) and current_time - last_insider_signal_check >= insider_signal_interval:
+            if (
+                config.get("insider_signal_enabled", True)
+                and current_time - last_insider_signal_check >= insider_signal_interval
+            ):
                 last_insider_signal_check = current_time
                 try:
                     print("\n[*] Checking for insider signals...")
@@ -830,19 +1008,31 @@ def monitor(
 
                     hashdive = None
                     if config.get("hashdive_api_key"):
-                        hashdive = api_factory.get_hashdive_client() if hasattr(api_factory, "get_hashdive_client") else None
-                    detector = InsiderSignalDetector(
+                        hashdive = (
+                            api_factory.get_hashdive_client()
+                            if hasattr(api_factory, "get_hashdive_client")
+                            else None
+                        )
+                    insider_detector = InsiderSignalDetector(
                         hashdive_client=hashdive,
                         polymarket_api=polymarket_api,
                         insider_detector=InsiderDetector(),
                         api_factory=api_factory,
-                        min_trade_usd=getattr(config, "insider_signal_min_trade_usd", 5000),
-                        fresh_max_trades=getattr(config, "insider_signal_fresh_max_trades", 10),
-                        liquidity_threshold=config.get("weird_wallet_liquidity_threshold", 0.02),
-                        niche_volume_max=config.get("weird_wallet_niche_volume_max", 50000),
+                        min_trade_usd=getattr(
+                            config, "insider_signal_min_trade_usd", 5000
+                        ),
+                        fresh_max_trades=getattr(
+                            config, "insider_signal_fresh_max_trades", 10
+                        ),
+                        liquidity_threshold=config.get(
+                            "weird_wallet_liquidity_threshold", 0.02
+                        ),
+                        niche_volume_max=config.get(
+                            "weird_wallet_niche_volume_max", 50000
+                        ),
                     )
                     # INGEST: PolymarketWhaleClient/HashDive + polymarket_api; PROCESS: InsiderSignalDetector; DISPATCH: combined
-                    signals = detector.scan_for_signals(limit=5)
+                    signals = insider_detector.scan_for_signals(limit=5)
                     for sig in signals:
                         addr = sig.get("address", "")
                         if addr and addr not in alerted_insider_wallets:
@@ -854,15 +1044,20 @@ def monitor(
                     print(f"[InsiderSignal] Error: {e}")
 
             # ===== CONTRARIAN LONG-SHOT (when enabled) =====
-            if config.get("contrarian_alerts_enabled", False) and current_time - last_contrarian_check >= contrarian_interval:
+            if (
+                config.get("contrarian_alerts_enabled", False)
+                and current_time - last_contrarian_check >= contrarian_interval
+            ):
                 last_contrarian_check = current_time
                 try:
                     from src.alerts.contrarian import ContrarianDetector
 
                     detector = ContrarianDetector(
                         polymarket_api=polymarket_api,
-                        min_volume=getattr(config, "contrarian_min_volume", 10000) or 10000,
-                        min_imbalance=getattr(config, "contrarian_min_imbalance", 0.6) or 0.6,
+                        min_volume=getattr(config, "contrarian_min_volume", 10000)
+                        or 10000,
+                        min_imbalance=getattr(config, "contrarian_min_imbalance", 0.6)
+                        or 0.6,
                         payout_range=(
                             getattr(config, "contrarian_payout_min", 0.20) or 0.20,
                             getattr(config, "contrarian_payout_max", 0.40) or 0.40,
@@ -891,7 +1086,10 @@ def monitor(
             )
 
             # Crypto 5M/15M dedicated check - run every 1-2 min, send to alerts
-            if current_time - last_crypto_short_term_check >= crypto_short_term_interval:
+            if (
+                current_time - last_crypto_short_term_check
+                >= crypto_short_term_interval
+            ):
                 last_crypto_short_term_check = current_time
                 if crypto_short_term_markets:
                     top_short_term = sorted(
@@ -903,9 +1101,29 @@ def monitor(
                     try:
                         entry_zones_st = ai_filter.analyze_entry_zones(top_short_term)
                     except Exception:
-                        entry_zones_st = [{"entry_zone": "WAIT", "reason": "", "confidence": "low"}] * len(top_short_term)
+                        entry_zones_st = [
+                            {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                        ] * len(top_short_term)
                     for idx, m in enumerate(top_short_term):
-                        ez = entry_zones_st[idx] if idx < len(entry_zones_st) else {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                        market_id = m.get("id") or m.get("conditionId") or ""
+                        # Skip if alerted in last 24 hours
+                        if (
+                            alerted_crypto_markets.get(market_id)
+                            and (
+                                current_time - alerted_crypto_markets.get(market_id, 0)
+                            )
+                            < ALERT_EXPIRY_MINUTES * 60
+                        ):
+                            continue
+                        ez = (
+                            entry_zones_st[idx]
+                            if idx < len(entry_zones_st)
+                            else {
+                                "entry_zone": "WAIT",
+                                "reason": "",
+                                "confidence": "low",
+                            }
+                        )
                         msg = formatter.format_crypto_short_term(
                             m,
                             entry_zone=ez.get("entry_zone", "WAIT"),
@@ -913,6 +1131,7 @@ def monitor(
                             entry_reason=ez.get("reason", ""),
                         )
                         combined.send_to_alerts(msg, category="crypto")
+                        alerted_crypto_markets[market_id] = current_time
 
             # Sports dedicated check - send top 1 to reduce noise
             if current_time - last_sports_alert_check >= sports_alert_interval:
@@ -924,9 +1143,23 @@ def monitor(
                         reverse=True,
                     )[:1]
                     for m in top_sports:
+                        market_id = m.get("id") or m.get("conditionId") or ""
+                        # Skip if alerted in last 12 hours
+                        if (
+                            alerted_sports_markets.get(market_id)
+                            and (
+                                current_time - alerted_sports_markets.get(market_id, 0)
+                            )
+                            < ALERT_EXPIRY_MINUTES * 60
+                        ):
+                            continue
                         vol = float(m.get("volume", 0) or 0)
                         if vol >= 5000:  # Only liquid sports
-                            ez = {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                            ez = {
+                                "entry_zone": "WAIT",
+                                "reason": "",
+                                "confidence": "low",
+                            }
                             try:
                                 zones = ai_filter.analyze_entry_zones([m])
                                 ez = zones[0] if zones else ez
@@ -939,6 +1172,7 @@ def monitor(
                                 entry_reason=ez.get("reason", ""),
                             )
                             combined.send_to_alerts(msg, category="sports")
+                            alerted_sports_markets[market_id] = current_time
 
             # Politics dedicated check - send top 1 to reduce noise
             if current_time - last_politics_alert_check >= politics_alert_interval:
@@ -949,10 +1183,108 @@ def monitor(
                         key=lambda x: float(x.get("volume", 0) or 0),
                         reverse=True,
                     )[:1]
+
+                    from datetime import datetime, timedelta
+                    import re
+
+                    def is_expired_event(question: str) -> bool:
+                        """Check if question refers to a date that has passed."""
+                        q = question.lower()
+                        # Match patterns like "on March 3", "by March 3", "before March 3"
+                        patterns = [
+                            r"(?:on|by|before|until|on or before)\s+(\w+)\s+(\d{1,2})",
+                            r"(\w+)\s+(\d{1,2}),?\s*(\d{4})?",
+                        ]
+                        months = {
+                            "january": 1,
+                            "february": 2,
+                            "march": 3,
+                            "april": 4,
+                            "may": 5,
+                            "june": 6,
+                            "july": 7,
+                            "august": 8,
+                            "september": 9,
+                            "october": 10,
+                            "november": 11,
+                            "december": 12,
+                        }
+                        now = datetime.now()
+                        for pattern in patterns:
+                            match = re.search(pattern, q)
+                            if match:
+                                try:
+                                    month_name = match.group(1).lower()
+                                    day = int(match.group(2))
+                                    year = (
+                                        int(match.group(3))
+                                        if match.group(3)
+                                        else now.year
+                                    )
+                                    if month_name in months:
+                                        month = months[month_name]
+                                        event_date = datetime(year, month, day)
+                                        # If date has passed (and it's not far in the future), mark expired
+                                        if event_date < now:
+                                            return True
+                                except:
+                                    pass
+                        return False
+
+                    # Filter out meme/joke markets (celebrity presidential elections, etc.)
+                    non_political_figures = [
+                        "lebron",
+                        "taylor swift",
+                        "beyonce",
+                        "elon",
+                        "musk",
+                        "drake",
+                        "kanye",
+                        "kim kardashian",
+                        "cristiano",
+                        "messi",
+                        "tom brady",
+                    ]
                     for m in top_politics:
+                        market_id = m.get("id") or m.get("conditionId") or ""
+                        # Skip if alerted in last 12 hours
+                        if (
+                            alerted_politics_markets.get(market_id)
+                            and (
+                                current_time
+                                - alerted_politics_markets.get(market_id, 0)
+                            )
+                            < ALERT_EXPIRY_MINUTES * 60
+                        ):
+                            continue
                         vol = float(m.get("volume", 0) or 0)
+                        question = m.get("question") or ""
+                        question_lower = question.lower()
+
+                        # Skip expired events (date already passed)
+                        if is_expired_event(question):
+                            continue
+
+                        # Skip meme markets
+                        if (
+                            "president" in question_lower
+                            or "election" in question_lower
+                        ):
+                            if any(
+                                figure in question_lower
+                                for figure in non_political_figures
+                            ):
+                                continue
+                            # Skip if odds are too extreme (likely joke market)
+                            yes_pct = m.get("yes_pct")
+                            if yes_pct and (yes_pct < 0.05 or yes_pct > 0.95):
+                                continue
                         if vol >= 10000:  # Higher bar for politics
-                            ez = {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
+                            ez = {
+                                "entry_zone": "WAIT",
+                                "reason": "",
+                                "confidence": "low",
+                            }
                             try:
                                 zones = ai_filter.analyze_entry_zones([m])
                                 ez = zones[0] if zones else ez
@@ -965,6 +1297,7 @@ def monitor(
                                 entry_reason=ez.get("reason", ""),
                             )
                             combined.send_to_alerts(msg, category="politics")
+                            alerted_politics_markets[market_id] = current_time
 
             # Print top actionable markets
             print(
@@ -1040,7 +1373,9 @@ def monitor(
                     q = m.get("question", "")[:50]
                     v = float(m.get("volume", 0) or 0)
                     yes_pct = m.get("yes_pct")
-                    yes_str = f" YES:{yes_pct*100:.0f}%" if yes_pct is not None else ""
+                    yes_str = (
+                        f" YES:{yes_pct * 100:.0f}%" if yes_pct is not None else ""
+                    )
                     print(f"   ${v:>10,.0f}{yes_str} - {q}")
 
             # Show top crypto by volume
@@ -1155,24 +1490,33 @@ def monitor(
 
                 # Format and send with AI reasoning and RECOMMENDATION
                 msg = formatter.format_convergence(
-                    market, wallets, conv, ai_analysis,
-                    entry_zone=entry_zone, conviction=conviction, entry_reason=entry_reason,
+                    market,
+                    wallets,
+                    conv,
+                    ai_analysis,
+                    entry_zone=entry_zone,
+                    conviction=conviction,
+                    entry_reason=entry_reason,
                 )
                 combined.send_to_alerts(
                     msg,
                     category="convergence",
-                    backtest_meta={"alert_type": "convergence", "market_id": conv.get("market_id")},
+                    backtest_meta={
+                        "alert_type": "convergence",
+                        "market_id": conv.get("market_id"),
+                    },
                 )
                 print(
                     f"{emoji} CONVERGENCE: {len(wallets)} traders in {market.get('question', 'Unknown')[:40]}..."
                 )
-                alerted_markets.add(conv["market_id"])
+                alerted_markets[conv["market_id"]] = time.time()
 
             # ===== FULL MARKET SCANS (volume, odds) =====
 
             # Clean old markets from alerted set - reuse IDs from batch fetch
             if all_market_ids:
-                alerted_markets = alerted_markets & all_market_ids
+                # Keep only market_ids that exist in current all_market_ids
+                alerted_markets = {k: v for k, v in alerted_markets.items() if k in all_market_ids}
 
             print(
                 f"\rMonitoring {len(high_performers)} wallets | {len(convergences)} convergences",
@@ -1569,9 +1913,7 @@ def handle_all_command(
     def run_dashboard():
         dash.run()
 
-    dash_thread = threading.Thread(
-        target=run_dashboard, daemon=True, name="Dashboard"
-    )
+    dash_thread = threading.Thread(target=run_dashboard, daemon=True, name="Dashboard")
     dash_thread.start()
     print("[*] Dashboard started - http://127.0.0.1:5000 (or configured port)")
 
@@ -1618,9 +1960,13 @@ def handle_vet_command(
         print(f"   Resolved markets: {result['resolved_markets_traded']}")
         print(f"   Bot score: {result['bot_score']}%")
         print(f"   Unsettled losses: {result['unsettled_loses']}")
-        print(f"   Wins/Losses: {result.get('total_wins', 0)}/{result.get('total_losses', 0)}")
+        print(
+            f"   Wins/Losses: {result.get('total_wins', 0)}/{result.get('total_losses', 0)}"
+        )
         if "total_pnl" in result:
-            print(f"   PnL: ${result.get('total_pnl', 0):.2f} | ROI: {result.get('roi_pct', 0):.1f}% | Conviction: {result.get('conviction_score', 0):.1f} | Trades/day: {result.get('trades_per_day', 0):.1f}")
+            print(
+                f"   PnL: ${result.get('total_pnl', 0):.2f} | ROI: {result.get('roi_pct', 0):.1f}% | Conviction: {result.get('conviction_score', 0):.1f} | Trades/day: {result.get('trades_per_day', 0):.1f}"
+            )
         if result.get("estimated_fees_paid", 0) > 0:
             print(f"   Est. fees paid: ${result.get('estimated_fees_paid', 0):.2f}")
         if result.get("specialty_or_hot_streak_note"):
@@ -1816,7 +2162,9 @@ def setup_argument_parser():
     subparsers.add_parser("dashboard", help="Start the web dashboard")
 
     # All (monitor + bots + dashboard)
-    subparsers.add_parser("all", help="Start everything: monitor, Telegram, Discord, dashboard")
+    subparsers.add_parser(
+        "all", help="Start everything: monitor, Telegram, Discord, dashboard"
+    )
 
     # Position Alerts
     subparsers.add_parser("check_positions", help="Check for position changes")
@@ -1834,9 +2182,13 @@ def setup_argument_parser():
     )
 
     # Backtest
-    backtest_p = subparsers.add_parser("backtest", help="Backtest alert log (historical)")
+    backtest_p = subparsers.add_parser(
+        "backtest", help="Backtest alert log (historical)"
+    )
     backtest_p.add_argument("action", choices=["replay"], help="Action to perform")
-    backtest_p.add_argument("--fee-bps", type=float, default=30, help="Fee in basis points (default 30)")
+    backtest_p.add_argument(
+        "--fee-bps", type=float, default=30, help="Fee in basis points (default 30)"
+    )
 
     # Vet wallets
     vet_p = subparsers.add_parser("vet", help="Vet wallets for bots and P&L cheaters")

@@ -16,7 +16,13 @@ def _polymarket_link(obj: dict) -> str:
     slug = obj.get("slug") or obj.get("eventSlug") or obj.get("event_slug")
     if slug and str(slug).strip():
         return f"https://polymarket.com/event/{slug}"
-    mid = obj.get("conditionId") or obj.get("market_id") or obj.get("id") or obj.get("condition_id") or ""
+    mid = (
+        obj.get("conditionId")
+        or obj.get("market_id")
+        or obj.get("id")
+        or obj.get("condition_id")
+        or ""
+    )
     if mid:
         mid = str(mid).strip()
         return f"https://polymarket.com/market/{mid}"
@@ -39,7 +45,10 @@ class AlertFormatter:
         """Format new market alert."""
         question = event.get("question", "Unknown")[:100]
         volume = event.get("volume", 0)
-        link = _polymarket_link(event) or f"https://polymarket.com/market/{event.get('id', '')}"
+        link = (
+            _polymarket_link(event)
+            or f"https://polymarket.com/market/{event.get('id', '')}"
+        )
 
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
@@ -124,7 +133,10 @@ class AlertFormatter:
         if ai_analysis:
             lines.append(f"\n🤖 {ai_analysis[:120]}")
 
-        link = _polymarket_link(market) or f"https://polymarket.com/market/{market.get('id') or market.get('conditionId') or ''}"
+        link = (
+            _polymarket_link(market)
+            or f"https://polymarket.com/market/{market.get('id') or market.get('conditionId') or ''}"
+        )
         if link:
             lines.append(f"\n[View]({link})")
 
@@ -170,7 +182,9 @@ class AlertFormatter:
             ep = top.get("entry_price")
             price_str = f" @ {ep:.2f}" if ep is not None else ""
             lines.append(f"**{wallet}** - ${total:,.0f}")
-            lines.append(f"  {side}: ${top.get('size', 0):,.0f}{price_str} → {question}...")
+            lines.append(
+                f"  {side}: ${top.get('size', 0):,.0f}{price_str} → {question}..."
+            )
 
         if len(sorted_wallets) > 5:
             lines.append(f"\n+{len(sorted_wallets) - 5} more wallets")
@@ -189,7 +203,10 @@ class AlertFormatter:
         # Add link to top trade's market if available
         if trades and trades[0].get("market_id"):
             top = max(trades, key=lambda x: x.get("size", 0))
-            link = _polymarket_link(top) or f"https://polymarket.com/market/{top.get('market_id', '')}"
+            link = (
+                _polymarket_link(top)
+                or f"https://polymarket.com/market/{top.get('market_id', '')}"
+            )
             if link:
                 lines.append(f"\n[View on Polymarket]({link})")
 
@@ -228,8 +245,11 @@ class AlertFormatter:
         win = signal.get("winning_trade") or {}
         question = (win.get("question") or "Unknown")[:60]
         pnl = win.get("pnl", 0)
+        market_id = win.get("market_id", "")
 
         emoji = "🔴" if risk == "HIGH" else "🟠"
+
+        # Build actionable message
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
             f"{emoji} **INSIDER SIGNAL**",
@@ -237,6 +257,7 @@ class AlertFormatter:
             f"📊 Fresh wallet: {closed_count} trades | ${trade_size:,.0f} size",
             f"✅ Winning: {question}... (+${pnl:,.2f})",
         ]
+
         # Phase B: Risk signals
         signals = signal.get("signals") or {}
         if signals:
@@ -251,8 +272,26 @@ class AlertFormatter:
                 parts.append("Niche market")
             if parts:
                 lines.append(f"📌 Signals: {', '.join(parts)}")
-        lines.append(f"⚠️ Confidence: {confidence} – follow early for copy-trade edge")
-        lines.append(f"[View](https://polymarket.com/profile/{signal.get('address', '')})")
+
+        # ACTIONABLE: Show what to do
+        conf_level = {"HIGH": "🟢 HIGH", "MEDIUM": "🟡 MEDIUM", "LOW": "🟠 LOW"}.get(confidence, confidence)
+        lines.append(f"⚠️ Confidence: {conf_level}")
+
+        # Add copy-trade guidance
+        if confidence == "HIGH":
+            lines.append("💡 Action: Consider copy-trade with larger position")
+        elif confidence == "MEDIUM":
+            lines.append("💡 Action: Copy with medium position, watch closely")
+        else:
+            lines.append("💡 Action: Small position only for copy-trade edge")
+
+        # Add market link if available
+        if market_id:
+            market_url = f"https://polymarket.com/market/{market_id}"
+            lines.append(f"[View Market]({market_url})")
+            lines.append("💡 Check current odds - bet same direction if favorable entry")
+
+        lines.append(f"[View Wallet](https://polymarket.com/profile/{signal.get('address', '')})")
         return "\n".join(lines)
 
     @staticmethod
@@ -311,23 +350,60 @@ class AlertFormatter:
         question = market.get("question", "Unknown")[:80]
         volume = float(market.get("volume", 0) or 0)
         yes_pct = market.get("yes_pct")
-        link = _polymarket_link(market) or f"https://polymarket.com/market/{market.get('id', '')}"
+        link = (
+            _polymarket_link(market)
+            or f"https://polymarket.com/market/{market.get('id', '')}"
+        )
+
+        # AUTO-OVERRIDE: Force BUY for extreme odds even if AI says WAIT
+        if yes_pct is not None:
+            if yes_pct < 0.15:
+                entry_zone = "BUY_NO"
+                conviction = "high"
+                entry_reason = f"Clear value: NO at {(1 - yes_pct) * 100:.0f}% vs YES at {yes_pct * 100:.0f}%"
+            elif yes_pct > 0.85:
+                entry_zone = "BUY_YES"
+                conviction = "high"
+                entry_reason = f"Clear value: YES at {yes_pct * 100:.0f}% implied - high conviction"
+
+        # Color code by confidence
+        conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🟠"}.get(conviction, "⚪")
+
+        # AUTO-OVERRIDE: Force entry for extreme odds (same logic as kalshi)
+        if yes_pct is not None and not entry_zone:
+            if yes_pct < 0.15:
+                entry_zone = "BUY_NO"
+                conviction = "high"
+                entry_reason = f"Clear value: NO at {(1 - yes_pct) * 100:.0f}% vs YES at {yes_pct * 100:.0f}%"
+            elif yes_pct > 0.85:
+                entry_zone = "BUY_YES"
+                conviction = "high"
+                entry_reason = f"Clear value: YES at {yes_pct * 100:.0f}% implied - high conviction"
 
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
-            f"⏱️ **CRYPTO 5M/15M**",
+            f"⏱️ **CRYPTO 5M/15M UP/DOWN** {conf_emoji}",
             f"_{question}_",
             f"💰 Volume: ${volume:,.0f}" if volume else "",
         ]
         if yes_pct is not None:
-            lines.append(f"📊 YES: {yes_pct * 100:.0f}% | NO: {(1 - yes_pct) * 100:.0f}%")
+            lines.append(
+                f"📊 YES: {yes_pct * 100:.0f}% | NO: {(1 - yes_pct) * 100:.0f}%"
+            )
         if entry_zone and entry_zone not in ("WAIT", "AVOID"):
-            rec_line = f"📌 RECOMMENDATION: {entry_zone}"
-            if conviction:
-                rec_line += f" | Confidence: {conviction}"
-            lines.append(rec_line)
+            # Make recommendation clearer
+            side = (
+                "YES"
+                if "YES" in entry_zone
+                else "NO"
+                if "NO" in entry_zone
+                else entry_zone
+            )
+            lines.append(f"🎯 **{side}** (confidence: {conviction})")
             if entry_reason:
-                lines.append(f"   _{entry_reason[:100]}_")
+                lines.append(f"   💡 {entry_reason[:100]}")
+        else:
+            lines.append("⏸️ WAIT - no clear signal")
         lines.append(f"[View]({link})")
         return "\n".join([l for l in lines if l])
 
@@ -353,22 +429,69 @@ class AlertFormatter:
         entry_reason: str = "",
     ) -> str:
         """Format sports market alert."""
+        import json
+
         question = market.get("question", "Unknown")[:80]
         volume = float(market.get("volume", 0) or 0)
-        link = _polymarket_link(market) or f"https://polymarket.com/market/{market.get('id', '')}"
+        link = (
+            _polymarket_link(market)
+            or f"https://polymarket.com/market/{market.get('id', '')}"
+        )
+
+        # Get YES% for auto-detection
+        yes_pct = market.get("yes_pct")
+        if yes_pct is None:
+            raw_prices = market.get("outcomePrices")
+            prices = (
+                json.loads(raw_prices)
+                if isinstance(raw_prices, str)
+                else (raw_prices or [])
+            )
+            yes_pct = float(prices[0]) if prices and len(prices) >= 1 else 0.5
+
+        # Auto-detect clear signals from extreme odds
+        if yes_pct < 0.15:
+            entry_zone = "BUY_NO"
+            conviction = "high"
+            entry_reason = f"Clear value: NO at {(1 - yes_pct) * 100:.0f}% vs YES at {yes_pct * 100:.0f}%"
+        elif yes_pct > 0.85:
+            entry_zone = "BUY_YES"
+            conviction = "high"
+            entry_reason = (
+                f"Clear value: YES at {yes_pct * 100:.0f}% implied - high conviction"
+            )
+
+        # Color code by confidence
+        conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🟠"}.get(conviction, "⚪")
+
+        # Show odds based on recommendation
+        if entry_zone and "NO" in entry_zone:
+            odds_str = f"📊 NO: {(1 - yes_pct) * 100:.0f}%"
+        elif entry_zone and "YES" in entry_zone:
+            odds_str = f"📊 YES: {yes_pct * 100:.0f}%"
+        else:
+            odds_str = f"📊 YES: {yes_pct * 100:.0f}% | NO: {(1 - yes_pct) * 100:.0f}%"
+
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
-            "🏀 **SPORTS**",
+            f"🏀 **SPORTS** {conf_emoji}",
             f"_{question}_",
             f"💰 Volume: ${volume:,.0f}" if volume else "",
+            odds_str,
         ]
         if entry_zone and entry_zone not in ("WAIT", "AVOID"):
-            rec_line = f"📌 RECOMMENDATION: {entry_zone}"
-            if conviction:
-                rec_line += f" | Confidence: {conviction}"
-            lines.append(rec_line)
+            side = (
+                "YES"
+                if "YES" in entry_zone
+                else "NO"
+                if "NO" in entry_zone
+                else entry_zone
+            )
+            lines.append(f"🎯 **{side}** (confidence: {conviction})")
             if entry_reason:
-                lines.append(f"   _{entry_reason[:100]}_")
+                lines.append(f"   💡 {entry_reason[:100]}")
+        else:
+            lines.append("⏸️ WAIT - no clear signal")
         lines.append(f"[View]({link})")
         return "\n".join([l for l in lines if l])
 
@@ -380,7 +503,11 @@ class AlertFormatter:
         entry_reason: str = "",
     ) -> str:
         """Format Kalshi market alert (MarketAlert from aggregator)."""
-        q = (alert.get("question", "Unknown") if isinstance(alert, dict) else getattr(alert, "question", "Unknown"))[:80]
+        q = (
+            alert.get("question", "Unknown")
+            if isinstance(alert, dict)
+            else getattr(alert, "question", "Unknown")
+        )[:80]
         if isinstance(alert, dict):
             vol = alert.get("volume", 0) or 0
             price = alert.get("price", 0.5) or 0.5
@@ -389,20 +516,39 @@ class AlertFormatter:
             vol = getattr(alert, "volume", 0) or 0
             price = getattr(alert, "price", 0.5) or 0.5
             url = getattr(alert, "url", "")
+
+        # Auto-detect clear signals from extreme odds
+        if price < 0.15:
+            entry_zone = "BUY_NO"
+            conviction = "high"
+            entry_reason = f"Clear value: NO at {(1 - price) * 100:.0f}% vs YES at {price * 100:.0f}%"
+        elif price > 0.85:
+            entry_zone = "BUY_YES"
+            conviction = "high"
+            entry_reason = (
+                f"Clear value: YES at {price * 100:.0f}% implied - high conviction"
+            )
+
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
-            "📊 **KALSHI**",
+            f"📊 **KALSHI**",
             f"_{q}_",
             f"💰 Vol: ${vol:,.0f}" if vol else "",
-            f"📈 YES: {price*100:.0f}%" if price else "",
+            f"📈 YES: {price * 100:.0f}%" if price else "",
         ]
         if entry_zone and entry_zone not in ("WAIT", "AVOID"):
-            rec_line = f"📌 RECOMMENDATION: {entry_zone}"
-            if conviction:
-                rec_line += f" | Confidence: {conviction}"
-            lines.append(rec_line)
+            side = (
+                "YES"
+                if "YES" in entry_zone
+                else "NO"
+                if "NO" in entry_zone
+                else entry_zone
+            )
+            lines.append(f"🎯 **{side}** (confidence: {conviction})")
             if entry_reason:
-                lines.append(f"   _{entry_reason[:100]}_")
+                lines.append(f"   💡 {entry_reason[:100]}")
+        else:
+            lines.append("⏸️ WAIT - no clear signal")
         if url:
             lines.append(f"[View]({url})")
         return "\n".join([l for l in lines if l])
@@ -415,29 +561,107 @@ class AlertFormatter:
         entry_reason: str = "",
     ) -> str:
         """Format Jupiter market alert (MarketAlert from aggregator)."""
-        q = (alert.get("question", "Unknown") if isinstance(alert, dict) else getattr(alert, "question", "Unknown"))[:80]
+        q = (
+            alert.get("question", "Unknown")
+            if isinstance(alert, dict)
+            else getattr(alert, "question", "Unknown")
+        )[:80]
         if isinstance(alert, dict):
             price = alert.get("price", 0.5) or 0.5
             vol = alert.get("volume", 0) or 0
             url = alert.get("url", "")
+            cat = alert.get("category", "crypto") or "crypto"
         else:
             price = getattr(alert, "price", 0.5) or 0.5
             vol = getattr(alert, "volume", 0) or 0
             url = getattr(alert, "url", "")
+            cat = getattr(alert, "category", "crypto") or "crypto"
+
+        # Fallback: detect category from question keywords
+        q_lower = q.lower()
+        if cat == "other" or cat == "crypto":
+            politics_kw = [
+                "president",
+                "election",
+                "trump",
+                "biden",
+                "congress",
+                "senate",
+                "clinton",
+                "chelsea",
+                "harris",
+                "democratic",
+                "republican",
+            ]
+            sports_kw = [
+                "nba",
+                "nfl",
+                "nhl",
+                "mlb",
+                "football",
+                "basketball",
+                "soccer",
+                "tennis",
+                "golf",
+                "world series",
+                "finals",
+            ]
+            if any(kw in q_lower for kw in politics_kw):
+                cat = "politics"
+            elif any(kw in q_lower for kw in sports_kw):
+                cat = "sports"
+
+        # Auto-detect clear signals from extreme odds
+        if price < 0.15:
+            entry_zone = "BUY_NO"
+            conviction = "high"
+            entry_reason = f"Clear value: NO at {(1 - price) * 100:.0f}% vs YES at {price * 100:.0f}%"
+        elif price > 0.85:
+            entry_zone = "BUY_YES"
+            conviction = "high"
+            entry_reason = (
+                f"Clear value: YES at {price * 100:.0f}% implied - high conviction"
+            )
+
+        # Map category to emoji/label
+        cat_label = {
+            "crypto": "🪐 JUPITER",
+            "sports": "🏀 SPORTS",
+            "politics": "🗳️ POLITICS",
+            "world": "🌍 WORLD",
+        }.get(cat, f"🪐 {cat.upper()}")
+
+        # Color code by confidence
+        conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🟠"}.get(conviction, "⚪")
+
+        # Show odds based on recommendation
+        if entry_zone and "NO" in entry_zone:
+            odds_str = f"📈 NO: {(1 - price) * 100:.0f}%"
+        elif entry_zone and "YES" in entry_zone:
+            odds_str = f"📈 YES: {price * 100:.0f}%"
+        else:
+            odds_str = f"📈 YES: {price * 100:.0f}% | NO: {(1 - price) * 100:.0f}%"
+
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
-            "🪐 **JUPITER**",
+            f"**{cat_label}** {conf_emoji}",
             f"_{q}_",
             f"💰 Vol: ${vol:,.0f}" if vol else "",
-            f"📈 YES: {price*100:.0f}%" if price else "",
+            odds_str if price else "",
         ]
         if entry_zone and entry_zone not in ("WAIT", "AVOID"):
-            rec_line = f"📌 RECOMMENDATION: {entry_zone}"
-            if conviction:
-                rec_line += f" | Confidence: {conviction}"
-            lines.append(rec_line)
+            side = (
+                "YES"
+                if "YES" in entry_zone
+                else "NO"
+                if "NO" in entry_zone
+                else entry_zone
+            )
+            lines.append(f"🎯 **{side}** (confidence: {conviction})")
             if entry_reason:
-                lines.append(f"   _{entry_reason[:100]}_")
+                lines.append(f"   💡 {entry_reason[:100]}")
+        else:
+            lines.append("⏸️ WAIT - no clear signal")
         if url:
             lines.append(f"[View]({url})")
         return "\n".join([l for l in lines if l])
@@ -450,22 +674,69 @@ class AlertFormatter:
         entry_reason: str = "",
     ) -> str:
         """Format politics market alert."""
+        import json
+
         question = market.get("question", "Unknown")[:80]
         volume = float(market.get("volume", 0) or 0)
-        link = _polymarket_link(market) or f"https://polymarket.com/market/{market.get('id', '')}"
+        link = (
+            _polymarket_link(market)
+            or f"https://polymarket.com/market/{market.get('id', '')}"
+        )
+
+        # Get YES% for auto-detection
+        yes_pct = market.get("yes_pct")
+        if yes_pct is None:
+            raw_prices = market.get("outcomePrices")
+            prices = (
+                json.loads(raw_prices)
+                if isinstance(raw_prices, str)
+                else (raw_prices or [])
+            )
+            yes_pct = float(prices[0]) if prices and len(prices) >= 1 else 0.5
+
+        # Auto-detect clear signals from extreme odds
+        if yes_pct < 0.15:
+            entry_zone = "BUY_NO"
+            conviction = "high"
+            entry_reason = f"Clear value: NO at {(1 - yes_pct) * 100:.0f}% vs YES at {yes_pct * 100:.0f}%"
+        elif yes_pct > 0.85:
+            entry_zone = "BUY_YES"
+            conviction = "high"
+            entry_reason = (
+                f"Clear value: YES at {yes_pct * 100:.0f}% implied - high conviction"
+            )
+
+        # Color code by confidence
+        conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🟠"}.get(conviction, "⚪")
+
+        # Show odds based on recommendation
+        if entry_zone and "NO" in entry_zone:
+            odds_str = f"📊 NO: {(1 - yes_pct) * 100:.0f}%"
+        elif entry_zone and "YES" in entry_zone:
+            odds_str = f"📊 YES: {yes_pct * 100:.0f}%"
+        else:
+            odds_str = f"📊 YES: {yes_pct * 100:.0f}% | NO: {(1 - yes_pct) * 100:.0f}%"
+
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
-            "🗳️ **POLITICS**",
+            f"🗳️ **POLITICS** {conf_emoji}",
             f"_{question}_",
             f"💰 Volume: ${volume:,.0f}" if volume else "",
+            odds_str,
         ]
         if entry_zone and entry_zone not in ("WAIT", "AVOID"):
-            rec_line = f"📌 RECOMMENDATION: {entry_zone}"
-            if conviction:
-                rec_line += f" | Confidence: {conviction}"
-            lines.append(rec_line)
+            side = (
+                "YES"
+                if "YES" in entry_zone
+                else "NO"
+                if "NO" in entry_zone
+                else entry_zone
+            )
+            lines.append(f"🎯 **{side}** (confidence: {conviction})")
             if entry_reason:
-                lines.append(f"   _{entry_reason[:100]}_")
+                lines.append(f"   💡 {entry_reason[:100]}")
+        else:
+            lines.append("⏸️ WAIT - no clear signal")
         lines.append(f"[View]({link})")
         return "\n".join([l for l in lines if l])
 
@@ -494,7 +765,9 @@ class AlertFormatter:
         if event_title:
             lines.append(f"📌 {event_title}")
         if yes_pct is not None:
-            lines.append(f"📊 Market: {yes_pct:.0%} YES / {100 - yes_pct * 100:.0f}% NO")
+            lines.append(
+                f"📊 Market: {yes_pct:.0%} YES / {100 - yes_pct * 100:.0f}% NO"
+            )
         if spread is not None and spread > 0:
             lines.append(f"📐 Spread: {spread:.2f}¢")
         if entry_zone and entry_zone not in ("WAIT", "AVOID"):
@@ -504,7 +777,10 @@ class AlertFormatter:
             lines.append(rec_line)
             if entry_reason:
                 lines.append(f"   _{entry_reason[:100]}_")
-        link = _polymarket_link(event) or f"https://polymarket.com/market/{event.get('id') or event.get('conditionId') or ''}"
+        link = (
+            _polymarket_link(event)
+            or f"https://polymarket.com/market/{event.get('id') or event.get('conditionId') or ''}"
+        )
         if link:
             lines.append(f"[View]({link})")
         return "\n".join(lines)
