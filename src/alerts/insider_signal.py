@@ -19,8 +19,16 @@ def _parse_order_depth(levels: list, top_n: int = 5) -> float:
     total = 0.0
     for i, level in enumerate(levels[:top_n]):
         try:
-            price = float(level.get("price", 0) if isinstance(level, dict) else getattr(level, "price", 0))
-            size = float(level.get("size", 0) if isinstance(level, dict) else getattr(level, "size", 0))
+            price = float(
+                level.get("price", 0)
+                if isinstance(level, dict)
+                else getattr(level, "price", 0)
+            )
+            size = float(
+                level.get("size", 0)
+                if isinstance(level, dict)
+                else getattr(level, "size", 0)
+            )
             total += price * size
         except (ValueError, TypeError):
             pass
@@ -41,7 +49,9 @@ class InsiderSignalDetector:
         liquidity_threshold: float = 0.02,
         niche_volume_max: float = 50000,
     ):
-        self.hashdive = hashdive_client  # Optional paid; Polymarket Data API used when not set
+        self.hashdive = (
+            hashdive_client  # Optional paid; Polymarket Data API used when not set
+        )
         self.polymarket = polymarket_api
         self.insider = insider_detector
         self.api_factory = api_factory
@@ -59,6 +69,7 @@ class InsiderSignalDetector:
         whale_client = self.hashdive
         if not whale_client or not hasattr(whale_client, "get_latest_whale_trades"):
             from src.market.polymarket_whale import PolymarketWhaleClient
+
             whale_client = PolymarketWhaleClient()
         try:
             trades = whale_client.get_latest_whale_trades(
@@ -82,6 +93,7 @@ class InsiderSignalDetector:
         if not signals and self.polymarket:
             try:
                 import requests
+
                 resp = requests.get(
                     "https://data-api.polymarket.com/v1/leaderboard",
                     params={"category": "OVERALL", "limit": 30},
@@ -111,7 +123,11 @@ class InsiderSignalDetector:
         niche_market = False
         liquidity_impact = None
         try:
-            clob = self.api_factory.get_clob_client() if hasattr(self.api_factory, "get_clob_client") else None
+            clob = (
+                self.api_factory.get_clob_client()
+                if hasattr(self.api_factory, "get_clob_client")
+                else None
+            )
             if not clob:
                 return (False, False, None)
             market = clob.get_market(market_id)
@@ -132,7 +148,9 @@ class InsiderSignalDetector:
             token_ids = market.get("clobTokenIds") or market.get("clob_token_ids")
             if not token_ids:
                 return (size_anomaly, niche_market, liquidity_impact)
-            token_id = token_ids[0] if isinstance(token_ids, (list, tuple)) else token_ids
+            token_id = (
+                token_ids[0] if isinstance(token_ids, (list, tuple)) else token_ids
+            )
             if not token_id:
                 return (size_anomaly, niche_market, liquidity_impact)
             order_book = clob.get_order_book(token_id)
@@ -147,7 +165,11 @@ class InsiderSignalDetector:
                 liquidity_impact = trade_size / depth
                 size_anomaly = liquidity_impact > self.liquidity_threshold
         except Exception as e:
-            logger.debug("InsiderSignal size/niche check %s: %s", market_id[:16] if market_id else "?", e)
+            logger.debug(
+                "InsiderSignal size/niche check %s: %s",
+                market_id[:16] if market_id else "?",
+                e,
+            )
         return (size_anomaly, niche_market, liquidity_impact)
 
     def _check_wallet_signal(self, address: str, trade: Dict) -> Optional[Dict]:
@@ -158,6 +180,7 @@ class InsiderSignalDetector:
         try:
             # Get closed positions to check freshness and winning
             import requests
+
             resp = requests.get(
                 "https://data-api.polymarket.com/closed-positions",
                 params={"user": address, "limit": 50},
@@ -180,9 +203,16 @@ class InsiderSignalDetector:
                     if pnl_val > 0:
                         has_win = True
                         last_win = {
-                            "question": (p.get("question") or p.get("marketQuestion") or p.get("title") or "Unknown")[:80],
+                            "question": (
+                                p.get("question")
+                                or p.get("marketQuestion")
+                                or p.get("title")
+                                or "Unknown"
+                            )[:80],
                             "pnl": pnl_val,
-                            "market_id": p.get("conditionId") or p.get("market") or p.get("condition_id"),
+                            "market_id": p.get("conditionId")
+                            or p.get("market")
+                            or p.get("condition_id"),
                         }
                         break
                 except (ValueError, TypeError):
@@ -196,7 +226,12 @@ class InsiderSignalDetector:
             if trade_size < self.min_trade_usd and closed:
                 # Estimate from closed position
                 for p in closed[:3]:
-                    size = float(p.get("size", 0) or p.get("usdcSize", 0) or p.get("totalBought", 0) or 0)
+                    size = float(
+                        p.get("size", 0)
+                        or p.get("usdcSize", 0)
+                        or p.get("totalBought", 0)
+                        or 0
+                    )
                     if size >= self.min_trade_usd:
                         trade_size = size
                         break
@@ -209,14 +244,18 @@ class InsiderSignalDetector:
             niche_market = False
             liquidity_impact = None
             if self.api_factory and last_win.get("market_id"):
-                size_anomaly, niche_market, liquidity_impact = self._check_size_and_niche(
-                    last_win["market_id"], trade_size
+                size_anomaly, niche_market, liquidity_impact = (
+                    self._check_size_and_niche(last_win["market_id"], trade_size)
                 )
+
+            # Auto-HIGH for huge trades (> $100K) - regardless of order book
+            if trade_size >= 100000:
+                size_anomaly = True
 
             # Composite risk: fresh + size_anomaly + niche_market
             fresh = closed_count < self.fresh_max_trades
             signal_count = sum([fresh, size_anomaly, niche_market])
-            if signal_count >= 3:
+            if signal_count >= 3 or trade_size >= 100000:
                 confidence = "HIGH"
             elif signal_count >= 2:
                 confidence = "MEDIUM"
@@ -233,7 +272,11 @@ class InsiderSignalDetector:
                 "niche_market": niche_market,
                 "liquidity_impact": liquidity_impact,
                 "confidence": confidence,
-                "signals": {"fresh": fresh, "size_anomaly": size_anomaly, "niche_market": niche_market},
+                "signals": {
+                    "fresh": fresh,
+                    "size_anomaly": size_anomaly,
+                    "niche_market": niche_market,
+                },
             }
         except Exception as e:
             logger.debug("InsiderSignal check %s: %s", address[:12], e)
