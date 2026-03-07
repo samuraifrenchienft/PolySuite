@@ -3,12 +3,13 @@
 Combines:
 - Polymarket (public API)
 - Kalshi (public API - no auth needed)
-- Jupiter (requires API key)
+- Jupiter Prediction (all categories; crypto splits into general + short-term niche)
 """
 
 import requests
 import json
 import time
+import re
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from datetime import datetime
@@ -59,12 +60,6 @@ class MarketAggregator:
     _provider_errors = {}  # {provider: error_count}
     _provider_last_check = {}  # {provider: timestamp}
     _provider_cooldown = 300  # 5 min cooldown after too many errors
-
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "Mozilla/5.0"})
-        self._cache = {}
-        self._cache_ttl = 60
 
     # Category keywords - matches Polymarket API categories
     CATEGORIES = {
@@ -273,10 +268,32 @@ class MarketAggregator:
     def _set_cached(self, key: str, data: List):
         self._cache[key] = (data, time.time())
 
+    def _is_crypto_short_term(self, event_title: str, market_title: str) -> bool:
+        """Return True only for BTC/ETH/SOL 5m/15m up/down style markets."""
+        text = f"{event_title} {market_title}".lower()
+        has_timeframe = any(
+            kw in text for kw in ("5m", "15m", "5 minute", "15 minute", "5-minute", "15-minute")
+        )
+        has_major_asset = bool(
+            re.search(r"\b(bitcoin|btc|ethereum|eth|solana|sol)\b", text)
+        )
+        has_direction = any(kw in text for kw in ("up", "down", "higher", "lower"))
+        return has_timeframe and has_major_asset and has_direction
+
+    def _classify_jupiter_category(
+        self, requested_category: str, event_title: str, market_title: str
+    ) -> str:
+        """Split Jupiter crypto into general and short-term niche labels."""
+        if requested_category == "crypto" and self._is_crypto_short_term(
+            event_title, market_title
+        ):
+            return "crypto_short_term"
+        if requested_category:
+            return requested_category
+        return self._classify(f"{event_title} {market_title}")
+
     def _classify(self, question: str) -> str:
         """Classify market category using word boundaries."""
-        import re
-
         q = " " + question.lower() + " "  # Add spaces for boundary matching
         for cat, keywords in self.CATEGORIES.items():
             for kw in keywords:
@@ -473,13 +490,15 @@ class MarketAggregator:
 
     # ========== JUPITER ==========
     def get_jupiter_markets(self, category: str = None) -> List[MarketAlert]:
-        """Get markets from Jupiter Prediction API (free, no auth needed)."""
+        """Get markets from Jupiter Prediction API."""
         cached = self._get_cached("jupiter")
         if cached:
             return cached
 
         alerts = []
-        categories = [category] if category else ["crypto", "sports", "politics"]
+        categories = (
+            [category] if category else ["crypto", "sports", "politics", "world"]
+        )
 
         for cat in categories:
             try:
@@ -515,12 +534,18 @@ class MarketAggregator:
                                 if result == "yes"
                                 else (0.01 if result == "no" else 0.5)
                             )
+                        # Skip resolved markets (price >= 99% or <= 1%)
+                        if price >= 0.99 or price <= 0.01:
+                            continue
                         vol = float(pricing.get("volume", 0) or 0)
+                        category_label = self._classify_jupiter_category(
+                            cat, ev_title, market_title
+                        )
 
                         alerts.append(
                             MarketAlert(
                                 source="jupiter",
-                                category=cat,
+                                category=category_label,
                                 question=f"{ev_title}: {market_title}"
                                 if ev_title
                                 else market_title,
@@ -560,11 +585,16 @@ class MarketAggregator:
                                 if buy_yes is not None
                                 else 0.5
                             )
+                            if price >= 0.99 or price <= 0.01:
+                                continue
                             vol = float(pricing.get("volume", 0) or 0)
+                            category_label = self._classify_jupiter_category(
+                                "", ev_title, market_title
+                            )
                             alerts.append(
                                 MarketAlert(
                                     source="jupiter",
-                                    category="other",
+                                    category=category_label,
                                     question=f"{ev_title}: {market_title}"
                                     if ev_title
                                     else market_title,

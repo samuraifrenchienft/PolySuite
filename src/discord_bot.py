@@ -9,8 +9,10 @@ from src.utils import is_valid_eth_address, is_valid_solana_address, sanitize_ni
 from src.agent import Agent
 from src.config import Config
 import asyncio
+import json
 import os
 import requests
+from pathlib import Path
 
 
 class DiscordBot(commands.Bot):
@@ -44,6 +46,51 @@ class DiscordBot(commands.Bot):
         )
 
         # === SLASH COMMANDS ===
+        def _format_vetted_rankings(mode: str, limit: int = 5) -> str:
+            limit = max(1, min(int(limit or 5), 20))
+            vetting_path = Path("data/vetted_leaderboard.json")
+            if not vetting_path.exists():
+                return "No vetted leaderboard yet. Run monitor/background vetting first."
+            try:
+                with open(vetting_path) as f:
+                    wallets = (json.load(f) or {}).get("wallets", []) or []
+            except Exception:
+                return "Failed to read vetted leaderboard."
+            if not wallets:
+                return "No vetted wallets available."
+
+            if mode == "streak":
+                wallets.sort(
+                    key=lambda w: (
+                        float(w.get("current_win_streak", 0) or 0),
+                        float(w.get("recent_win_rate", 0) or 0),
+                        float(w.get("reliability_score", 0) or 0),
+                    ),
+                    reverse=True,
+                )
+                header = "Top streak wallets"
+            else:
+                wallets.sort(
+                    key=lambda w: (
+                        float(w.get("reliability_score", 0) or 0),
+                        float(w.get("recent_win_rate", 0) or 0),
+                        float(w.get("current_win_streak", 0) or 0),
+                    ),
+                    reverse=True,
+                )
+                header = "Top reliable wallets"
+
+            lines = [f"**{header}**"]
+            for i, w in enumerate(wallets[:limit], 1):
+                name = w.get("nickname") or (w.get("address", "")[:10] + "...")
+                rel = float(w.get("reliability_score", 0) or 0)
+                streak = int(w.get("current_win_streak", 0) or 0)
+                recent = float(w.get("recent_win_rate", 0) or 0)
+                lines.append(
+                    f"{i}. `{name}` | Rel {rel:.1f} | Streak {streak} | Recent {recent:.1f}%"
+                )
+            return "\n".join(lines)
+
         @self.tree.command(
             name="ask",
             description="Ask AI about markets, crypto, or anything",
@@ -61,6 +108,24 @@ class DiscordBot(commands.Bot):
                 for w in sorted(wallets, key=lambda x: x.win_rate, reverse=True)[:5]:
                     msg += f"\n• {w.nickname}: {w.win_rate:.1f}%"
             await interaction.response.send_message(msg, ephemeral=True)
+
+        @self.tree.command(
+            name="top_reliable_wallets", description="Show top vetted reliable traders"
+        )
+        async def top_reliable_wallets_slash(
+            interaction: discord.Interaction, limit: int = 5
+        ):
+            msg = _format_vetted_rankings("reliable", limit)
+            await interaction.response.send_message(msg[:2000], ephemeral=True)
+
+        @self.tree.command(
+            name="top_streak_wallets", description="Show top vetted win-streak traders"
+        )
+        async def top_streak_wallets_slash(
+            interaction: discord.Interaction, limit: int = 5
+        ):
+            msg = _format_vetted_rankings("streak", limit)
+            await interaction.response.send_message(msg[:2000], ephemeral=True)
 
         @self.tree.command(name="add", description="Add wallet to track")
         async def add_slash(interaction: discord.Interaction, address: str, nickname: str = None):
@@ -317,7 +382,6 @@ class DiscordBot(commands.Bot):
                 result = scanner.scan_token(address)
 
                 if "error" in result:
-                    print(f"[Discord/ca] Scanner error: {result['error']}")
                     await interaction.followup.send("Token scan failed. Please try again.")
                     return
 
@@ -563,10 +627,10 @@ class DiscordBot(commands.Bot):
                         "api_passphrase": self.api_passphrase.value.strip(),
                     })
                     await interaction.response.send_message("Polymarket credentials saved.", ephemeral=True)
-                except RuntimeError as e:
-                    await interaction.response.send_message(f"Credential storage not configured: {str(e)[:150]}", ephemeral=True)
+                except RuntimeError:
+                    await interaction.response.send_message("Credential storage not configured.", ephemeral=True)
                 except Exception as e:
-                    print(f"[Discord/connect polymarket] Error: {e}")
+                    print(f"[Discord/connect polymarket] Error: {type(e).__name__}")
                     await interaction.response.send_message("Failed to save. Try again.", ephemeral=True)
 
         class KalshiConnectModal(discord.ui.Modal, title="Connect Kalshi"):
@@ -583,10 +647,10 @@ class DiscordBot(commands.Bot):
                     pem = self.private_key.value.strip().replace("\\n", "\n")
                     store_credentials(self.user_id, "kalshi", {"api_key_id": self.api_key_id.value.strip(), "private_key_pem": pem})
                     await interaction.response.send_message("Kalshi credentials saved.", ephemeral=True)
-                except RuntimeError as e:
-                    await interaction.response.send_message(f"Credential storage not configured: {str(e)[:150]}", ephemeral=True)
+                except RuntimeError:
+                    await interaction.response.send_message("Credential storage not configured.", ephemeral=True)
                 except Exception as e:
-                    print(f"[Discord/connect kalshi] Error: {e}")
+                    print(f"[Discord/connect kalshi] Error: {type(e).__name__}")
                     await interaction.response.send_message("Failed to save. Try again.", ephemeral=True)
 
         connect_group = app_commands.Group(name="connect", description="Connect Polymarket or Kalshi for copy trading")
@@ -746,7 +810,17 @@ class DiscordBot(commands.Bot):
                 except Exception:
                     await interaction.response.send_message("Failed.", ephemeral=True)
 
-            @discord.ui.button(label="Ask AI", style=discord.ButtonStyle.secondary, row=5)
+            @discord.ui.button(label="Top reliable", style=discord.ButtonStyle.success, row=4)
+            async def btn_top_reliable(self, interaction: discord.Interaction, button: discord.ui.Button):
+                msg = _format_vetted_rankings("reliable", 5)
+                await interaction.response.send_message(msg[:2000], ephemeral=True)
+
+            @discord.ui.button(label="Top streak", style=discord.ButtonStyle.success, row=4)
+            async def btn_top_streak(self, interaction: discord.Interaction, button: discord.ui.Button):
+                msg = _format_vetted_rankings("streak", 5)
+                await interaction.response.send_message(msg[:2000], ephemeral=True)
+
+            @discord.ui.button(label="Ask AI", style=discord.ButtonStyle.secondary, row=4)
             async def btn_ai(self, interaction: discord.Interaction, button: discord.ui.Button):
                 await interaction.response.send_message("Use `/ask <your question>` to ask AI.", ephemeral=True)
 

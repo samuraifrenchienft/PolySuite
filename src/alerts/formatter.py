@@ -230,8 +230,14 @@ class AlertFormatter:
             wr = w.get("win_rate_real", 0) or 0
             bot = w.get("bot_score") or "—"
             cat = (w.get("top_category") or "—").lower()
+            streak = int(w.get("current_win_streak", 0) or 0)
+            recent_wr = float(w.get("recent_win_rate", 0) or 0)
+            reliability = w.get("reliability_score")
+            rel_str = f"{float(reliability):.1f}" if reliability is not None else "—"
             lines.append(f"{i}. **{name}**")
-            lines.append(f"   Avg ${avg:,.0f} | Win {wr:.0f}% | Bot {bot} | Top: {cat}")
+            lines.append(
+                f"   Avg ${avg:,.0f} | Win {wr:.0f}% | Recent {recent_wr:.0f}% | Streak {streak} | Rel {rel_str} | Bot {bot} | Top: {cat}"
+            )
         return "\n".join(lines)
 
     @staticmethod
@@ -368,17 +374,6 @@ class AlertFormatter:
 
         # Color code by confidence
         conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🟠"}.get(conviction, "⚪")
-
-        # AUTO-OVERRIDE: Force entry for extreme odds (same logic as kalshi)
-        if yes_pct is not None and not entry_zone:
-            if yes_pct < 0.15:
-                entry_zone = "BUY_NO"
-                conviction = "high"
-                entry_reason = f"Clear value: NO at {(1 - yes_pct) * 100:.0f}% vs YES at {yes_pct * 100:.0f}%"
-            elif yes_pct > 0.85:
-                entry_zone = "BUY_YES"
-                conviction = "high"
-                entry_reason = f"Clear value: YES at {yes_pct * 100:.0f}% implied - high conviction"
 
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
@@ -626,6 +621,7 @@ class AlertFormatter:
         # Map category to emoji/label
         cat_label = {
             "crypto": "🪐 JUPITER",
+            "crypto_short_term": "⏱️ CRYPTO 5M/15M UP/DOWN",
             "sports": "🏀 SPORTS",
             "politics": "🗳️ POLITICS",
             "world": "🌍 WORLD",

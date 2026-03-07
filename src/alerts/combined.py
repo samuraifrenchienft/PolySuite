@@ -148,6 +148,7 @@ class CombinedDispatcher:
     # Discord embed colors per alert type (left edge bar)
     EMBED_COLORS = {
         "crypto": 0x3498DB,  # Blue
+        "crypto_short_term": 0x00BFFF,  # Deep Sky Blue
         "sports": 0x2ECC71,  # Green
         "politics": 0x9B59B6,  # Purple
         "weather": 0x00CED1,  # Dark Turquoise
@@ -155,6 +156,7 @@ class CombinedDispatcher:
         "convergence": 0xE67E22,  # Orange
         "whale": 0xE67E22,  # Orange (curated wallet)
         "insider": 0xEF4444,  # Red - high priority
+        "contrarian": 0x8E44AD,  # Purple accent
         "kalshi": 0x1ABC9C,  # Teal
         "jupiter": 0x9B59B6,  # Purple (Jupiter brand)
         "default": 0x5865F2,  # Discord blurple

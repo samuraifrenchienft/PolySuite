@@ -129,8 +129,8 @@ class Dashboard:
                 from src.auth.credential_store import store_credentials
                 store_credentials(user_id, "polymarket", {"api_key": api_key, "api_secret": api_secret, "api_passphrase": api_passphrase})
                 return jsonify({"ok": True})
-            except RuntimeError as e:
-                return jsonify({"ok": False, "error": str(e)}), 500
+            except RuntimeError:
+                return jsonify({"ok": False, "error": "Credential storage not configured"}), 500
             except Exception as e:
                 logger.exception("store_polymarket_creds: %s", e)
                 return jsonify({"ok": False, "error": "Failed to store credentials"}), 500
@@ -149,8 +149,8 @@ class Dashboard:
                 from src.auth.credential_store import store_credentials
                 store_credentials(user_id, "kalshi", {"api_key_id": api_key_id, "private_key_pem": private_key_pem})
                 return jsonify({"ok": True})
-            except RuntimeError as e:
-                return jsonify({"ok": False, "error": str(e)}), 500
+            except RuntimeError:
+                return jsonify({"ok": False, "error": "Credential storage not configured"}), 500
             except Exception as e:
                 logger.exception("store_kalshi_creds: %s", e)
                 return jsonify({"ok": False, "error": "Failed to store credentials"}), 500
@@ -176,7 +176,7 @@ class Dashboard:
             for ip in list(attempts):
                 if now - attempts[ip][0] > 120:
                     del attempts[ip]
-            init_data = request.json.get("initData", "") if request.is_json else ""
+            init_data = (request.json or {}).get("initData", "")
             bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
             if _validate_telegram_init_data(init_data, bot_token):
                 return jsonify({"valid": True})

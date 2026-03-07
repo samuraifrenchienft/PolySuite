@@ -24,6 +24,10 @@ User Bankr API keys (from `/connect` or similar) are stored **in memory only**. 
 
 In production, set `FLASK_SECRET_KEY` in `.env` to a stable value (e.g. `openssl rand -hex 32`). Without it, Flask uses a new random key per restart, invalidating sessions and signed cookies.
 
+## Data Directory (LOW-008)
+
+The `data/` directory (e.g. `vetted_leaderboard.json`, `copy_targets.json`, `polysuite.db`) must **not** be served via HTTP. Ensure the web server or reverse proxy does not expose `data/` to clients.
+
 ## Credential Storage (Copy Trading)
 
 - **CREDENTIAL_ENCRYPTION_KEY:** Required for storing Polymarket/Kalshi API credentials. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Store in `.env` only. **Never log or expose this key.**

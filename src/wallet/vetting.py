@@ -15,7 +15,21 @@ class WalletVetting:
     """Vet wallets to filter out bots and P&L cheaters."""
 
     def __init__(self, api_factory: APIClientFactory):
+        self.api_factory = api_factory
         self.api = api_factory.get_polymarket_api()
+        self._jupiter_api = None
+
+    @property
+    def jupiter_api(self):
+        if self._jupiter_api is None:
+            self._jupiter_api = self.api_factory.get_jupiter_prediction_client()
+        return self._jupiter_api
+
+    def _get_api(self, platform: str):
+        """Get appropriate API client based on platform."""
+        if platform == "jupiter":
+            return self.jupiter_api
+        return self.api
 
     def vet_wallet(
         self,
@@ -24,7 +38,7 @@ class WalletVetting:
         platform: str = "polymarket",
         market_cache: Optional[Dict] = None,
     ) -> Optional[Dict]:
-        """Fully vet a wallet and return analysis.
+        """Fully vet a wallet and filter out bots and P&L cheaters.
 
         Polymarket: sequential flow - specialty/recent-wins merge, then fee gate.
         Kalshi/Jupiter: bypass fee gate (no fee data available).
@@ -37,7 +51,8 @@ class WalletVetting:
         Returns:
             Dict with vetting results or None if failed
         """
-        trades = self.api.get_wallet_trades(address, limit=500)
+        api = self._get_api(platform)
+        trades = api.get_wallet_trades(address, limit=500)
         if not trades:
             return None
 
@@ -59,6 +74,12 @@ class WalletVetting:
             "trades_per_day": 0,
             "max_position_pct": 0,
             "recent_wins": 0,
+            "recent_win_rate": 0.0,
+            "current_win_streak": 0,
+            "max_win_streak": 0,
+            "win_rate_base": 0.0,
+            "win_rate_trend": 0.0,
+            "reliability_score": 0.0,
             "is_specialty": False,
             "specialty_note": None,
             "specialty_market_id": None,
@@ -73,6 +94,7 @@ class WalletVetting:
         total_volume = 0
         category_volume = {}  # category -> volume for top_category
         wins = 0
+        resolved_decisions = 0
         unresolved_losses = 0
         resolved_markets = set()
         resolved_trades_by_time = []  # (timestamp, market_id, is_win) for recent wins
@@ -112,7 +134,9 @@ class WalletVetting:
                     winning_outcome = (market.get("outcome") or "").lower()
                     if winning_outcome:
                         # Use trade outcome (YES/NO) - prefer explicit field, else infer from price
-                        trade_outcome = (trade.get("outcome") or trade.get("outcomeType") or "").lower()
+                        trade_outcome = (
+                            trade.get("outcome") or trade.get("outcomeType") or ""
+                        ).lower()
                         if not trade_outcome:
                             # Infer from price: < 0.5 typically NO, else YES
                             trade_outcome = "no" if price < 0.5 else "yes"
@@ -135,20 +159,34 @@ class WalletVetting:
                             is_loss = True
 
                         # Collect for recent wins and per-market specialty
-                        ts = trade.get("timestamp") or trade.get("matchTime") or trade.get("match_time") or trade.get("createdAt")
+                        ts = (
+                            trade.get("timestamp")
+                            or trade.get("matchTime")
+                            or trade.get("match_time")
+                            or trade.get("createdAt")
+                        )
                         trade_ts = None
                         if ts:
                             try:
                                 if isinstance(ts, (int, float)):
                                     trade_ts = datetime.fromtimestamp(float(ts))
                                 else:
-                                    trade_ts = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                                    trade_ts = datetime.fromisoformat(
+                                        str(ts).replace("Z", "+00:00")
+                                    )
                             except (ValueError, TypeError):
                                 pass
                         if trade_ts and (is_win or is_loss):
-                            resolved_trades_by_time.append((trade_ts, market_id, is_win))
+                            resolved_decisions += 1
+                            resolved_trades_by_time.append(
+                                (trade_ts, market_id, is_win)
+                            )
                             if market_id not in market_stats:
-                                market_stats[market_id] = {"wins": 0, "losses": 0, "trades": []}
+                                market_stats[market_id] = {
+                                    "wins": 0,
+                                    "losses": 0,
+                                    "trades": [],
+                                }
                             market_stats[market_id]["trades"].append((trade_ts, is_win))
                             if is_win:
                                 market_stats[market_id]["wins"] += 1
@@ -157,11 +195,13 @@ class WalletVetting:
 
         analysis["total_volume"] = total_volume
         analysis["avg_bet_size"] = total_volume / len(trades) if trades else 0
-        analysis["top_category"] = max(category_volume, key=category_volume.get) if category_volume else None
+        analysis["top_category"] = (
+            max(category_volume, key=category_volume.get) if category_volume else None
+        )
         analysis["resolved_markets_traded"] = len(resolved_markets)
 
-        if len(resolved_markets) > 0:
-            analysis["win_rate_real"] = (wins / len(resolved_markets)) * 100
+        if resolved_decisions > 0:
+            analysis["win_rate_real"] = (wins / resolved_decisions) * 100
 
         analysis["unsettled_loses"] = unresolved_losses
         analysis["bot_score"] = self._calculate_bot_score(trades)
@@ -169,17 +209,19 @@ class WalletVetting:
         # Smart money metrics
         total_pnl = 0
         estimated_fees = 0
-        try:
-            closed = self.api.get_closed_positions(address, limit=100)
-            for pos in closed or []:
-                pnl = pos.get("realizedPnl") or pos.get("realized_pnl")
-                if pnl is not None:
-                    p = float(pnl)
-                    total_pnl += p
-                    if p > 0:
-                        estimated_fees += p * (0.02 / 0.98)
-        except Exception as e:
-            print(f"[Vetting] get_closed_positions error: {e}")
+        # Only get closed positions for Polymarket (Jupiter doesn't have this endpoint)
+        if platform == "polymarket":
+            try:
+                closed = self.api.get_closed_positions(address, limit=100)
+                for pos in closed or []:
+                    pnl = pos.get("realizedPnl") or pos.get("realized_pnl")
+                    if pnl is not None:
+                        p = float(pnl)
+                        total_pnl += p
+                        if p > 0:
+                            estimated_fees += p * (0.02 / 0.98)
+            except Exception as e:
+                print(f"[Vetting] get_closed_positions error: {e}")
         analysis["total_pnl"] = total_pnl
         analysis["estimated_fees_paid"] = round(estimated_fees, 2)
 
@@ -196,13 +238,20 @@ class WalletVetting:
             usd = size * price
             trade_sizes.append(usd)
             market_volumes[market_id] = market_volumes.get(market_id, 0) + usd
-            ts = trade.get("timestamp") or trade.get("matchTime") or trade.get("match_time") or trade.get("createdAt")
+            ts = (
+                trade.get("timestamp")
+                or trade.get("matchTime")
+                or trade.get("match_time")
+                or trade.get("createdAt")
+            )
             if ts:
                 try:
                     if isinstance(ts, (int, float)):
                         trade_times.append(datetime.fromtimestamp(float(ts)))
                     else:
-                        trade_times.append(datetime.fromisoformat(str(ts).replace("Z", "+00:00")))
+                        trade_times.append(
+                            datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                        )
                 except (ValueError, TypeError):
                     pass
         if trade_sizes:
@@ -230,16 +279,60 @@ class WalletVetting:
         analysis["trades_per_day"] = round(len(trades) / days_span, 1)
 
         max_market_vol = max(market_volumes.values()) if market_volumes else 0
-        max_position_pct = (max_market_vol / total_volume * 100) if total_volume > 0 else 0
+        max_position_pct = (
+            (max_market_vol / total_volume * 100) if total_volume > 0 else 0
+        )
         analysis["max_position_pct"] = round(max_position_pct, 1)
 
         # Recent wins: count wins in last N resolved trades (by time)
         config = Config()
         resolved_trades_by_time.sort(key=lambda x: x[0])
         window = config.vet_recent_wins_window
-        last_n = resolved_trades_by_time[-window:] if len(resolved_trades_by_time) > window else resolved_trades_by_time
+        last_n = (
+            resolved_trades_by_time[-window:]
+            if len(resolved_trades_by_time) > window
+            else resolved_trades_by_time
+        )
         recent_wins = sum(1 for _, _, w in last_n if w)
         analysis["recent_wins"] = recent_wins
+        analysis["recent_win_rate"] = (
+            (recent_wins / len(last_n) * 100) if len(last_n) > 0 else 0.0
+        )
+
+        # Win streak metrics and gradual trend (older half -> recent half)
+        if resolved_trades_by_time:
+            ordered = sorted(resolved_trades_by_time, key=lambda x: x[0])
+            outcomes = [w for _, _, w in ordered]
+
+            streak = 0
+            max_streak = 0
+            for is_win in outcomes:
+                if is_win:
+                    streak += 1
+                    max_streak = max(max_streak, streak)
+                else:
+                    streak = 0
+
+            current_streak = 0
+            for is_win in reversed(outcomes):
+                if is_win:
+                    current_streak += 1
+                else:
+                    break
+
+            analysis["current_win_streak"] = current_streak
+            analysis["max_win_streak"] = max_streak
+
+            split = len(outcomes) // 2
+            if split >= 2 and len(outcomes) - split >= 2:
+                base_slice = outcomes[:split]
+                recent_slice = outcomes[split:]
+                base_rate = sum(1 for x in base_slice if x) / len(base_slice) * 100
+                recent_rate = (
+                    sum(1 for x in recent_slice if x) / len(recent_slice) * 100
+                )
+                analysis["win_rate_base"] = base_rate
+                analysis["win_rate_trend"] = recent_rate - base_rate
 
         # Specialty: per-market high success (multiple wins in a row, low losses)
         min_spec_wins = config.vet_min_specialty_wins
@@ -277,11 +370,29 @@ class WalletVetting:
         analysis["total_wins"] = wins
         analysis["total_losses"] = sum(s["losses"] for s in market_stats.values())
 
+        # Composite reliability score (0-100): long-term + recent + streak + conviction + trend, scaled by sample size.
+        streak_score = min(analysis["current_win_streak"], 10) * 10
+        trend_bonus = max(-10.0, min(10.0, analysis.get("win_rate_trend", 0.0))) * 0.5
+        reliability_raw = (
+            0.50 * analysis.get("win_rate_real", 0.0)
+            + 0.25 * analysis.get("recent_win_rate", 0.0)
+            + 0.15 * streak_score
+            + 0.10 * analysis.get("conviction_score", 0.0)
+            + trend_bonus
+        )
+        sample_factor = min(1.0, resolved_decisions / 30.0) if resolved_decisions > 0 else 0.0
+        blended = reliability_raw * sample_factor + analysis.get("win_rate_real", 0.0) * (
+            1 - sample_factor
+        )
+        analysis["reliability_score"] = round(max(0.0, min(100.0, blended)), 1)
+
         # Merge recent wins and specialty into one note (same alert)
         if specialty_note:
             analysis["specialty_or_hot_streak_note"] = specialty_note
         elif recent_wins >= config.vet_min_recent_wins:
-            analysis["specialty_or_hot_streak_note"] = f"Hot streak: {recent_wins} wins in last {min(window, len(resolved_trades_by_time))} resolved"
+            analysis["specialty_or_hot_streak_note"] = (
+                f"Hot streak: {recent_wins} wins in last {min(window, len(resolved_trades_by_time))} resolved"
+            )
         else:
             analysis["specialty_or_hot_streak_note"] = None
 
@@ -311,25 +422,54 @@ class WalletVetting:
             analysis["issues"].append(
                 f"Arbitrage-like: {analysis.get('trades_per_day', 0):.1f} trades/day"
             )
-        if analysis.get("roi_pct", 0) < config.vet_min_roi_pct and config.vet_min_roi_pct > 0:
+        if (
+            analysis.get("roi_pct", 0) < config.vet_min_roi_pct
+            and config.vet_min_roi_pct > 0
+        ):
             analysis["issues"].append(
                 f"ROI {analysis.get('roi_pct', 0):.1f}% below min {config.vet_min_roi_pct}%"
             )
-        if analysis.get("conviction_score", 0) < config.vet_min_conviction and config.vet_min_conviction > 0:
+        if (
+            analysis.get("conviction_score", 0) < config.vet_min_conviction
+            and config.vet_min_conviction > 0
+        ):
             analysis["issues"].append(
                 f"Conviction {analysis.get('conviction_score', 0):.1f} below min {config.vet_min_conviction}"
             )
-        if config.vet_min_trades_won > 0 and analysis.get("total_wins", 0) < config.vet_min_trades_won:
+        if (
+            config.vet_min_trades_won > 0
+            and analysis.get("total_wins", 0) < config.vet_min_trades_won
+        ):
             analysis["issues"].append(
                 f"Wins {analysis.get('total_wins', 0)} below min {config.vet_min_trades_won}"
             )
-        if config.vet_max_losses > 0 and analysis.get("total_losses", 0) > config.vet_max_losses:
+        if (
+            config.vet_max_losses > 0
+            and analysis.get("total_losses", 0) > config.vet_max_losses
+        ):
             analysis["issues"].append(
                 f"Losses {analysis.get('total_losses', 0)} above max {config.vet_max_losses}"
             )
+        min_streak = int(config.get("vet_min_current_win_streak", 0) or 0)
+        if min_streak > 0 and analysis.get("current_win_streak", 0) < min_streak:
+            analysis["issues"].append(
+                f"Current streak {analysis.get('current_win_streak', 0)} below min {min_streak}"
+            )
+        min_reliability = float(config.get("vet_min_reliability_score", 0) or 0)
+        if (
+            min_reliability > 0
+            and analysis.get("reliability_score", 0) < min_reliability
+        ):
+            analysis["issues"].append(
+                f"Reliability {analysis.get('reliability_score', 0):.1f} below min {min_reliability:.1f}"
+            )
         # Fee gate: Polymarket only; Kalshi/Jupiter bypass
         use_fee_gate = platform.lower() == "polymarket"
-        if use_fee_gate and config.vet_min_estimated_fees > 0 and analysis.get("estimated_fees_paid", 0) < config.vet_min_estimated_fees:
+        if (
+            use_fee_gate
+            and config.vet_min_estimated_fees > 0
+            and analysis.get("estimated_fees_paid", 0) < config.vet_min_estimated_fees
+        ):
             analysis["issues"].append(
                 f"Est. fees ${analysis.get('estimated_fees_paid', 0):.2f} below min ${config.vet_min_estimated_fees}"
             )
@@ -342,22 +482,48 @@ class WalletVetting:
             and len(resolved_markets) >= 5
             and analysis.get("trades_per_day", 0) <= config.vet_max_trades_per_day
             and analysis.get("total_wins", 0) >= config.vet_min_trades_won
-            and (config.vet_max_losses <= 0 or analysis.get("total_losses", 0) <= config.vet_max_losses)
-            and (not use_fee_gate or config.vet_min_estimated_fees <= 0 or analysis.get("estimated_fees_paid", 0) >= config.vet_min_estimated_fees)
+            and (
+                config.vet_max_losses <= 0
+                or analysis.get("total_losses", 0) <= config.vet_max_losses
+            )
+            and (
+                min_streak <= 0
+                or analysis.get("current_win_streak", 0) >= min_streak
+            )
+            and (
+                min_reliability <= 0
+                or analysis.get("reliability_score", 0) >= min_reliability
+            )
+            and (
+                not use_fee_gate
+                or config.vet_min_estimated_fees <= 0
+                or analysis.get("estimated_fees_paid", 0)
+                >= config.vet_min_estimated_fees
+            )
         )
         # Normal pass: baseline + PnL/ROI/conviction gates
         normal_pass = (
             baseline
-            and (config.vet_min_pnl <= 0 or analysis.get("total_pnl", 0) >= config.vet_min_pnl)
-            and (config.vet_min_roi_pct <= 0 or analysis.get("roi_pct", 0) >= config.vet_min_roi_pct)
-            and (config.vet_min_conviction <= 0 or analysis.get("conviction_score", 0) >= config.vet_min_conviction)
+            and (
+                config.vet_min_pnl <= 0
+                or analysis.get("total_pnl", 0) >= config.vet_min_pnl
+            )
+            and (
+                config.vet_min_roi_pct <= 0
+                or analysis.get("roi_pct", 0) >= config.vet_min_roi_pct
+            )
+            and (
+                config.vet_min_conviction <= 0
+                or analysis.get("conviction_score", 0) >= config.vet_min_conviction
+            )
         )
         # Specialty/hot-streak pass (merged): baseline + (specialty OR recent wins) AND total_pnl >= 0 (no losing records)
-        has_specialty_or_hot = analysis.get("is_specialty") or analysis.get("recent_wins", 0) >= config.vet_min_recent_wins
+        has_specialty_or_hot = (
+            analysis.get("is_specialty")
+            or analysis.get("recent_wins", 0) >= config.vet_min_recent_wins
+        )
         specialty_or_recent_pass = (
-            baseline
-            and has_specialty_or_hot
-            and analysis.get("total_pnl", 0) >= 0
+            baseline and has_specialty_or_hot and analysis.get("total_pnl", 0) >= 0
         )
 
         analysis["passed"] = normal_pass or specialty_or_recent_pass
@@ -385,7 +551,10 @@ class WalletVetting:
             ts = trade.get("timestamp")
             if ts:
                 try:
-                    trade_times.append(datetime.fromisoformat(ts.replace("Z", "")))
+                    if isinstance(ts, int):
+                        trade_times.append(datetime.fromtimestamp(ts))
+                    else:
+                        trade_times.append(datetime.fromisoformat(ts.replace("Z", "")))
                 except Exception as e:
                     print(f"[Vetting] timestamp parse: {e}")
 
@@ -395,7 +564,11 @@ class WalletVetting:
             prices.append(price)
 
             # Round-number sizes (100, 500, 1000, 5000, etc.)
-            if size > 0 and size == round(size) and size in (100, 500, 1000, 5000, 10000):
+            if (
+                size > 0
+                and size == round(size)
+                and size in (100, 500, 1000, 5000, 10000)
+            ):
                 bot_indicators += 1
             elif size > 1000:
                 bot_indicators += 1
@@ -408,6 +581,7 @@ class WalletVetting:
         # Identical price across many trades (bot-like)
         if len(prices) >= 5:
             from collections import Counter
+
             price_counts = Counter(round(p, 2) for p in prices if p > 0)
             most_common = price_counts.most_common(1)
             if most_common and most_common[0][1] >= len(prices) * 0.5:

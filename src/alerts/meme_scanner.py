@@ -80,7 +80,8 @@ class MemeCoinScanner:
             return result
 
         except Exception as e:
-            return {"error": str(e), "address": token_address}
+            logging.getLogger(__name__).exception("MemeScanner scan_token error")
+            return {"error": "Scan failed", "address": token_address}
 
     def _get_dexscreener(self, address: str) -> Dict:
         """Get token data from DexScreener."""

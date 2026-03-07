@@ -23,6 +23,8 @@ class PolymarketWhaleClient:
         Returns:
             List of trade dicts with address, wallet, size, etc.
         """
+        min_usd = max(0, min(1_000_000, int(min_usd)))
+        limit = max(1, min(100, int(limit)))
         try:
             resp = requests.get(
                 f"{DATA_API}/trades",

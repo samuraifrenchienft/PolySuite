@@ -97,6 +97,66 @@ def test_get_jupiter_markets_parsing(aggregator):
     assert "jup.ag" in a.url
 
 
+def test_get_jupiter_short_term_crypto_is_split_category(aggregator):
+    """BTC/ETH/SOL 5m/15m up-down markets must be crypto_short_term."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "data": [
+            {
+                "metadata": {"title": "Crypto 15 Minute Event"},
+                "markets": [
+                    {
+                        "marketId": "btc15m1",
+                        "status": "open",
+                        "metadata": {"title": "Will Bitcoin be higher in 15 minutes?"},
+                        "pricing": {
+                            "buyYesPriceUsd": 52000,
+                            "volume": 20000,
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+
+    with patch.object(aggregator.session, "get", return_value=mock_resp):
+        alerts = aggregator.get_jupiter_markets(category="crypto")
+
+    assert len(alerts) >= 1
+    assert alerts[0].category == "crypto_short_term"
+
+
+def test_get_jupiter_non_short_term_crypto_remains_crypto(aggregator):
+    """Regular Jupiter crypto markets stay in general crypto category."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "data": [
+            {
+                "metadata": {"title": "Crypto Event"},
+                "markets": [
+                    {
+                        "marketId": "eth-long",
+                        "status": "open",
+                        "metadata": {"title": "Will ETH hit $5k?"},
+                        "pricing": {
+                            "buyYesPriceUsd": 55000,
+                            "volume": 10000,
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+
+    with patch.object(aggregator.session, "get", return_value=mock_resp):
+        alerts = aggregator.get_jupiter_markets(category="crypto")
+
+    assert len(alerts) >= 1
+    assert alerts[0].category == "crypto"
+
+
 def test_get_kalshi_empty_response(aggregator):
     """Test Kalshi with empty markets."""
     mock_resp = MagicMock()

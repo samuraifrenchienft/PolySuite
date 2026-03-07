@@ -1,7 +1,9 @@
 """Telegram bot for Prediction Suite."""
 
 import telebot
+import json
 import os
+from pathlib import Path
 import requests
 import time
 from src.wallet import Wallet
@@ -57,10 +59,66 @@ class TelegramBot:
 
             return wrapper
 
+        def _format_vetted_rankings(mode: str, limit: int = 5) -> str:
+            limit = max(1, min(int(limit or 5), 20))
+            vetting_path = Path("data/vetted_leaderboard.json")
+            if not vetting_path.exists():
+                return "No vetted leaderboard yet. Run monitor/background vetting first."
+            try:
+                with open(vetting_path) as f:
+                    wallets = (json.load(f) or {}).get("wallets", []) or []
+            except Exception:
+                return "Failed to read vetted leaderboard."
+            if not wallets:
+                return "No vetted wallets available."
+
+            if mode == "streak":
+                wallets.sort(
+                    key=lambda w: (
+                        float(w.get("current_win_streak", 0) or 0),
+                        float(w.get("recent_win_rate", 0) or 0),
+                        float(w.get("reliability_score", 0) or 0),
+                    ),
+                    reverse=True,
+                )
+                header = "Top streak wallets"
+            else:
+                wallets.sort(
+                    key=lambda w: (
+                        float(w.get("reliability_score", 0) or 0),
+                        float(w.get("recent_win_rate", 0) or 0),
+                        float(w.get("current_win_streak", 0) or 0),
+                    ),
+                    reverse=True,
+                )
+                header = "Top reliable wallets"
+
+            lines = [f"{header}:"]
+            for i, w in enumerate(wallets[:limit], 1):
+                name = w.get("nickname") or (w.get("address", "")[:10] + "...")
+                rel = float(w.get("reliability_score", 0) or 0)
+                streak = int(w.get("current_win_streak", 0) or 0)
+                recent = float(w.get("recent_win_rate", 0) or 0)
+                lines.append(
+                    f"{i}. {name} | Rel {rel:.1f} | Streak {streak} | Recent {recent:.1f}%"
+                )
+            return "\n".join(lines)
+
         @self.bot.message_handler(commands=["start"])
         @rate_limited
         def start(message):
-            self.bot.reply_to(message, "Welcome to PolySuite!")
+            self.bot.reply_to(
+                message,
+                (
+                    "Welcome to PolySuite!\n\n"
+                    "Quick links:\n"
+                    "• /menu\n"
+                    "• /status\n"
+                    "• /top_reliable_wallets\n"
+                    "• /top_streak_wallets\n"
+                    "• /copy status"
+                ),
+            )
 
         @self.bot.message_handler(commands=["menu"])
         @rate_limited
@@ -87,6 +145,10 @@ class TelegramBot:
             kb.row(
                 telebot.types.InlineKeyboardButton("Copy kill", callback_data="m:copy_kill"),
                 telebot.types.InlineKeyboardButton("Copy settings", callback_data="m:copy_settings"),
+            )
+            kb.row(
+                telebot.types.InlineKeyboardButton("Top reliable", callback_data="m:top_reliable"),
+                telebot.types.InlineKeyboardButton("Top streak", callback_data="m:top_streak"),
             )
             kb.row(telebot.types.InlineKeyboardButton("Ask AI", callback_data="m:ai"))
             self.bot.reply_to(message, "Choose an action:", reply_markup=kb)
@@ -147,6 +209,10 @@ class TelegramBot:
                     self.bot.send_message(chat_id, msg[:2000])
                 except Exception:
                     self.bot.send_message(chat_id, "Failed.")
+            elif action == "top_reliable":
+                self.bot.send_message(chat_id, _format_vetted_rankings("reliable", 5)[:4000])
+            elif action == "top_streak":
+                self.bot.send_message(chat_id, _format_vetted_rankings("streak", 5)[:4000])
             elif action == "conn_pm":
                 if getattr(callback.message.chat, "type", "") != "private":
                     self.bot.send_message(chat_id, "Use /connect polymarket in a DM for security.")
@@ -171,6 +237,26 @@ class TelegramBot:
         def status(message):
             wallets = self.storage.list_wallets()
             self.bot.reply_to(message, f"Tracking {len(wallets)} wallets.")
+
+        @self.bot.message_handler(commands=["top_reliable_wallets"])
+        @rate_limited
+        def top_reliable_wallets(message):
+            try:
+                parts = (message.text or "").split()
+                limit = int(parts[1]) if len(parts) > 1 else 5
+            except Exception:
+                limit = 5
+            self.bot.reply_to(message, _format_vetted_rankings("reliable", limit)[:4000])
+
+        @self.bot.message_handler(commands=["top_streak_wallets"])
+        @rate_limited
+        def top_streak_wallets(message):
+            try:
+                parts = (message.text or "").split()
+                limit = int(parts[1]) if len(parts) > 1 else 5
+            except Exception:
+                limit = 5
+            self.bot.reply_to(message, _format_vetted_rankings("streak", limit)[:4000])
 
         @self.bot.message_handler(commands=["add"])
         @rate_limited
@@ -470,8 +556,8 @@ class TelegramBot:
                     store_credentials(user_id, "kalshi", {"api_key_id": parts[0].strip(), "private_key_pem": pem})
                     self.bot.reply_to(message, "Kalshi credentials saved.")
                 return True
-            except RuntimeError as e:
-                self.bot.reply_to(message, f"Credential storage not configured: {str(e)[:100]}")
+            except RuntimeError:
+                self.bot.reply_to(message, "Credential storage not configured.")
                 return True
             except Exception as e:
                 print(f"[Telegram/connect] Error: {e}")

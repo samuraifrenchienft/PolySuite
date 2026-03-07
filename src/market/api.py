@@ -179,7 +179,12 @@ class PolymarketAPI:
         cutoff = after
         result = []
         for t in trades:
-            ts = t.get("timestamp") or t.get("matchTime") or t.get("match_time") or t.get("createdAt")
+            ts = (
+                t.get("timestamp")
+                or t.get("matchTime")
+                or t.get("match_time")
+                or t.get("createdAt")
+            )
             if ts is None:
                 continue
             try:
@@ -187,6 +192,7 @@ class PolymarketAPI:
                     t_val = float(ts)
                 elif isinstance(ts, str):
                     from datetime import datetime
+
                     dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                     t_val = dt.timestamp()
                 else:
@@ -252,7 +258,11 @@ class PolymarketAPI:
         if not s or not isinstance(s, str):
             return False
         s = s.strip()
-        return s.startswith("0x") and len(s) == 66 and all(c in "0123456789abcdef" for c in s[2:].lower())
+        return (
+            s.startswith("0x")
+            and len(s) == 66
+            and all(c in "0123456789abcdef" for c in s[2:].lower())
+        )
 
     def get_market(self, market_id: str) -> Optional[Dict]:
         """Get a specific market by ID. Gamma API uses slug; condition IDs need CLOB fallback."""
@@ -274,7 +284,9 @@ class PolymarketAPI:
                         "question": q,
                         "slug": m.get("slug") or m.get("market_slug"),
                         "volume": m.get("volume", 0),
-                        "outcomePrices": m.get("outcome_prices") or m.get("outcomePrices") or "[]",
+                        "outcomePrices": m.get("outcome_prices")
+                        or m.get("outcomePrices")
+                        or "[]",
                     }
             except Exception as e:
                 print(f"[API] get_market (condition_id) CLOB: {e}")
@@ -358,6 +370,23 @@ class PolymarketAPI:
             "minute",
         ]
 
+        crypto_kw = [
+            "bitcoin",
+            "btc",
+            "ethereum",
+            "eth",
+            "solana",
+            "crypto",
+            "megaeth",
+            "dogecoin",
+            "xrp",
+            " Cardano",
+            "ADA",
+            "avalanche",
+            "dot ",
+            "matic",
+        ]
+
         def _extract(events: List, strict: bool = True) -> List[Dict]:
             result = []
             seen = set()
@@ -370,19 +399,12 @@ class PolymarketAPI:
                     if mid:
                         seen.add(mid)
                     q = (m.get("question", "") or "").lower()
-                    if strict and not any(kw in q for kw in timeframe_kw):
+                    # STRICT: require BOTH timeframe AND crypto keywords
+                    has_timeframe = any(kw in q for kw in timeframe_kw)
+                    has_crypto = any(ck in q for ck in crypto_kw)
+                    if strict and (not has_timeframe or not has_crypto):
                         continue
-                    if not strict and not any(
-                        k in q
-                        for k in [
-                            "bitcoin",
-                            "btc ",
-                            "ethereum",
-                            "solana",
-                            "crypto",
-                            "megaeth",
-                        ]
-                    ):
+                    if not strict and not has_crypto:
                         continue
                     m = dict(m)
                     m["id"] = mid or m.get("conditionId")
@@ -401,11 +423,21 @@ class PolymarketAPI:
             if result:
                 return result
 
-        # Markets endpoint
+        # Markets endpoint - MUST have crypto keyword too
+        crypto_kw = [
+            "bitcoin",
+            "btc",
+            "ethereum",
+            "eth ",
+            "solana",
+            "crypto",
+            "megaeth",
+        ]
         result = []
         for m in self.get_markets(limit=500, active=True) or []:
             q = (m.get("question", "") or "").lower()
-            if any(kw in q for kw in timeframe_kw):
+            # Must have both timeframe AND crypto keyword
+            if any(kw in q for kw in timeframe_kw) and any(ck in q for ck in crypto_kw):
                 result.append(m)
                 if len(result) >= limit:
                     return result

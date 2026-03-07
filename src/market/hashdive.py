@@ -29,6 +29,8 @@ class HashdiveClient:
             print("[-] HashDive API key not configured")
             return []
 
+        min_usd = max(0, min(1_000_000, int(min_usd)))
+        limit = max(1, min(100, int(limit)))
         try:
             resp = self.session.get(
                 f"{self.BASE_URL}/get_latest_whale_trades",

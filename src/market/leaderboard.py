@@ -65,6 +65,34 @@ class LeaderboardImporter:
         except Exception as e:
             print(f"Error fetching Polymarket: {e}")
 
+        # Try Jupiter Prediction API
+        try:
+            resp = requests.get(
+                "https://prediction-market-api.jup.ag/api/v1/leaderboards",
+                params={"limit": limit},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for w in data.get("data", []):
+                    addr = w.get("ownerPubkey")
+                    if addr:
+                        all_wallets[addr] = {
+                            "address": addr,
+                            "source": "jupiter",
+                            "realizedPnlUsd": w.get("realizedPnlUsd"),
+                            "totalVolumeUsd": w.get("totalVolumeUsd"),
+                            "predictionsCount": w.get("predictionsCount"),
+                            "correctPredictions": w.get("correctPredictions"),
+                            "wrongPredictions": w.get("wrongPredictions"),
+                            "winRatePct": w.get("winRatePct"),
+                            "pnl": w.get("realizedPnlUsd"),
+                            "volume": w.get("totalVolumeUsd"),
+                        }
+                print(f"Fetched {len(data.get('data', []))} from Jupiter")
+        except Exception as e:
+            print(f"Error fetching Jupiter: {e}")
+
         return list(all_wallets.values())[:limit]
 
     def get_top_traders(self, limit: int = 20) -> List[Dict]:

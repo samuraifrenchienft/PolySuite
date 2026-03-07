@@ -169,6 +169,8 @@ def _dispatch_market_alerts(
     combined,
     category,
     source_label,
+    use_market_category=False,
+    backtest_storage=None,
 ):
     """Helper: qualify, AI analyze, format, dispatch for Kalshi/Jupiter-style markets."""
     passed = sorted(
@@ -198,8 +200,86 @@ def _dispatch_market_alerts(
         msg = formatter_fn(
             m, entry_zone=entry_zone, conviction=conviction, entry_reason=entry_reason
         )
-        combined.send_to_alerts(msg, category=category)
+        dispatch_category = (
+            getattr(m, "category", "") or category if use_market_category else category
+        )
+        combined.send_to_alerts(msg, category=dispatch_category)
+        try:
+            if backtest_storage and entry_zone in ("BUY_YES", "BUY_NO"):
+                market_id = getattr(m, "id", None) or getattr(m, "conditionId", None)
+                if market_id:
+                    side = "YES" if entry_zone == "BUY_YES" else "NO"
+                    backtest_storage.log_suggestion(
+                        source=(source_label or "market").lower(),
+                        category=dispatch_category or category or "other",
+                        market_id=str(market_id),
+                        question=getattr(m, "question", ""),
+                        side=side,
+                        entry_price=float(getattr(m, "price", 0.5) or 0.5),
+                        conviction=conviction,
+                        entry_reason=entry_reason,
+                    )
+        except Exception:
+            pass
         print(f"   {source_label}: {getattr(m, 'question', '')[:40]}...")
+
+
+def _record_actionable_suggestion(
+    backtest_storage,
+    market: dict,
+    entry_zone: str,
+    category: str,
+    source: str,
+    conviction: str = "",
+    entry_reason: str = "",
+):
+    """Persist actionable recommendation (BUY_YES/BUY_NO) for outcome tracking."""
+    if not backtest_storage or entry_zone not in ("BUY_YES", "BUY_NO"):
+        return
+    market_id = market.get("id") or market.get("conditionId")
+    if not market_id:
+        return
+    yes_price = market.get("yes_pct")
+    if yes_price is None:
+        raw_prices = market.get("outcomePrices")
+        try:
+            prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+            if prices and len(prices) >= 1:
+                yes_price = float(prices[0])
+        except Exception:
+            yes_price = None
+    backtest_storage.log_suggestion(
+        source=(source or "market").lower(),
+        category=(category or "other").lower(),
+        market_id=str(market_id),
+        question=market.get("question", ""),
+        side="YES" if entry_zone == "BUY_YES" else "NO",
+        entry_price=float(yes_price) if yes_price is not None else None,
+        conviction=conviction,
+        entry_reason=(entry_reason or "")[:120],
+    )
+
+
+def _format_weekly_suggestion_report(summary: dict, days: int, stake_usd: float) -> str:
+    """Format weekly AI suggestion performance report."""
+    lines = [
+        "━━━━━━━━━━━━━━━━━━━━",
+        "📈 **AI SUGGESTION WEEKLY SCORECARD**",
+        f"_{days}d window | ${stake_usd:.0f} per suggestion_",
+        "",
+        f"Signals: {summary.get('total', 0)} | Resolved: {summary.get('resolved', 0)} | Open: {summary.get('open', 0)}",
+        f"Accuracy: {summary.get('accuracy_pct', 0):.1f}% ({summary.get('wins', 0)}W / {summary.get('losses', 0)}L)",
+        f"Sim P&L: ${summary.get('pnl_usd', 0):,.2f}",
+    ]
+    by_cat = summary.get("by_category") or []
+    if by_cat:
+        lines.append("")
+        lines.append("By category:")
+        for c in by_cat[:6]:
+            lines.append(
+                f"• {c.get('category', 'other')}: {c.get('total', 0)} sig | {c.get('wins', 0)}W/{c.get('losses', 0)}L | ${c.get('pnl_usd', 0):,.0f}"
+            )
+    return "\n".join(lines)
 
 
 def _generate_ai_market_report(polymarket_api, combined, config):
@@ -493,6 +573,16 @@ def monitor(
     wallet_list_interval = config.wallet_list_interval
     wallet_list_min = config.wallet_list_min
     wallet_list_max = config.wallet_list_max
+    suggestion_tracking_enabled = bool(config.get("suggestion_tracking_enabled", True))
+    suggestion_eval_interval = int(config.get("suggestion_eval_interval", 900) or 900)
+    suggestion_report_interval = int(
+        config.get("suggestion_report_interval", wallet_list_interval)
+        or wallet_list_interval
+    )
+    suggestion_report_days = int(config.get("suggestion_report_days", 7) or 7)
+    suggestion_stake_usd = float(config.get("suggestion_stake_usd", 100.0) or 100.0)
+    last_suggestion_eval = 0
+    last_suggestion_report = 0
 
     # Alert check intervals - more aggressive
     new_market_check_interval = 60  # Check for new markets every 1 min
@@ -656,6 +746,7 @@ def monitor(
                     traders = importer.fetch_leaderboard(limit=20)
                     curated = []
                     shared_market_cache = {}
+                    vetted_count = 0
                     for t in traders:
                         addr = t.get("address")
                         if not addr:
@@ -668,6 +759,23 @@ def monitor(
                             market_cache=shared_market_cache,
                             platform=platform,
                         )
+
+                        # ALWAYS save vetting results to database (even if failed)
+                        if result:
+                            storage.update_wallet_vetting(
+                                addr,
+                                bot_score=result.get("bot_score"),
+                                unresolved_exposure_usd=None,
+                                total_pnl=result.get("total_pnl"),
+                                roi_pct=result.get("roi_pct"),
+                                conviction_score=result.get("conviction_score"),
+                                is_specialty=result.get("is_specialty", False),
+                                specialty_note=result.get("specialty_note"),
+                                specialty_market_id=result.get("specialty_market_id"),
+                                specialty_category=result.get("specialty_category"),
+                            )
+                            vetted_count += 1
+
                         if result and result.get("passed"):
                             entry = {
                                 "address": addr,
@@ -680,6 +788,9 @@ def monitor(
                                 "total_pnl": result.get("total_pnl"),
                                 "roi_pct": result.get("roi_pct"),
                                 "conviction_score": result.get("conviction_score"),
+                                "reliability_score": result.get("reliability_score"),
+                                "current_win_streak": result.get("current_win_streak"),
+                                "recent_win_rate": result.get("recent_win_rate"),
                                 "estimated_fees_paid": result.get(
                                     "estimated_fees_paid"
                                 ),
@@ -690,6 +801,7 @@ def monitor(
                                     "specialty_or_hot_streak_note"
                                 )
                             curated.append(entry)
+                    print(f"   [*] Vetted {vetted_count} wallets, {len(curated)} passed")
                     if curated:
                         vetting_path = Path("data/vetted_leaderboard.json")
                         vetting_path.parent.mkdir(parents=True, exist_ok=True)
@@ -720,6 +832,7 @@ def monitor(
                     traders = importer.fetch_leaderboard(limit=50)
                     passed = []
                     shared_market_cache = {}
+                    vetted_count = 0
                     for t in traders:
                         addr = t.get("address")
                         if not addr:
@@ -727,6 +840,23 @@ def monitor(
                         result = vetter.vet_wallet(
                             addr, min_bet=min_bet, market_cache=shared_market_cache
                         )
+
+                        # ALWAYS save vetting results to database (even if failed)
+                        if result:
+                            storage.update_wallet_vetting(
+                                addr,
+                                bot_score=result.get("bot_score"),
+                                unresolved_exposure_usd=None,
+                                total_pnl=result.get("total_pnl"),
+                                roi_pct=result.get("roi_pct"),
+                                conviction_score=result.get("conviction_score"),
+                                is_specialty=result.get("is_specialty", False),
+                                specialty_note=result.get("specialty_note"),
+                                specialty_market_id=result.get("specialty_market_id"),
+                                specialty_category=result.get("specialty_category"),
+                            )
+                            vetted_count += 1
+
                         if result and result.get("passed"):
                             passed.append(
                                 {
@@ -737,11 +867,22 @@ def monitor(
                                     "bot_score": result.get("bot_score"),
                                     "win_rate_real": result.get("win_rate_real"),
                                     "avg_bet_size": result.get("avg_bet_size"),
+                                    "reliability_score": result.get(
+                                        "reliability_score"
+                                    ),
+                                    "current_win_streak": result.get(
+                                        "current_win_streak"
+                                    ),
+                                    "recent_win_rate": result.get("recent_win_rate"),
                                     "top_category": result.get("top_category"),
                                 }
                             )
+                    print(f"   [*] Vetted {vetted_count} wallets, {len(passed)} passed")
                     passed.sort(
                         key=lambda x: (
+                            x.get("reliability_score") or 0,
+                            x.get("current_win_streak") or 0,
+                            x.get("recent_win_rate") or 0,
                             x.get("win_rate_real") or 0,
                             x.get("avg_bet_size") or 0,
                         ),
@@ -962,6 +1103,7 @@ def monitor(
                         combined,
                         "kalshi",
                         "Kalshi",
+                        backtest_storage=backtest_storage,
                     )
                     # Jupiter: top 3, only send if volume >= $100 (trade signal)
                     if config.jupiter_alerts_enabled:
@@ -974,6 +1116,8 @@ def monitor(
                             combined,
                             "jupiter",
                             "Jupiter",
+                            use_market_category=True,
+                            backtest_storage=backtest_storage,
                         )
                 except Exception as e:
                     print(f"[Kalshi/Jupiter] Error: {e}")
@@ -1130,7 +1274,16 @@ def monitor(
                             conviction=ez.get("confidence", "low"),
                             entry_reason=ez.get("reason", ""),
                         )
-                        combined.send_to_alerts(msg, category="crypto")
+                        combined.send_to_alerts(msg, category="crypto_short_term")
+                        _record_actionable_suggestion(
+                            backtest_storage,
+                            m,
+                            ez.get("entry_zone", "WAIT"),
+                            "crypto_short_term",
+                            "crypto_short_term",
+                            conviction=ez.get("confidence", "low"),
+                            entry_reason=ez.get("reason", ""),
+                        )
                         alerted_crypto_markets[market_id] = current_time
 
             # Sports dedicated check - send top 1 to reduce noise
@@ -1172,6 +1325,15 @@ def monitor(
                                 entry_reason=ez.get("reason", ""),
                             )
                             combined.send_to_alerts(msg, category="sports")
+                            _record_actionable_suggestion(
+                                backtest_storage,
+                                m,
+                                ez.get("entry_zone", "WAIT"),
+                                "sports",
+                                "sports",
+                                conviction=ez.get("confidence", "low"),
+                                entry_reason=ez.get("reason", ""),
+                            )
                             alerted_sports_markets[market_id] = current_time
 
             # Politics dedicated check - send top 1 to reduce noise
@@ -1297,6 +1459,15 @@ def monitor(
                                 entry_reason=ez.get("reason", ""),
                             )
                             combined.send_to_alerts(msg, category="politics")
+                            _record_actionable_suggestion(
+                                backtest_storage,
+                                m,
+                                ez.get("entry_zone", "WAIT"),
+                                "politics",
+                                "politics",
+                                conviction=ez.get("confidence", "low"),
+                                entry_reason=ez.get("reason", ""),
+                            )
                             alerted_politics_markets[market_id] = current_time
 
             # Print top actionable markets
@@ -1506,10 +1677,55 @@ def monitor(
                         "market_id": conv.get("market_id"),
                     },
                 )
+                _record_actionable_suggestion(
+                    backtest_storage,
+                    market,
+                    entry_zone,
+                    "convergence",
+                    "convergence",
+                    conviction=conviction,
+                    entry_reason=entry_reason,
+                )
                 print(
                     f"{emoji} CONVERGENCE: {len(wallets)} traders in {market.get('question', 'Unknown')[:40]}..."
                 )
                 alerted_markets[conv["market_id"]] = time.time()
+
+            if suggestion_tracking_enabled:
+                if current_time - last_suggestion_eval >= suggestion_eval_interval:
+                    try:
+                        resolved_stats = backtest_storage.resolve_open_suggestions(
+                            polymarket_api,
+                            stake_usd=suggestion_stake_usd,
+                            max_per_run=100,
+                        )
+                        if resolved_stats.get("resolved", 0):
+                            print(
+                                f"   [SuggestionTracker] Resolved {resolved_stats.get('resolved', 0)} (W {resolved_stats.get('wins', 0)} / L {resolved_stats.get('losses', 0)})"
+                            )
+                    except Exception as e:
+                        print(f"[SuggestionTracker] Resolve error: {e}")
+                    last_suggestion_eval = current_time
+
+                if current_time - last_suggestion_report >= suggestion_report_interval:
+                    try:
+                        since_ts = datetime.utcfromtimestamp(
+                            current_time - (suggestion_report_days * 86400)
+                        ).isoformat()
+                        summary = backtest_storage.get_suggestion_summary(since_ts)
+                        if summary.get("total", 0) > 0:
+                            report = _format_weekly_suggestion_report(
+                                summary,
+                                days=suggestion_report_days,
+                                stake_usd=suggestion_stake_usd,
+                            )
+                            combined.send_to_alerts(report)
+                            print(
+                                f"[*] Weekly suggestion scorecard sent ({summary.get('total', 0)} signals)"
+                            )
+                    except Exception as e:
+                        print(f"[SuggestionTracker] Weekly report error: {e}")
+                    last_suggestion_report = current_time
 
             # ===== FULL MARKET SCANS (volume, odds) =====
 
@@ -1990,6 +2206,69 @@ def handle_vet_command(
         print()
 
 
+def handle_leaders_command(
+    args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
+):
+    """Show top vetted traders by reliability score or current streak."""
+    mode = (getattr(args, "mode", "reliable") or "reliable").lower()
+    limit = int(getattr(args, "limit", 10) or 10)
+    limit = max(1, min(limit, 50))
+
+    vetting_path = Path("data/vetted_leaderboard.json")
+    if not vetting_path.exists():
+        print("No vetted leaderboard found. Run monitor/background vetting first.")
+        return
+
+    try:
+        with open(vetting_path) as f:
+            data = json.load(f)
+        wallets = data.get("wallets", []) or []
+    except Exception as e:
+        print(f"Failed reading vetted leaderboard: {e}")
+        return
+
+    if not wallets:
+        print("No vetted wallets available.")
+        return
+
+    if mode == "streak":
+        wallets.sort(
+            key=lambda w: (
+                float(w.get("current_win_streak", 0) or 0),
+                float(w.get("recent_win_rate", 0) or 0),
+                float(w.get("reliability_score", 0) or 0),
+                float(w.get("win_rate_real", 0) or 0),
+            ),
+            reverse=True,
+        )
+        title = f"Top {limit} vetted traders by WIN STREAK"
+    else:
+        wallets.sort(
+            key=lambda w: (
+                float(w.get("reliability_score", 0) or 0),
+                float(w.get("recent_win_rate", 0) or 0),
+                float(w.get("current_win_streak", 0) or 0),
+                float(w.get("win_rate_real", 0) or 0),
+                float(w.get("avg_bet_size", 0) or 0),
+            ),
+            reverse=True,
+        )
+        title = f"Top {limit} vetted traders by RELIABILITY"
+
+    print(title)
+    print("-" * len(title))
+    for i, w in enumerate(wallets[:limit], 1):
+        name = w.get("nickname") or (w.get("address", "")[:12] + "...")
+        wr = float(w.get("win_rate_real", 0) or 0)
+        rwr = float(w.get("recent_win_rate", 0) or 0)
+        streak = int(w.get("current_win_streak", 0) or 0)
+        rel = float(w.get("reliability_score", 0) or 0)
+        cat = (w.get("top_category") or "—").lower()
+        print(
+            f"{i:>2}. {name} | Rel {rel:>5.1f} | Streak {streak:>2} | Win {wr:>5.1f}% | Recent {rwr:>5.1f}% | Top {cat}"
+        )
+
+
 def handle_check_odds_command(
     args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
 ):
@@ -2197,6 +2476,20 @@ def setup_argument_parser():
     )
     vet_p.add_argument("--min-bet", type=float, help="Minimum average bet size")
 
+    # Leaders (vetted rankings)
+    leaders_p = subparsers.add_parser(
+        "leaders", help="Top vetted traders by reliability or streak"
+    )
+    leaders_p.add_argument(
+        "--mode",
+        choices=["reliable", "streak"],
+        default="reliable",
+        help="Ranking mode",
+    )
+    leaders_p.add_argument(
+        "--limit", type=int, default=10, help="Number of wallets to show (1-50)"
+    )
+
     # Ask agent
     ask_p = subparsers.add_parser("ask", help="Ask the Ollama agent a question")
     ask_p.add_argument("question", nargs="+", help="Your question")
@@ -2255,6 +2548,7 @@ def main():
         "events": handle_events_command,
         "ask": handle_ask_command,
         "vet": handle_vet_command,
+        "leaders": handle_leaders_command,
     }
 
     # Dependency mapping
@@ -2285,6 +2579,7 @@ def main():
         "ask": [storage, config, api_factory],
         "events": [storage, config, api_factory],
         "vet": [storage, config, api_factory],
+        "leaders": [storage, config, api_factory],
     }
 
     # Execute command (single path - no duplicate execution)

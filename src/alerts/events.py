@@ -1,6 +1,7 @@
 """Event-based alerts for PolySuite."""
 
 import json
+import re
 from collections import OrderedDict
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta, timezone
@@ -139,10 +140,6 @@ class EventAlerter:
             "candle",
             "close",
             "open",
-            "et",
-            "utc",
-            "11:50",
-            "11:55",
         ],
         "sports": [
             # NFL
@@ -644,6 +641,18 @@ class EventAlerter:
             "dota",
             "csgo",
             "overwatch",
+            # Gaming/Entertainment
+            "gta",
+            "video game",
+            "call of duty",
+            "madden",
+            "nba 2k",
+            "fifa",
+            "mario",
+            "zelda",
+            "fortnite",
+            "playstation",
+            "xbox",
         ],
         "politics": [
             # US Politics
@@ -1000,8 +1009,16 @@ class EventAlerter:
         "15 min",
         "5m",
         "15m",
+        "5-minute",
+        "15-minute",
+        "5 minute",
+        "15 minute",
         "hourly",
         "up or down",
+        "higher",
+        "lower",
+        "up",
+        "down",
     ]
 
     def __init__(
@@ -1030,27 +1047,45 @@ class EventAlerter:
         self._previous_volumes = _BoundedDict(maxsize=500)
 
     def is_crypto_short_term(self, question: str) -> bool:
-        """Check if question describes a crypto 5M/15M/hourly short-term market."""
+        """Check if question describes a crypto 5M/15M short-term market."""
         if not question:
             return False
         q = question.lower()
-        return any(kw in q for kw in self.CRYPTO_SHORT_TERM_KEYWORDS)
+        has_timeframe = any(kw in q for kw in self.CRYPTO_SHORT_TERM_KEYWORDS)
+        has_asset = bool(
+            re.search(r"\b(bitcoin|btc|ethereum|eth|solana|sol)\b", q)
+        )
+        has_direction = any(
+            kw in q for kw in ("up", "down", "higher", "lower", "above", "below")
+        )
+        return has_timeframe and has_asset and has_direction
 
     def get_category(self, question: str) -> Optional[str]:
         """Determine market category from question."""
-        import re
-
         q = question.lower()
+        if self.is_crypto_short_term(q):
+            return "crypto"
 
         # Check sports FIRST - avoid false positives from crypto
         sports_keywords = self.CATEGORY_KEYWORDS.get("sports", [])
         for kw in sports_keywords:
-            # Skip certain keywords that are crypto-related
-            if kw in ["magic", "jaguar"]:
+            # Disambiguate sports-team words that can appear in crypto contexts.
+            if kw == "magic" and any(
+                sig in q for sig in ("magic coin", "magic crypto", "$magic")
+            ):
+                continue
+            if kw == "jaguar" and "jaguar coin" in q:
                 continue
             pattern = r"\b" + re.escape(kw) + r"\b"
             if re.search(pattern, q):
                 return "sports"
+
+        # Strong crypto identifiers should win before broad politics/economy terms.
+        if re.search(
+            r"\b(bitcoin|btc|ethereum|eth|solana|avax|xrp|dogecoin|doge|cardano|ada|chainlink|toncoin|injective|polkadot)\b",
+            q,
+        ):
+            return "crypto"
 
         # Check politics
         politics_keywords = self.CATEGORY_KEYWORDS.get("politics", [])
@@ -1066,6 +1101,20 @@ class EventAlerter:
             if re.search(pattern, q):
                 return "economy"
 
+        # Check weather
+        weather_keywords = self.CATEGORY_KEYWORDS.get("weather", [])
+        for kw in weather_keywords:
+            pattern = r"\b" + re.escape(kw) + r"\b"
+            if re.search(pattern, q):
+                return "weather"
+
+        # Check esports
+        esports_keywords = self.CATEGORY_KEYWORDS.get("esports", [])
+        for kw in esports_keywords:
+            pattern = r"\b" + re.escape(kw) + r"\b"
+            if re.search(pattern, q):
+                return "esports"
+
         # Check crypto LAST - more specific
         crypto_keywords = self.CATEGORY_KEYWORDS.get("crypto", [])
 
@@ -1075,12 +1124,24 @@ class EventAlerter:
             "magic": ["magic coin", "magic crypto"],
             "jaguar": ["jaguar coin"],
         }
+        ambiguous_crypto_tokens = {
+            "link": ("chainlink", "$link", "link token"),
+            "base": ("coinbase", "base chain", "base network", "base l2"),
+            "ton": ("toncoin", "the open network"),
+            "op": ("optimism", "op token"),
+            "inj": ("injective", "inj token"),
+            "sol": ("solana", "$sol"),
+        }
 
         for kw in crypto_keywords:
             # Skip single words that might be sports teams unless it's clearly crypto
             if kw in ["avalanche", "magic", "jaguar"]:
                 # Check if this is the crypto version
                 if kw == "avalanche" and "avax" in q.lower():
+                    return "crypto"
+                continue
+            if kw in ambiguous_crypto_tokens:
+                if any(sig in q for sig in ambiguous_crypto_tokens[kw]):
                     return "crypto"
                 continue
             pattern = r"\b" + re.escape(kw) + r"\b"
@@ -1697,23 +1758,26 @@ class EventAlerter:
                 "tsunami",
             ],
             "esports": [
-                "weather",
-                "storm",
-                "hurricane",
-                "tornado",
-                "flood",
-                "snow",
-                "winter",
-                "summer",
-                "heat wave",
-                "cold wave",
-                "el nino",
-                "la nina",
-                "temperature",
-                "climate",
-                "global warming",
-                "forecast",
-                "tropical",
+                "esports",
+                "esport",
+                "league of legends",
+                "lol",
+                "valorant",
+                "csgo",
+                "cs2",
+                "counter-strike",
+                "dota",
+                "dota 2",
+                "overwatch",
+                "fortnite",
+                "apex legends",
+                "call of duty",
+                "twitch",
+                "steam",
+                "pgl",
+                "esl",
+                "worlds",
+                "msi",
             ],
             "pop_culture": [
                 "movie",

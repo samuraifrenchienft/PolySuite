@@ -63,9 +63,17 @@ DEFAULT_CONFIG = {
     "vet_min_estimated_fees": 0,  # Min estimated fees paid (Polymarket only; Kalshi/Jupiter bypass)
     "vet_min_trades_won": 5,  # Min total wins in resolved markets
     "vet_max_losses": 0,  # Max total losses allowed (0 = no limit)
+    "vet_min_current_win_streak": 0,  # Optional gate: require current streak >= N
+    "vet_min_reliability_score": 0,  # Optional gate: require reliability score >= N (0-100)
     "wallet_list_interval": 604800,  # Weekly (7 days) - seconds between wallet list broadcasts
     "wallet_list_min": 10,  # Min wallets to include in weekly list
     "wallet_list_max": 30,  # Max wallets in weekly list
+    # AI suggestion outcome tracking
+    "suggestion_tracking_enabled": True,
+    "suggestion_eval_interval": 900,  # Re-check open suggestions every 15 min
+    "suggestion_report_interval": 604800,  # Weekly scorecard
+    "suggestion_report_days": 7,
+    "suggestion_stake_usd": 100.0,  # Simulated stake per recommendation for P&L
     # Copy trading (Phase D)
     "copy_enabled": False,
     "copy_size_multiplier": 1.0,

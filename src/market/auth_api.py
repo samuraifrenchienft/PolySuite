@@ -26,6 +26,7 @@ class AuthenticatedPolymarketAPI:
         """Lazy-init PolymarketAPI for public endpoints (events, markets, crypto)."""
         if self._public_api is None:
             from src.market.api import PolymarketAPI
+
             self._public_api = PolymarketAPI()
         return self._public_api
 
@@ -119,9 +120,15 @@ class AuthenticatedPolymarketAPI:
                     return trades or []
                 # Filter client-side to recent trades only
                 from datetime import datetime
+
                 result = []
                 for t in trades:
-                    ts = t.get("timestamp") or t.get("matchTime") or t.get("match_time") or t.get("createdAt")
+                    ts = (
+                        t.get("timestamp")
+                        or t.get("matchTime")
+                        or t.get("match_time")
+                        or t.get("createdAt")
+                    )
                     if ts is None:
                         continue
                     try:
@@ -256,9 +263,22 @@ class AuthenticatedPolymarketAPI:
         """Get sports markets via events tag. Delegates to public API."""
         return self._get_public_api().get_sports_markets_from_events(limit=limit)
 
-    def get_events(self, limit: int = 50, active: bool = True, order: str = None, tag_id: str = None, slug_contains: str = None) -> List[Dict]:
+    def get_events(
+        self,
+        limit: int = 50,
+        active: bool = True,
+        order: str = None,
+        tag_id: str = None,
+        slug_contains: str = None,
+    ) -> List[Dict]:
         """Get events. Delegates to public API."""
-        return self._get_public_api().get_events(limit=limit, active=active, order=order, tag_id=tag_id, slug_contains=slug_contains)
+        return self._get_public_api().get_events(
+            limit=limit,
+            active=active,
+            order=order,
+            tag_id=tag_id,
+            slug_contains=slug_contains,
+        )
 
     def get_event_markets(self, event_id: str) -> List[Dict]:
         """Get markets for an event. Delegates to public API."""
@@ -285,6 +305,12 @@ class AuthenticatedPolymarketAPI:
     ) -> List[Dict]:
         """Get trade history for a wallet. Optionally filter to trades after Unix timestamp."""
         return self.get_user_trades(address, limit, after)
+
+    def get_closed_positions(
+        self, address: str, limit: int = 50, offset: int = 0
+    ) -> List[Dict]:
+        """Get closed positions for a wallet (uses public API)."""
+        return self._get_public_api().get_closed_positions(address, limit, offset)
 
     def close(self):
         """Close the session."""
