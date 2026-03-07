@@ -35,6 +35,18 @@ def _parse_order_depth(levels: list, top_n: int = 5) -> float:
     return total
 
 
+def _normalize_side(value: Any) -> str:
+    """Normalize assorted outcome fields to YES/NO/UNKNOWN."""
+    if value is None:
+        return "UNKNOWN"
+    s = str(value).strip().lower()
+    if s in ("yes", "y", "true", "1"):
+        return "YES"
+    if s in ("no", "n", "false", "0"):
+        return "NO"
+    return "UNKNOWN"
+
+
 class InsiderSignalDetector:
     """Detect possible insider signals: fresh wallet + large trade + winning outcome."""
 
@@ -210,6 +222,12 @@ class InsiderSignalDetector:
                                 or "Unknown"
                             )[:80],
                             "pnl": pnl_val,
+                            "side": _normalize_side(
+                                p.get("outcome")
+                                or p.get("side")
+                                or p.get("position")
+                                or p.get("tokenOutcome")
+                            ),
                             "market_id": p.get("conditionId")
                             or p.get("market")
                             or p.get("condition_id"),

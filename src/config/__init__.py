@@ -42,6 +42,9 @@ DEFAULT_CONFIG = {
     "jupiter_alerts_enabled": True,  # Jupiter prediction market alerts (set False if geo-restricted)
     "ai_filter_low_value_alerts": True,
     "ai_report_enabled": True,
+    "ai_report_min_gross_return_pct": 8.0,  # Skip report picks with too little upside
+    "ai_report_min_easy_side_price": 0.55,  # Keep high-probability picks
+    "ai_report_max_easy_side_price": 0.92,  # Avoid near-certain no-upside picks
     "min_volume_for_alert": 5000,
     "qualification_strict_mode": False,
     "min_liquidity_depth_usd": 5000,

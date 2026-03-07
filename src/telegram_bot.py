@@ -9,7 +9,6 @@ import time
 from src.wallet import Wallet
 from src.wallet.storage import WalletStorage
 from src.utils import is_valid_eth_address, sanitize_nickname
-from src.agent import Agent
 from src.config import Config
 from src.market.api import APIClientFactory
 
@@ -31,7 +30,6 @@ class TelegramBot:
         self.bot = telebot.TeleBot(token)
         self.storage = storage
         self.config = config
-        self.agent = Agent(config=config, storage=storage, api_factory=api_factory)
         self.user_timestamps = {}
         self.rate_limit_seconds = 10
         # Connect flow: user_id -> {waiting: "polymarket"|"kalshi", since: float}
@@ -150,7 +148,6 @@ class TelegramBot:
                 telebot.types.InlineKeyboardButton("Top reliable", callback_data="m:top_reliable"),
                 telebot.types.InlineKeyboardButton("Top streak", callback_data="m:top_streak"),
             )
-            kb.row(telebot.types.InlineKeyboardButton("Ask AI", callback_data="m:ai"))
             self.bot.reply_to(message, "Choose an action:", reply_markup=kb)
 
         @self.bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("m:"))
@@ -226,7 +223,10 @@ class TelegramBot:
                     self._connect_pending[uid] = {"waiting": "kalshi", "since": time.time()}
                     self.bot.send_message(chat_id, "Paste: api_key_id|private_key_pem")
             elif action == "ai":
-                self.bot.send_message(chat_id, "Use /ai <your question> to ask.")
+                self.bot.send_message(
+                    chat_id,
+                    "Chat AI is disabled for performance. Use your external AI agent.",
+                )
             elif action in ("add", "remove", "copy_add", "copy_remove"):
                 self._menu_pending[uid] = {"action": action, "since": time.time(), "chat_id": chat_id}
                 prompts = {"add": "Send wallet address [nickname]", "remove": "Send wallet address to remove", "copy_add": "Send: address [nickname]", "copy_remove": "Send wallet address to remove from copy"}
@@ -573,27 +573,11 @@ class TelegramBot:
 
         @self.bot.message_handler(commands=["ai", "ask"])
         def ask_ai(message):
-            """AI command - uses Agent (Bankr for crypto, chat for general)."""
-            try:
-                user_input = message.text
-                for prefix in ["/ai", "/ask"]:
-                    user_input = user_input.replace(prefix, "").strip()
-
-                if not user_input:
-                    self.bot.reply_to(message, "Usage: /ai <your question>")
-                    return
-
-                self.bot.reply_to(message, "🤔 Thinking...")
-                response = self._call_ai(user_input)
-                self.bot.reply_to(message, f"🤖 {response[:2000]}")
-
-            except Exception as e:
-                print(f"[Telegram/AI] Error: {e}")
-                self.bot.reply_to(message, "AI temporarily unavailable. Please try again.")
-
-    def _call_ai(self, message: str) -> str:
-        """Route to Agent for market/crypto queries or general chat."""
-        return self.agent.chat(message)
+            """Chat AI disabled to keep bot focused on alerts/trading logic."""
+            self.bot.reply_to(
+                message,
+                "Chat AI is disabled for performance. Use your external AI agent.",
+            )
 
     def _set_menu_button(self):
         """Set Web App menu button if DASHBOARD_URL is configured."""

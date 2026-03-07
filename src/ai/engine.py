@@ -1,9 +1,9 @@
-"""AI engine for Prediction Suite - Internal bot operations.
+"""AI engine for Prediction Suite - alert-first decision support.
 
-Uses Groq (primary) and OpenRouter Qwen (backup) for:
-- Market categorization
-- Opportunity scoring
-- Sentiment analysis
+Design goals:
+- Deterministic alert logic must work without AI providers.
+- LLM calls should refine reasons/confidence, not gate signal generation.
+- Chat-style AI is secondary to alert quality.
 """
 
 import os
@@ -53,11 +53,24 @@ class AIFilter:
             "OPENROUTER_API_KEY"
         )
         self.openrouter_url = "https://openrouter.ai/api/v1"
-        self.openrouter_model = "qwen/qwen3-vl-30b-a3b-thinking"
+        # Use a text model for alert reasoning (vision model here is unnecessary).
+        self.openrouter_model = os.getenv(
+            "OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free"
+        )
 
         # Ollama for local models
         self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
         self.ollama_model = os.getenv("OLLAMA_MODEL", "dolphin-phi:latest")
+        self.ollama_enabled = os.getenv("OLLAMA_ENABLED", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self.timeout_seconds = int(os.getenv("AI_HTTP_TIMEOUT_SECONDS", "12") or "12")
+
+    def is_available(self) -> bool:
+        """True when at least one AI provider is configured."""
+        return bool(self.groq_key or self.openrouter_key or self.ollama_enabled)
 
     def _call_groq(self, prompt: str, max_tokens: int = 200) -> Optional[str]:
         if not self.groq_key:
@@ -78,7 +91,7 @@ class AIFilter:
                     "temperature": 0.3,
                     "max_tokens": max_tokens,
                 },
-                timeout=30,
+                timeout=self.timeout_seconds,
             )
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
@@ -105,7 +118,7 @@ class AIFilter:
                     "temperature": 0.3,
                     "max_tokens": max_tokens,
                 },
-                timeout=30,
+                timeout=self.timeout_seconds,
             )
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
@@ -114,6 +127,8 @@ class AIFilter:
         return None
 
     def _call_ollama(self, prompt: str, max_tokens: int = 200) -> Optional[str]:
+        if not self.ollama_enabled:
+            return None
         try:
             import ollama
 
@@ -143,8 +158,94 @@ class AIFilter:
         result = self._call_openrouter(prompt, max_tokens)
         if result:
             return result
-        # Fallback to Ollama
+        # Optional local fallback (disabled by default).
         return self._call_ollama(prompt, max_tokens)
+
+    @staticmethod
+    def _safe_yes_price(market: Dict) -> float:
+        import json
+
+        raw_prices = market.get("outcomePrices")
+        try:
+            prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+            if prices and len(prices) >= 1:
+                p = float(prices[0])
+                if 0 <= p <= 1:
+                    return p
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+        try:
+            p = float(market.get("yes_pct", 0.5) or 0.5)
+            return max(0.0, min(1.0, p))
+        except (TypeError, ValueError):
+            return 0.5
+
+    def _heuristic_entry_zone(self, market: Dict) -> Dict:
+        """Deterministic baseline used even when AI is offline."""
+        question = (market.get("question") or "")[:80]
+        q_lower = question.lower()
+        volume = float(market.get("volume", 0) or 0)
+        yes_pct = self._safe_yes_price(market)
+
+        short_term = any(
+            t in q_lower
+            for t in (
+                "5 min",
+                "15 min",
+                "5m",
+                "15m",
+                "hourly",
+                "up or down",
+            )
+        )
+        confidence = "low"
+        reason = "Insufficient edge."
+        zone = "WAIT"
+
+        # Most useful behavior for alerts: only emit directional calls when edge is clear.
+        if volume >= 25000 and yes_pct <= 0.12:
+            zone, confidence = "BUY_NO", "high"
+            reason = (
+                f"Extreme YES underpricing ({yes_pct:.0%}) on liquid market (${volume:,.0f})."
+            )
+        elif volume >= 25000 and yes_pct >= 0.88:
+            zone, confidence = "BUY_YES", "high"
+            reason = (
+                f"Strong YES dominance ({yes_pct:.0%}) with solid liquidity (${volume:,.0f})."
+            )
+        elif volume >= 10000 and yes_pct <= 0.18:
+            zone, confidence = "BUY_NO", "medium"
+            reason = f"YES is stretched low ({yes_pct:.0%}); potential mean reversion."
+        elif volume >= 10000 and yes_pct >= 0.82:
+            zone, confidence = "BUY_YES", "medium"
+            reason = f"YES has persistent momentum ({yes_pct:.0%}) on decent volume."
+        elif short_term and volume < 10000:
+            zone, confidence = "AVOID", "medium"
+            reason = "Short-term market with low liquidity; noise and fee risk."
+        elif volume < 3000:
+            zone, confidence = "WAIT", "low"
+            reason = "Low liquidity market."
+
+        if short_term and zone in ("BUY_YES", "BUY_NO"):
+            reason += " Short timeframe: tighten risk and size."
+
+        # Profitability guardrail: do not suggest near-certain legs with negligible upside.
+        if zone in ("BUY_YES", "BUY_NO"):
+            side_price = yes_pct if zone == "BUY_YES" else (1 - yes_pct)
+            if side_price >= 0.97:
+                zone, confidence = "WAIT", "low"
+                reason = (
+                    f"Low upside: implied payout {(1.0 / side_price):.2f}x before fees/slippage."
+                )
+            else:
+                gross_return_pct = ((1.0 / side_price) - 1.0) * 100.0
+                if gross_return_pct < 8.0:
+                    zone, confidence = "WAIT", "low"
+                    reason = (
+                        f"Low upside: {gross_return_pct:.1f}% gross before fees/slippage."
+                    )
+
+        return {"entry_zone": zone, "reason": reason, "confidence": confidence}
 
     def categorize(self, question: str) -> str:
         """Task 1: Categorize market."""
@@ -447,8 +548,6 @@ For each market, consider:
 2. Volume level - liquidity for entry/exit
 3. Recent trades (if provided) - flow direction
 4. Timeframe - 5M/15M = fee risk
-5. Social Media Sentiment - is the community bullish or bearish?
-6. News Analysis - are there any relevant news articles?
 
 Markets:
 {chr(10).join(market_inputs)}
@@ -458,12 +557,11 @@ ENTRY_ZONE: [BUY_YES/BUY_NO/WAIT/AVOID]
 REASON: [1-2 sentences based on sentiment, volume, news, and other data points]
 CONFIDENCE: [high/medium/low]"""
 
-        result = self._call(prompt, max_tokens=500)
+        result = self._call(prompt, max_tokens=400)
+        heuristic = [self._heuristic_entry_zone(m) for m in markets]
         results = []
         if not result:
-            return [{"entry_zone": "WAIT", "reason": "", "confidence": "low"}] * len(
-                markets
-            )
+            return heuristic
 
         # Parse response - extract entry_zone, reason, confidence per block
         current = {}
@@ -493,62 +591,19 @@ CONFIDENCE: [high/medium/low]"""
                     )
                     current = {}
 
-        # Post-process: Auto-detect clear opportunities even if AI says WAIT
-        # High volume + extreme odds = actionable
+        # Merge with deterministic baseline: keep strong heuristic calls when AI is weak.
         for i, m in enumerate(markets):
             if i >= len(results):
-                break
-            raw_prices = m.get("outcomePrices")
-            prices = (
-                json.loads(raw_prices)
-                if isinstance(raw_prices, str)
-                else (raw_prices or [])
-            )
-            yes_pct = float(prices[0]) if prices and len(prices) >= 1 else 0.5
-            volume = float(m.get("volume", 0) or 0)
-
-            # High volume threshold for actionable alerts
-            high_volume = volume > 1_000_000  # $1M+
-
-            # If extremely lopsided AND high volume, auto-recommend regardless of AI's WAIT
-            if yes_pct < 0.15 and high_volume:
-                # YES is cheap = opportunity is NO
-                if results[i].get("entry_zone") in ("WAIT", "AVOID"):
-                    results[i]["entry_zone"] = "BUY_NO"
-                    results[i]["reason"] = f"NO at {yes_pct:.0%} implied odds - clear value play on high volume ${volume/1e6:.1f}M market"
-                    results[i]["confidence"] = "high"
-                elif results[i].get("entry_zone") == "BUY_YES":
-                    results[i]["entry_zone"] = "BUY_NO"
-                    results[i]["reason"] = (
-                        f"NO at {yes_pct:.0%} implied - clear value vs YES"
-                        + (
-                            f" ({results[i].get('reason', '')})"
-                            if results[i].get("reason")
-                            else ""
-                        )
-                    )
-                    results[i]["confidence"] = "high"
-            elif yes_pct > 0.85 and high_volume:
-                # YES is expensive = opportunity is YES (short) or NO (long)
-                if results[i].get("entry_zone") in ("WAIT", "AVOID"):
-                    results[i]["entry_zone"] = "BUY_YES"
-                    results[i]["reason"] = f"YES at {yes_pct:.0%} implied odds - clear value on high volume ${volume/1e6:.1f}M market"
-                    results[i]["confidence"] = "high"
-                elif results[i].get("entry_zone") == "BUY_NO":
-                    results[i]["entry_zone"] = "BUY_YES"
-                    results[i]["reason"] = (
-                        f"YES at {yes_pct:.0%} implied - clear value vs NO"
-                        + (
-                            f" ({results[i].get('reason', '')})"
-                            if results[i].get("reason")
-                            else ""
-                        )
-                    )
-                    results[i]["confidence"] = "high"
-
-        # Pad if we got fewer than markets
-        while len(results) < len(markets):
-            results.append({"entry_zone": "WAIT", "reason": "", "confidence": "low"})
+                results.append(heuristic[i])
+                continue
+            ai_pick = results[i]
+            base_pick = heuristic[i]
+            if ai_pick.get("entry_zone") in ("WAIT", "AVOID") and base_pick.get(
+                "entry_zone"
+            ) in ("BUY_YES", "BUY_NO"):
+                results[i] = base_pick
+            elif not ai_pick.get("reason"):
+                ai_pick["reason"] = base_pick.get("reason", "")
         return results[: len(markets)]
 
 

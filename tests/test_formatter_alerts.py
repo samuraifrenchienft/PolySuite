@@ -92,7 +92,11 @@ class TestFormatInsiderSignal:
             "trade_size": 5000,
             "closed_count": 3,
             "risk": "HIGH",
-            "winning_trade": {"question": "Will ETH hit $5k?", "pnl": 250.50},
+            "winning_trade": {
+                "question": "Will ETH hit $5k?",
+                "pnl": 250.50,
+                "side": "YES",
+            },
         }
         msg = formatter.format_insider_signal(signal)
         assert "INSIDER" in msg
@@ -100,3 +104,5 @@ class TestFormatInsiderSignal:
         assert "3 trades" in msg
         assert "ETH" in msg or "5k" in msg
         assert "250" in msg
+        assert "Insider side" in msg
+        assert "YES" in msg

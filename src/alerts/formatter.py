@@ -251,6 +251,7 @@ class AlertFormatter:
         win = signal.get("winning_trade") or {}
         question = (win.get("question") or "Unknown")[:60]
         pnl = win.get("pnl", 0)
+        side = (win.get("side") or signal.get("side") or "UNKNOWN").upper()
         market_id = win.get("market_id", "")
 
         emoji = "🔴" if risk == "HIGH" else "🟠"
@@ -263,6 +264,8 @@ class AlertFormatter:
             f"📊 Fresh wallet: {closed_count} trades | ${trade_size:,.0f} size",
             f"✅ Winning: {question}... (+${pnl:,.2f})",
         ]
+        if side in ("YES", "NO"):
+            lines.append(f"🎯 Insider side: **{side}**")
 
         # Phase B: Risk signals
         signals = signal.get("signals") or {}
@@ -284,18 +287,29 @@ class AlertFormatter:
         lines.append(f"⚠️ Confidence: {conf_level}")
 
         # Add copy-trade guidance
-        if confidence == "HIGH":
-            lines.append("💡 Action: Consider copy-trade with larger position")
-        elif confidence == "MEDIUM":
-            lines.append("💡 Action: Copy with medium position, watch closely")
+        if side in ("YES", "NO"):
+            if confidence == "HIGH":
+                lines.append(f"💡 Action: Consider **{side}** with larger position")
+            elif confidence == "MEDIUM":
+                lines.append(f"💡 Action: Consider **{side}** with medium position")
+            else:
+                lines.append(f"💡 Action: Consider **{side}** with small size only")
         else:
-            lines.append("💡 Action: Small position only for copy-trade edge")
+            if confidence == "HIGH":
+                lines.append("💡 Action: Consider copy-trade with larger position")
+            elif confidence == "MEDIUM":
+                lines.append("💡 Action: Copy with medium position, watch closely")
+            else:
+                lines.append("💡 Action: Small position only for copy-trade edge")
 
         # Add market link if available
         if market_id:
             market_url = f"https://polymarket.com/market/{market_id}"
             lines.append(f"[View Market]({market_url})")
-            lines.append("💡 Check current odds - bet same direction if favorable entry")
+            if side in ("YES", "NO"):
+                lines.append(f"💡 Check current odds; follow with **{side}** only if entry is favorable")
+            else:
+                lines.append("💡 Check current odds - bet same direction if favorable entry")
 
         lines.append(f"[View Wallet](https://polymarket.com/profile/{signal.get('address', '')})")
         return "\n".join(lines)

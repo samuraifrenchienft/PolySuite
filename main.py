@@ -38,7 +38,6 @@ from src.alerts.formatter import formatter
 from src.alerts.trendscanner import trendscanner
 from src.wallet.vetting import WalletVetting
 from src.alerts.events import EventAlerter
-from src.agent import Agent
 from src.alerts.combined import CombinedDispatcher
 from src.alerts.liquidity import check_liquidity_depth
 from src.alerts.qualifier import Qualifier
@@ -284,13 +283,22 @@ def _format_weekly_suggestion_report(summary: dict, days: int, stake_usd: float)
 
 def _generate_ai_market_report(polymarket_api, combined, config):
     """Generates and sends an AI market report."""
-    if not config.ai_report_enabled:
+    if not config.ai_report_enabled or not ai_filter.is_available():
         return
     print("\n[*] Generating AI market report...")
     try:
         # Fetch fresh markets (sort by volume client-side)
         all_markets = polymarket_api.get_markets(limit=200, active=True) or []
         all_markets.sort(key=lambda x: float(x.get("volume", 0) or 0), reverse=True)
+        min_gross_return_pct = float(
+            config.get("ai_report_min_gross_return_pct", 8.0) or 8.0
+        )
+        max_easy_side_price = float(
+            config.get("ai_report_max_easy_side_price", 0.92) or 0.92
+        )
+        min_easy_side_price = float(
+            config.get("ai_report_min_easy_side_price", 0.55) or 0.55
+        )
 
         # Get prices for analysis
         scored = []
@@ -307,11 +315,22 @@ def _generate_ai_market_report(polymarket_api, combined, config):
                     p = json.loads(prices) if isinstance(prices, str) else prices
                     if p and len(p) >= 2:
                         yes_odds = float(p[0])
+                        no_odds = float(p[1])
                         odds_info = {
                             "yes": yes_odds,
-                            "no": float(p[1]),
-                            "spread": abs((yes_odds + float(p[1])) - 1.0),
+                            "no": no_odds,
+                            "spread": abs((yes_odds + no_odds) - 1.0),
                         }
+                        # Keep "easy win with room" only:
+                        # high implied probability but not so extreme that upside is negligible.
+                        easy_side_price = max(yes_odds, no_odds)
+                        gross_return_pct = ((1.0 / easy_side_price) - 1.0) * 100.0
+                        if (
+                            easy_side_price > max_easy_side_price
+                            or easy_side_price < min_easy_side_price
+                            or gross_return_pct < min_gross_return_pct
+                        ):
+                            continue
                 except Exception:
                     pass
 
@@ -358,36 +377,6 @@ def _generate_ai_market_report(polymarket_api, combined, config):
                     {"entry_zone": "WAIT", "reason": "", "confidence": "low"}
                 ] * len(markets_for_entry)
 
-        # Auto-fix: override AI's WAIT for extreme odds (<15% or >85%) using actual market odds
-        import json as json_mod
-        for idx, m in enumerate(markets_for_entry):
-            if idx >= len(entry_zones):
-                break
-            # Get yes_pct from market's outcomePrices, not a separate field
-            raw_prices = m.get("outcomePrices")
-            prices = None
-            if raw_prices:
-                try:
-                    prices = json_mod.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
-                except Exception:
-                    pass
-            yes_pct = float(prices[0]) if prices and len(prices) >= 1 else None
-            volume = float(m.get("volume", 0) or 0)
-
-            if yes_pct is not None and volume > 50000:
-                if yes_pct < 0.15:
-                    entry_zones[idx] = {
-                        "entry_zone": "BUY_NO",
-                        "confidence": "high",
-                        "reason": f"Clear value: NO at {(1 - yes_pct) * 100:.0f}% on ${volume/1e6:.1f}M market",
-                    }
-                elif yes_pct > 0.85:
-                    entry_zones[idx] = {
-                        "entry_zone": "BUY_YES",
-                        "confidence": "high",
-                        "reason": f"Clear value: YES at {yes_pct * 100:.0f}% - high conviction on ${volume/1e6:.1f}M market",
-                    }
-
         if top_5:
             report = "📊 AI MARKET REPORT - Optimal Entry Points\n\n"
             for i, item in enumerate(top_5, 1):
@@ -409,12 +398,22 @@ def _generate_ai_market_report(polymarket_api, combined, config):
                         pass
                 yes_pct = float(prices[0]) if prices and len(prices) >= 1 else (odds.get('yes') if odds else None)
 
-                # FORCE override for extreme odds with decent volume
-                if yes_pct is not None and v > 50000:
-                    if yes_pct < 0.15:
-                        ez = {"entry_zone": "BUY_NO", "confidence": "high", "reason": f"Clear value: NO at {(1-yes_pct)*100:.0f}% implied"}
-                    elif yes_pct > 0.85:
-                        ez = {"entry_zone": "BUY_YES", "confidence": "high", "reason": f"Clear value: YES at {yes_pct*100:.0f}% implied"}
+                # Profitability gate for report outputs:
+                # avoid near-certain legs with no practical upside.
+                min_gross_return_pct = float(
+                    config.get("ai_report_min_gross_return_pct", 8.0) or 8.0
+                )
+                zone = (ez.get("entry_zone", "") or "").upper()
+                if yes_pct is not None and zone in ("BUY_YES", "BUY_NO"):
+                    side_price = yes_pct if zone == "BUY_YES" else (1 - yes_pct)
+                    if side_price > 0:
+                        gross_return_pct = ((1.0 / side_price) - 1.0) * 100.0
+                        if side_price >= 0.97 or gross_return_pct < min_gross_return_pct:
+                            ez = {
+                                "entry_zone": "WAIT",
+                                "confidence": "low",
+                                "reason": f"Skipped: only {gross_return_pct:.1f}% gross upside before fees/slippage.",
+                            }
 
                 report += f"{i}. {q}\n"
                 report += f"   Vol: ${v:,.0f} | "
@@ -457,14 +456,9 @@ def monitor(
 ):
     """Run continuous monitoring mode with convergence detection."""
     print("Starting PolySuite monitor...")
-    if not (
-        os.environ.get("GROQ_API_KEY")
-        or os.environ.get("GROQ_api_key")
-        or os.environ.get("OPENROUTER_API_KEY")
-        or os.environ.get("Openrouter_api_key")
-    ):
+    if not ai_filter.is_available():
         print(
-            "[!] AI disabled: set GROQ_API_KEY or OPENROUTER_API_KEY in .env for AI reports and analysis"
+            "[!] AI providers unavailable: running deterministic alert logic. Set GROQ_API_KEY or OPENROUTER_API_KEY to enable AI refinement."
         )
     print(f"Polling interval: {config.polling_interval}s")
     print(f"Win rate threshold: {config.win_rate_threshold}%")
@@ -908,8 +902,8 @@ def monitor(
                     print(f"[Weekly wallet list] Error: {e}")
                     last_wallet_list_sent = current_time  # Avoid rapid retries
 
-            # AI Report every 30 minutes - optimal entry points with entry-zone analysis
-            if current_time - last_ai_report > ai_report_interval:
+            # AI report every 30 minutes - only when AI providers are configured
+            if ai_filter.is_available() and current_time - last_ai_report > ai_report_interval:
                 _generate_ai_market_report(polymarket_api, combined, config)
                 last_ai_report = current_time
 
@@ -2324,17 +2318,11 @@ def handle_events_command(
 def handle_ask_command(
     args, storage: WalletStorage, config: Config, api_factory: APIClientFactory
 ):
-    """Handle ask command - query the Ollama agent."""
-    from src.agent import Agent
-
-    question = " ".join(args.question)
-    agent = Agent(
-        model=args.model, config=config, storage=storage, api_factory=api_factory
+    """Handle ask command (disabled in alert-first mode)."""
+    print(
+        "Chat AI is disabled for performance. Use your external AI agent; "
+        "PolySuite AI remains focused on alert logic."
     )
-
-    print(f"Q: {question}\n")
-    response = agent.chat(question)
-    print(response)
 
 
 def setup_argument_parser():
@@ -2490,10 +2478,10 @@ def setup_argument_parser():
         "--limit", type=int, default=10, help="Number of wallets to show (1-50)"
     )
 
-    # Ask agent
-    ask_p = subparsers.add_parser("ask", help="Ask the Ollama agent a question")
-    ask_p.add_argument("question", nargs="+", help="Your question")
-    ask_p.add_argument("--model", default="llama3.2", help="Ollama model to use")
+    # Ask agent (disabled; kept for backward compatibility)
+    ask_p = subparsers.add_parser("ask", help="(Disabled) In-app chat AI")
+    ask_p.add_argument("question", nargs="*", help="Ignored")
+    ask_p.add_argument("--model", default="llama3.2", help="Ignored")
 
     return parser
 

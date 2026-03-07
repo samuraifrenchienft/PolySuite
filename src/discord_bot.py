@@ -6,7 +6,6 @@ from discord.ext import commands
 from src.wallet import Wallet
 from src.wallet.storage import WalletStorage
 from src.utils import is_valid_eth_address, is_valid_solana_address, sanitize_nickname
-from src.agent import Agent
 from src.config import Config
 import asyncio
 import json
@@ -36,7 +35,6 @@ class DiscordBot(commands.Bot):
         self.storage = storage
         self.config = config
         self.api_factory = api_factory
-        self.agent = Agent(config=config, storage=storage, api_factory=api_factory)
 
         # Groq AI for chat (primary)
         self.groq_key = os.getenv("Groq_api_key") or os.getenv("GROQ_API_KEY")
@@ -96,7 +94,10 @@ class DiscordBot(commands.Bot):
             description="Ask AI about markets, crypto, or anything",
         )
         async def ask_slash(interaction: discord.Interaction, question: str):
-            await self._handle_ai(interaction, question.strip())
+            await interaction.response.send_message(
+                "Chat AI is disabled for performance. Use your external AI agent.",
+                ephemeral=True,
+            )
 
         @self.tree.command(name="status", description="Check wallets")
         async def status_slash(interaction: discord.Interaction):
@@ -820,10 +821,6 @@ class DiscordBot(commands.Bot):
                 msg = _format_vetted_rankings("streak", 5)
                 await interaction.response.send_message(msg[:2000], ephemeral=True)
 
-            @discord.ui.button(label="Ask AI", style=discord.ButtonStyle.secondary, row=4)
-            async def btn_ai(self, interaction: discord.Interaction, button: discord.ui.Button):
-                await interaction.response.send_message("Use `/ask <your question>` to ask AI.", ephemeral=True)
-
         @self.tree.command(name="menu", description="Show menu with buttons for all options")
         async def menu_slash(interaction: discord.Interaction):
             await interaction.response.send_message("Choose an action:", view=MenuView(self), ephemeral=True)
@@ -836,13 +833,15 @@ class DiscordBot(commands.Bot):
 
         @self.command(name="ask")
         async def ask_msg(ctx, *, question: str):
-            await ctx.message.reply("🤔 Thinking...")
-            await self._handle_ai_message(ctx, question)
+            await ctx.message.reply(
+                "Chat AI is disabled for performance. Use your external AI agent."
+            )
 
         @self.command(name="ai")
         async def ai_msg(ctx, *, question: str):
-            await ctx.message.reply("🤔 Thinking...")
-            await self._handle_ai_message(ctx, question)
+            await ctx.message.reply(
+                "Chat AI is disabled for performance. Use your external AI agent."
+            )
 
         @self.command(name="status")
         async def status_msg(ctx):
@@ -1008,17 +1007,12 @@ class DiscordBot(commands.Bot):
             question = question.replace("@predictionsuite", "").strip()
 
             if not question:
-                await message.reply("Hi! Use /ask or /ai to chat with me.")
+                await message.reply("Hi! Use /menu for trading and alert commands.")
                 return
 
-            await message.reply("🤔 Thinking...")
-
-            # Use Groq AI
-            response = self._call_groq(question)
-            if response:
-                await message.reply(f"🤖 {response[:2000]}")
-            else:
-                await message.reply("AI unavailable. Try again later.")
+            await message.reply(
+                "Chat AI is disabled for performance. Use /menu for trading and alerts."
+            )
             return
 
         # Token Scanner: detect addresses in message
