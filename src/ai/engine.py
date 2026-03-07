@@ -182,10 +182,13 @@ class AIFilter:
 
     def _heuristic_entry_zone(self, market: Dict) -> Dict:
         """Deterministic baseline used even when AI is offline."""
-        question = (market.get("question") or "")[:80]
-        q_lower = question.lower()
+        question_full = market.get("question") or ""
+        question = question_full[:80]
+        q_lower = question_full.lower()
         volume = float(market.get("volume", 0) or 0)
         yes_pct = self._safe_yes_price(market)
+        category = str(market.get("category", "") or "").lower()
+        market_type = str(market.get("market_type", "") or "").lower()
 
         short_term = any(
             t in q_lower
@@ -201,9 +204,34 @@ class AIFilter:
         confidence = "low"
         reason = "Insufficient edge."
         zone = "WAIT"
+        is_combo = (
+            "combo" in category
+            or market_type == "combo"
+            or (q_lower.count("yes ") + q_lower.count("no ")) >= 3
+        )
+
+        # Combo/parlay-specific strategy: favor fade of expensive multi-leg favorites.
+        if is_combo:
+            if volume < 1000:
+                return {
+                    "entry_zone": "AVOID",
+                    "reason": "Low-liquidity combo market; high variance and execution risk.",
+                    "confidence": "low",
+                }
+            if yes_pct >= 0.70:
+                zone, confidence = "BUY_NO", "medium"
+                reason = (
+                    f"Combo favorite overpriced at {yes_pct:.0%}; fading multi-leg chalk."
+                )
+            elif yes_pct <= 0.30:
+                zone, confidence = "BUY_YES", "medium"
+                reason = f"Combo longshot discounted at {yes_pct:.0%}; asymmetric upside."
+            else:
+                zone, confidence = "WAIT", "low"
+                reason = "Combo probability near fair band; no clear edge."
 
         # Most useful behavior for alerts: only emit directional calls when edge is clear.
-        if volume >= 25000 and yes_pct <= 0.12:
+        elif volume >= 25000 and yes_pct <= 0.12:
             zone, confidence = "BUY_NO", "high"
             reason = (
                 f"Extreme YES underpricing ({yes_pct:.0%}) on liquid market (${volume:,.0f})."

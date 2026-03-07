@@ -187,6 +187,8 @@ def _dispatch_market_alerts(
                 "question": q,
                 "volume": vol,
                 "outcomePrices": [price, 1 - price],
+                "category": getattr(m, "category", ""),
+                "market_type": getattr(m, "market_type", ""),
             }
             zones = ai_filter.analyze_entry_zones([market_dict])
             if zones:
@@ -1099,6 +1101,32 @@ def monitor(
                         "Kalshi",
                         backtest_storage=backtest_storage,
                     )
+                    # Combo/parlay-specific lane: allow one extra signal when present.
+                    combo_enabled = bool(config.get("kalshi_combo_enabled", True))
+                    combo_top_n = int(config.get("kalshi_combo_top_n", 1) or 1)
+                    combo_min_volume = float(
+                        config.get("kalshi_combo_min_volume", 100) or 100
+                    )
+                    kalshi_combo_markets = []
+                    if combo_enabled:
+                        kalshi_combo_markets = [
+                            m
+                            for m in kalshi_markets
+                            if "combo" in str(getattr(m, "category", "") or "").lower()
+                            and float(getattr(m, "volume", 0) or 0) >= combo_min_volume
+                        ]
+                    if kalshi_combo_markets and combo_top_n > 0:
+                        _dispatch_market_alerts(
+                            kalshi_combo_markets,
+                            combo_min_volume,
+                            combo_top_n,
+                            ai_filter,
+                            formatter.format_kalshi_market,
+                            combined,
+                            "kalshi",
+                            "Kalshi Combo",
+                            backtest_storage=backtest_storage,
+                        )
                     # Jupiter: top 3, only send if volume >= $100 (trade signal)
                     if config.jupiter_alerts_enabled:
                         _dispatch_market_alerts(

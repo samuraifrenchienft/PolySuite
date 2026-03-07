@@ -521,10 +521,13 @@ class AlertFormatter:
             vol = alert.get("volume", 0) or 0
             price = alert.get("price", 0.5) or 0.5
             url = alert.get("url", "")
+            cat = (alert.get("category") or "").lower()
         else:
             vol = getattr(alert, "volume", 0) or 0
             price = getattr(alert, "price", 0.5) or 0.5
             url = getattr(alert, "url", "")
+            cat = (getattr(alert, "category", "") or "").lower()
+        is_combo = "combo" in cat
 
         # Auto-detect clear signals from extreme odds
         if price < 0.15:
@@ -540,7 +543,7 @@ class AlertFormatter:
 
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
-            f"📊 **KALSHI**",
+            f"📊 **KALSHI {'COMBO' if is_combo else ''}**".strip(),
             f"_{q}_",
             f"💰 Vol: ${vol:,.0f}" if vol else "",
             f"📈 YES: {price * 100:.0f}%" if price else "",
@@ -556,6 +559,8 @@ class AlertFormatter:
             lines.append(f"🎯 **{side}** (confidence: {conviction})")
             if entry_reason:
                 lines.append(f"   💡 {entry_reason[:100]}")
+            if is_combo:
+                lines.append("   🧩 Combo strategy: reduced size; avoid over-concentrating correlated legs")
         else:
             lines.append("⏸️ WAIT - no clear signal")
         if url:

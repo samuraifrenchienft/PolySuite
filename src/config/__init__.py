@@ -20,6 +20,10 @@ DEFAULT_CONFIG = {
     "sports_alert_interval": 240,  # 4 min (reduced noise)
     "politics_alert_interval": 300,  # 5 min (reduced noise)
     "kalshi_jupiter_interval": 180,
+    # Kalshi combo/parlay strategy controls
+    "kalshi_combo_enabled": True,
+    "kalshi_combo_top_n": 1,
+    "kalshi_combo_min_volume": 100,
     "channel_overrides": {},
     "whale_alert_cooldown": 1200,
     "whale_check_interval": 300,

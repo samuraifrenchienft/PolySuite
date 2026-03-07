@@ -10,6 +10,7 @@ import requests
 import json
 import time
 import re
+import os
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from datetime import datetime
@@ -256,6 +257,20 @@ class MarketAggregator:
         self.session.headers.update({"User-Agent": "Mozilla/5.0"})
         self._cache = {}
         self._cache_ttl = 60  # 1 minute
+        # Optional tuning via env for combo allocation in final selection.
+        try:
+            self.kalshi_combo_allocation_pct = max(
+                0.0,
+                min(0.5, float(os.getenv("KALSHI_COMBO_ALLOCATION_PCT", "0.2"))),
+            )
+        except Exception:
+            self.kalshi_combo_allocation_pct = 0.2
+        try:
+            self.kalshi_combo_min_volume = float(
+                os.getenv("KALSHI_COMBO_MIN_VOLUME", "100")
+            )
+        except Exception:
+            self.kalshi_combo_min_volume = 100.0
 
     def _get_cached(self, key: str) -> Optional[List]:
         if key in self._cache:
@@ -302,6 +317,16 @@ class MarketAggregator:
                 if re.search(pattern, q):
                     return cat
         return "other"
+
+    def _is_kalshi_combo_market(self, title: str, ticker: str) -> bool:
+        """Detect Kalshi combo/parlay-style contracts."""
+        t = str(ticker or "").upper()
+        q = str(title or "").lower()
+        if "CROSSCATEGORY" in t or "MULTIGAME" in t:
+            return True
+        # Heuristic: many yes/no legs joined in one title.
+        leg_tokens = q.count("yes ") + q.count("no ")
+        return leg_tokens >= 3
 
     # ========== POLYMARKET ==========
     def get_polymarkets(self, limit: int = 200) -> List[MarketAlert]:
@@ -362,30 +387,103 @@ class MarketAggregator:
         if cached:
             return cached
 
-        endpoints = [
-            (
-                "https://api.elections.kalshi.com/trade-api/v2/markets",
-                {"limit": limit, "status": "open"},
-            ),
-            (
-                "https://api.kalshi.com/trade-api/v2/markets",
-                {"limit": limit, "status": "open"},
-            ),
-        ]
         markets = []
-        for url, params in endpoints:
+        # Primary path: fetch active events, then fetch markets per event ticker.
+        # This avoids combo/parlay-heavy global market feeds.
+        try:
+            event_resp = self.session.get(
+                "https://api.elections.kalshi.com/trade-api/v2/events",
+                params={"limit": max(30, int(limit or 100)), "status": "open"},
+                timeout=15,
+            )
+            if event_resp.status_code == 200:
+                event_data = event_resp.json()
+                events = event_data.get("events", [])
+                seen_tickers = set()
+                for ev in events:
+                    event_ticker = ev.get("event_ticker")
+                    if not event_ticker:
+                        continue
+                    try:
+                        m_resp = self.session.get(
+                            "https://api.elections.kalshi.com/trade-api/v2/markets",
+                            params={
+                                "event_ticker": event_ticker,
+                                "status": "open",
+                                "limit": 20,
+                            },
+                            timeout=10,
+                        )
+                        if m_resp.status_code != 200:
+                            continue
+                        payload = m_resp.json()
+                        event_markets = payload.get("markets", [])
+                        for m in event_markets:
+                            t = str(m.get("ticker") or "")
+                            if not t or t in seen_tickers:
+                                continue
+                            seen_tickers.add(t)
+                            # Preserve event category hints for better classification downstream.
+                            if ev.get("category") and not m.get("category"):
+                                m["category"] = ev.get("category")
+                            markets.append(m)
+                        if len(markets) >= max(limit * 3, 100):
+                            break
+                    except Exception:
+                        continue
+        except Exception as e:
+            print(f"[Kalshi] event-based fetch error: {e}")
+
+        # Fallback to global endpoint if event path returns nothing.
+        if not markets:
+            fetch_limit = max(int(limit or 100) * 5, 200)
+            endpoints = [
+                (
+                    "https://api.elections.kalshi.com/trade-api/v2/markets",
+                    {"limit": fetch_limit, "status": "open"},
+                ),
+                (
+                    "https://api.kalshi.com/trade-api/v2/markets",
+                    {"limit": fetch_limit, "status": "open"},
+                ),
+            ]
+            for url, params in endpoints:
+                try:
+                    resp = self.session.get(url, params=params, timeout=15)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        markets = data.get("markets", data.get("market", []))
+                        if isinstance(markets, dict):
+                            markets = [markets]
+                        if markets:
+                            break
+                except Exception as e:
+                    print(f"[Kalshi] {url}: {e}")
+                    continue
+        else:
+            # Enrich with combo/parlay contracts from global feed so combo strategy can run.
             try:
-                resp = self.session.get(url, params=params, timeout=15)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    markets = data.get("markets", data.get("market", []))
-                    if isinstance(markets, dict):
-                        markets = [markets]
-                    if markets:
-                        break
-            except Exception as e:
-                print(f"[Kalshi] {url}: {e}")
-                continue
+                combo_resp = self.session.get(
+                    "https://api.elections.kalshi.com/trade-api/v2/markets",
+                    params={"limit": max(200, int(limit or 100) * 5), "status": "open"},
+                    timeout=15,
+                )
+                if combo_resp.status_code == 200:
+                    combo_payload = combo_resp.json()
+                    combo_markets = combo_payload.get("markets", [])
+                    seen = {str(m.get("ticker") or "") for m in markets}
+                    for m in combo_markets:
+                        t = str(m.get("ticker") or "")
+                        if not t or t in seen:
+                            continue
+                        if not self._is_kalshi_combo_market(
+                            m.get("title", m.get("question", "")), t
+                        ):
+                            continue
+                        seen.add(t)
+                        markets.append(m)
+            except Exception:
+                pass
 
         if not markets:
             print("[Kalshi] No markets from any endpoint")
@@ -396,6 +494,9 @@ class MarketAggregator:
             for m in markets:
                 title = m.get("title", m.get("question", ""))
                 ticker = m.get("ticker", "")
+                ticker_upper = str(ticker).upper()
+
+                is_combo = self._is_kalshi_combo_market(title, ticker_upper)
 
                 # Use last_price/yes_ask from list if available (avoid N+1 requests)
                 yes_price = m.get("last_price") or m.get("yes_ask") or m.get("yes_bid")
@@ -422,6 +523,16 @@ class MarketAggregator:
                 # Determine category
                 category = "other"
                 title_lower = title.lower()
+                category_hint = str(m.get("category", "") or "").lower()
+                if category_hint:
+                    if "sport" in category_hint:
+                        category = "sports"
+                    elif "crypto" in category_hint:
+                        category = "crypto"
+                    elif "politic" in category_hint or "election" in category_hint:
+                        category = "politics"
+                    elif "econ" in category_hint or "world" in category_hint:
+                        category = "economy"
                 if any(
                     k in title_lower
                     for k in [
@@ -465,8 +576,19 @@ class MarketAggregator:
                     for k in ["president", "election", "trump", "biden", "political"]
                 ):
                     category = "politics"
+                if is_combo:
+                    category = f"{category}_combo" if category != "other" else "combo"
 
-                vol = float(m.get("volume", m.get("volume_num", 0)) or 0)
+                # Kalshi often reports 0 in `volume`; use best available activity proxy.
+                vol = float(
+                    m.get("volume")
+                    or m.get("volume_24h")
+                    or m.get("open_interest")
+                    or m.get("open_interest_fp")
+                    or m.get("notional_value")
+                    or m.get("liquidity")
+                    or 0
+                )
                 alerts.append(
                     MarketAlert(
                         source="kalshi",
@@ -481,6 +603,29 @@ class MarketAggregator:
                     )
                 )
 
+            # Ensure highest-activity markets are surfaced first while reserving
+            # a small lane for combo/parlay contracts (strategy-specific monitoring).
+            alerts.sort(key=lambda a: float(a.volume or 0), reverse=True)
+            combo_alerts = [
+                a
+                for a in alerts
+                if "combo" in str(getattr(a, "category", "")).lower()
+                and float(getattr(a, "volume", 0) or 0) >= self.kalshi_combo_min_volume
+            ]
+            single_alerts = [
+                a
+                for a in alerts
+                if "combo" not in str(getattr(a, "category", "")).lower()
+            ]
+            combo_slots = min(
+                max(1, int(limit * self.kalshi_combo_allocation_pct)),
+                len(combo_alerts),
+            )
+            chosen = single_alerts[: max(0, limit - combo_slots)] + combo_alerts[
+                :combo_slots
+            ]
+            chosen.sort(key=lambda a: float(a.volume or 0), reverse=True)
+            alerts = chosen[:limit]
             self._set_cached("kalshi", alerts)
             return alerts
 
