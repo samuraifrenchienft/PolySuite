@@ -189,7 +189,9 @@ def run_wallet_cleanup_step(storage, config, last_ts_ref: List[float]) -> int:
     if now - last_ts_ref[0] < interval:
         return 0
     last_ts_ref[0] = now
-    min_win_rate = float(config.get("wallet_cleanup_min_win_rate", 40) or 40)
+    # Only remove truly bottom-tier: 0 trades, confirmed bots, farmers, terrible win rate.
+    # Wallets with decent win rates stay regardless of vet tier — just labelled accordingly.
+    min_win_rate = float(config.get("wallet_cleanup_min_win_rate", 30) or 30)
     min_trades = int(config.get("wallet_cleanup_min_trades", 5) or 0)
     grace_days = int(config.get("wallet_cleanup_grace_days", 7) or 7)
     remove_farmer = config.get("wallet_cleanup_remove_farmer", True)
@@ -252,12 +254,14 @@ def run_wallet_cleanup_step(storage, config, last_ts_ref: List[float]) -> int:
                 # Below min_trades: keep (stats too thin to judge vs. configured zones)
                 if min_trades > 0 and trades < min_trades:
                     continue
-                if wins == 0:
+                # Only remove 0-win wallets with enough trades to be sure (not thin data)
+                if wins == 0 and trades >= 20:
                     storage.remove_wallet(w.address)
                     removed += 1
-                    logger.info("[Cleanup] Removed %s (0 wins, 0%% win rate)", w.address[:16] + "...")
+                    logger.info("[Cleanup] Removed %s (0 wins across %d trades)", w.address[:16] + "...", trades)
                     continue
-                if win_rate < min_win_rate:
+                # Only remove truly terrible win rates — decent performers stay regardless of vet tier
+                if trades >= min_trades and win_rate < min_win_rate:
                     storage.remove_wallet(w.address)
                     removed += 1
                     logger.info("[Cleanup] Removed %s (win_rate %.1f%% < %s%%)", w.address[:16] + "...", win_rate, min_win_rate)

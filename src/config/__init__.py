@@ -46,7 +46,7 @@ DEFAULT_CONFIG = {
     "wallet_discovery_enabled": True,  # Auto-add wallets from leaderboard/insider
     "wallet_discovery_interval_sec": 1800,  # 30 min — refill leaderboard wallets faster
     "wallet_discovery_max_new": 15,  # Max new wallets per discovery run
-    "wallet_discovery_max_wallets": 150,  # Cap total tracked wallets (manual + auto)
+    "wallet_discovery_max_wallets": 250,  # Cap total tracked wallets (manual + auto)
     "wallet_discovery_min_volume": 50000,  # Skip traders below this vol when leaderboard provides it; 0 = no filter
     "wallet_discovery_gamma_supplement": True,  # Merge gamma-api.polymarket.com/leaderboards (0x)
     # 0 = refresh every wallet each collector cycle; set e.g. 40 to round-robin and reduce API load
