@@ -191,7 +191,7 @@ def run_wallet_cleanup_step(storage, config, last_ts_ref: List[float]) -> int:
     last_ts_ref[0] = now
     # Only remove truly bottom-tier: 0 trades, confirmed bots, farmers, terrible win rate.
     # Wallets with decent win rates stay regardless of vet tier — just labelled accordingly.
-    min_win_rate = float(config.get("wallet_cleanup_min_win_rate", 30) or 30)
+    min_win_rate = float(config.get("wallet_cleanup_min_win_rate", 40) or 40)
     min_trades = int(config.get("wallet_cleanup_min_trades", 5) or 0)
     grace_days = int(config.get("wallet_cleanup_grace_days", 7) or 7)
     remove_farmer = config.get("wallet_cleanup_remove_farmer", True)
