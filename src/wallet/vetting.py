@@ -18,6 +18,46 @@ from src.config import Config
 
 logger = logging.getLogger(__name__)
 
+_SLUG_CATEGORY_MAP = {
+    "nba": "sports-nba", "nfl": "sports-nfl", "mlb": "sports-mlb",
+    "nhl": "sports-nhl", "soccer": "sports-soccer", "mls": "sports-soccer",
+    "epl": "sports-soccer", "ucl": "sports-soccer", "ufc": "sports-ufc",
+    "mma": "sports-ufc", "f1": "sports-formula1", "formula": "sports-formula1",
+    "ncaa": "sports-ncaa", "cfb": "sports-ncaa", "cbb": "sports-ncaa",
+    "golf": "sports-golf", "tennis": "sports-tennis",
+    "trump": "politics", "biden": "politics", "congress": "politics",
+    "election": "politics", "senate": "politics", "president": "politics",
+    "btc": "crypto", "eth": "crypto", "bitcoin": "crypto", "ethereum": "crypto",
+    "crypto": "crypto", "solana": "crypto", "sol-": "crypto",
+}
+
+def _category_from_slug(slug: str) -> str:
+    """Extract category from a Polymarket event slug (e.g. 'nba-den-lac-2026-02-19')."""
+    if not slug:
+        return ""
+    s = slug.lower()
+    for prefix, cat in _SLUG_CATEGORY_MAP.items():
+        if s.startswith(prefix) or f"-{prefix}-" in s or f"/{prefix}/" in s:
+            return cat
+    return ""
+
+def _category_from_title(title: str) -> str:
+    """Infer category from market title as a fallback."""
+    if not title:
+        return ""
+    t = title.lower()
+    if any(k in t for k in ("spread:", "o/u", "moneyline", "pts", "nba", "nfl", "mlb", "nhl")):
+        if "nba" in t: return "sports-nba"
+        if "nfl" in t: return "sports-nfl"
+        if "mlb" in t: return "sports-mlb"
+        if "nhl" in t: return "sports-nhl"
+        return "sports"
+    if any(k in t for k in ("bitcoin", "btc", "ethereum", "eth", "crypto", "solana")):
+        return "crypto"
+    if any(k in t for k in ("trump", "election", "senate", "president", "congress")):
+        return "politics"
+    return ""
+
 
 class WalletVetting:
     """Vet wallets to filter out bots and P&L cheaters."""
@@ -244,10 +284,11 @@ class WalletVetting:
         estimated_fees = 0.0
         fee_from_closed = 0.0
         # Only get closed positions for Polymarket (Jupiter doesn't have this endpoint)
+        closed_positions = []
         if platform == "polymarket":
             try:
-                closed = self.api.get_closed_positions(address, limit=100)
-                for pos in closed or []:
+                closed_positions = self.api.get_closed_positions(address, limit=100) or []
+                for pos in closed_positions:
                     pnl = pos.get("realizedPnl") or pos.get("realized_pnl")
                     if pnl is not None:
                         p = float(pnl)
@@ -379,45 +420,76 @@ class WalletVetting:
             analysis["is_win_streak_badge"] = analysis.get("max_win_streak", 0) >= config.win_streak_badge_threshold
 
         # Specialty: category focus + config-driven gates
+        # Primary source: closed positions (always resolved, carry slug/title for category).
+        # Fallback: market_stats from trades (only works when trades include resolved markets).
         window_days = config.vet_specialty_window_days
         cutoff = datetime.utcnow() - timedelta(days=window_days)
-        category_stats = {}  # category -> {wins, losses, trades}
+        category_stats = {}
         total_all_window_trades = 0
-        for mid, stats in market_stats.items():
-            cat = "other"
-            m = market_cache.get(mid)
-            if m:
-                cat = (
-                    extract_market_category(m)
-                    or (m.get("category") or "other").lower().strip()
-                    or "other"
-                )
+
+        # --- Primary: build from closed_positions ---
+        for pos in closed_positions:
+            ts_raw = pos.get("timestamp")
+            if ts_raw is None:
+                continue
+            try:
+                ts_val = float(ts_raw) if isinstance(ts_raw, (int, float)) else datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00")).timestamp()
+                if ts_val < cutoff.timestamp():
+                    continue
+            except (TypeError, ValueError, OSError):
+                continue
+            # Category from slug or title
+            slug = pos.get("slug") or pos.get("eventSlug") or ""
+            title = pos.get("title") or ""
+            cat = _category_from_slug(slug) or _category_from_title(title) or "other"
+            pnl_val = pos.get("realizedPnl") or pos.get("realized_pnl")
+            is_win_pos = pnl_val is not None and float(pnl_val) > 0
+            is_loss_pos = pnl_val is not None and float(pnl_val) < 0
             if cat not in category_stats:
                 category_stats[cat] = {"wins": 0, "losses": 0, "trades": 0}
-            for trade_ts, is_win in stats["trades"]:
-                if trade_ts is None:
-                    continue
-                try:
-                    ts_val = trade_ts.timestamp() if hasattr(trade_ts, "timestamp") else time.mktime(trade_ts.timetuple()) if hasattr(trade_ts, "timetuple") else 0
-                    cut_val = cutoff.timestamp() if hasattr(cutoff, "timestamp") else time.mktime(cutoff.timetuple())
-                    if ts_val < cut_val:
+            category_stats[cat]["trades"] += 1
+            total_all_window_trades += 1
+            if is_win_pos:
+                category_stats[cat]["wins"] += 1
+            elif is_loss_pos:
+                category_stats[cat]["losses"] += 1
+
+        # --- Fallback: market_stats from resolved trades ---
+        if total_all_window_trades == 0:
+            for mid, stats in market_stats.items():
+                cat = "other"
+                m = market_cache.get(mid)
+                if m:
+                    cat = (
+                        extract_market_category(m)
+                        or (m.get("category") or "other").lower().strip()
+                        or "other"
+                    )
+                if cat not in category_stats:
+                    category_stats[cat] = {"wins": 0, "losses": 0, "trades": 0}
+                for trade_ts, is_win in stats["trades"]:
+                    if trade_ts is None:
                         continue
-                except (TypeError, AttributeError, OSError):
-                    continue  # skip trades with unparseable timestamps
-                category_stats[cat]["trades"] += 1
-                total_all_window_trades += 1
-                if is_win:
-                    category_stats[cat]["wins"] += 1
-                else:
-                    category_stats[cat]["losses"] += 1
+                    try:
+                        ts_val = trade_ts.timestamp() if hasattr(trade_ts, "timestamp") else 0
+                        if ts_val < cutoff.timestamp():
+                            continue
+                    except (TypeError, AttributeError, OSError):
+                        continue
+                    category_stats[cat]["trades"] += 1
+                    total_all_window_trades += 1
+                    if is_win:
+                        category_stats[cat]["wins"] += 1
+                    else:
+                        category_stats[cat]["losses"] += 1
 
         specialty_note = None
         specialty_category = None
         specialty_roi_pct = None
 
-        min_spec_wins = int(config.get("vet_min_specialty_wins", 4) or 4)
-        min_spec_trades = int(config.get("vet_min_specialty_trades", 10) or 10)
-        min_cat_pct = float(config.get("vet_min_specialty_category_pct", 50) or 50)
+        min_spec_wins = int(config.get("vet_min_specialty_wins", 3) or 3)
+        min_spec_trades = int(config.get("vet_min_specialty_trades", 5) or 5)
+        min_cat_pct = float(config.get("vet_min_specialty_category_pct", 40) or 40)
         max_spec_losses = int(config.get("vet_max_specialty_losses", 0) or 0)
 
         if category_stats and total_all_window_trades > 0:

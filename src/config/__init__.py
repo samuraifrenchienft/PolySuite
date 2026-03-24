@@ -67,11 +67,11 @@ DEFAULT_CONFIG = {
     "wallet_blocklist": [],  # e.g. ["0xabc...", "0xdef..."]
     # Execution priority order: 1=Vetting (HIGH), 2=Alerts (MEDIUM), 3=Copy/Trade (LOW)
     # Specialty (recalibrated): category focus + profit, NOT win streak
-    "vet_min_specialty_wins": 4,          # Min wins in top category within window
-    "vet_min_specialty_trades": 10,       # Min trades in top category within window
-    "vet_min_specialty_category_pct": 50, # Top category must be >= this % of all window trades (focus gate)
+    "vet_min_specialty_wins": 3,           # Min wins in top category within window
+    "vet_min_specialty_trades": 5,        # Min trades in top category within window
+    "vet_min_specialty_category_pct": 40, # Top category must be >= this % of all window trades (focus gate)
     "vet_min_specialty_profit_pct": 15,   # Reserved; not enforced (ROI shown in note only)
-    "vet_specialty_window_days": 14,      # Lookback window for category stats
+    "vet_specialty_window_days": 90,      # Lookback window for category stats (widened: markets resolve slowly)
     "vet_max_specialty_losses": 0,        # Max losses in top category; 0 = disabled
     # Vetting pass gates (0 = disabled for numeric mins). Fee gate uses estimated_fees_paid proxy.
     "vet_min_trades_won": 0,
@@ -549,15 +549,15 @@ class Config:
 
     @property
     def vet_min_specialty_wins(self) -> int:
-        return self.config.get("vet_min_specialty_wins", 4)
+        return self.config.get("vet_min_specialty_wins", 3)
 
     @property
     def vet_min_specialty_trades(self) -> int:
-        return self.config.get("vet_min_specialty_trades", 10)
+        return self.config.get("vet_min_specialty_trades", 5)
 
     @property
     def vet_min_specialty_category_pct(self) -> int:
-        return self.config.get("vet_min_specialty_category_pct", 50)
+        return self.config.get("vet_min_specialty_category_pct", 40)
 
     @property
     def vet_min_specialty_profit_pct(self) -> int:
@@ -565,7 +565,7 @@ class Config:
 
     @property
     def vet_specialty_window_days(self) -> int:
-        return self.config.get("vet_specialty_window_days", 14)
+        return self.config.get("vet_specialty_window_days", 90)
 
     @property
     def vet_max_specialty_losses(self) -> int:

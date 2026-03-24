@@ -82,6 +82,8 @@ class Dashboard:
                 "DASHBOARD_REQUIRE_AUTH=true and DASHBOARD_API_KEY for production."
             )
 
+        self._register_collector_routes()
+
         @self.app.before_request
         def check_auth():
             if self.require_auth:
@@ -1103,7 +1105,7 @@ class Dashboard:
             if not addresses:
                 return jsonify({"ok": False, "error": "No addresses provided"}), 400
 
-            addresses = [(a or "").strip().lower() for a in addresses[:25] if (a or "").strip()]
+            addresses = [(a or "").strip().lower() for a in addresses if (a or "").strip()]
             if not addresses:
                 return jsonify({"ok": False, "error": "No valid addresses"}), 400
 
@@ -1814,3 +1816,28 @@ class Dashboard:
         """Stop collector on shutdown (registered with atexit)."""
         if self.collector:
             self.collector.stop()
+
+    def _register_collector_routes(self):
+        """Register start/stop/status routes for the background collector."""
+
+        @self.app.route("/api/collector/status", methods=["GET"])
+        def collector_status():
+            if self.collector and self.collector._thread and self.collector._thread.is_alive():
+                return jsonify({"running": True, "interval_sec": self.collector.interval_sec})
+            return jsonify({"running": False})
+
+        @self.app.route("/api/collector/stop", methods=["POST"])
+        def collector_stop():
+            if not self.collector:
+                return jsonify({"ok": False, "error": "No collector in this mode"}), 400
+            self.collector.stop()
+            logger.info("[Dashboard] Collector stopped via UI")
+            return jsonify({"ok": True, "running": False})
+
+        @self.app.route("/api/collector/start", methods=["POST"])
+        def collector_start():
+            if not self.collector:
+                return jsonify({"ok": False, "error": "No collector in this mode"}), 400
+            self.collector.start()
+            logger.info("[Dashboard] Collector started via UI")
+            return jsonify({"ok": True, "running": True})

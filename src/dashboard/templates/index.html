@@ -1123,6 +1123,10 @@
                 <button class="btn btn-primary" onclick="refreshData()">
                     <i class="fas fa-sync"></i> Refresh
                 </button>
+                <button id="collectorToggleBtn" class="btn" onclick="toggleCollector()" title="Start or stop the background data collector">
+                    <i class="fas fa-circle" id="collectorDot" style="font-size:0.6rem;vertical-align:middle;margin-right:4px;color:#6c757d;"></i>
+                    <span id="collectorLabel">Bot</span>
+                </button>
                 <button class="btn" onclick="exportData('csv')">
                     <i class="fas fa-download"></i> Export
                 </button>
@@ -2495,6 +2499,38 @@
             showToast('Refreshing data...', 'success');
             setTimeout(() => location.reload(), 1000);
         }
+
+        // Collector start/stop
+        let _collectorRunning = null;
+        async function _updateCollectorBtn() {
+            try {
+                const r = await fetch('/api/collector/status?_=' + Date.now());
+                const d = await r.json();
+                _collectorRunning = d.running;
+                const dot = document.getElementById('collectorDot');
+                const lbl = document.getElementById('collectorLabel');
+                const btn = document.getElementById('collectorToggleBtn');
+                if (dot) dot.style.color = d.running ? '#28a745' : '#6c757d';
+                if (lbl) lbl.textContent = d.running ? 'Bot Running' : 'Bot Stopped';
+                if (btn) btn.title = d.running ? 'Click to stop the background collector' : 'Click to start the background collector';
+            } catch(e) {}
+        }
+        async function toggleCollector() {
+            const btn = document.getElementById('collectorToggleBtn');
+            if (btn) btn.disabled = true;
+            try {
+                const action = _collectorRunning ? 'stop' : 'start';
+                const r = await fetch('/api/collector/' + action, {method:'POST'});
+                const d = await r.json();
+                if (!d.ok && d.error) { showToast(d.error, 'error'); }
+                else { showToast(action === 'stop' ? 'Bot stopped' : 'Bot started', 'success'); }
+                await _updateCollectorBtn();
+            } catch(e) { showToast('Error toggling collector', 'error'); }
+            finally { if (btn) btn.disabled = false; }
+        }
+        // Poll status on load and every 10s
+        _updateCollectorBtn();
+        setInterval(_updateCollectorBtn, 10000);
 
         async function refreshHealthMetrics() {
             const btn = document.getElementById('healthRefreshBtn');
