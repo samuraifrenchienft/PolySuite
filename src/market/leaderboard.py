@@ -107,72 +107,110 @@ class LeaderboardImporter:
 
         return list(all_wallets.values())[:limit]
 
-    def fetch_polymarket_leaderboard_only(self, limit: int = 100) -> List[Dict]:
+    # Categories the Polymarket Data API accepts for the leaderboard endpoint
+    LEADERBOARD_CATEGORIES = ["OVERALL", "CRYPTO", "POLITICS", "SPORTS", "ENTERTAINMENT", "SCIENCE"]
+
+    def fetch_polymarket_leaderboard_only(
+        self,
+        limit: int = 100,
+        start_offset: int = 0,
+        categories: Optional[List[str]] = None,
+    ) -> List[Dict]:
         """Top traders from Polymarket Data API only (0x proxy wallets).
 
         Use for **auto wallet discovery** — the merged leaderboard includes Jupiter
         Solana pubkeys, which discovery skips, so the merged list could contain
         no addable addresses.
 
+        Args:
+            limit: Max wallets to return total across all categories.
+            start_offset: Starting rank offset so each run discovers a different
+                slice of the leaderboard instead of always fetching rank 0–N.
+            categories: List of leaderboard categories to fetch from. Defaults to
+                ["OVERALL"]. Pass multiple to pull specialists from each category.
+
         API caps ``limit`` at 50 per request; we paginate with ``offset``.
         """
+        if categories is None:
+            categories = ["OVERALL"]
+
+        seen_addrs: set = set()
         out: List[Dict] = []
-        offset = 0
-        try:
-            while len(out) < limit:
-                page_size = min(50, limit - len(out))
-                resp = self.session.get(
-                    "https://data-api.polymarket.com/v1/leaderboard",
-                    params={
-                        "category": "OVERALL",
-                        "limit": page_size,
-                        "offset": offset,
-                    },
-                    timeout=20,
-                )
-                if resp.status_code != 200:
-                    logger.warning(
-                        "Polymarket leaderboard-only: HTTP %s (offset=%s)",
-                        resp.status_code,
-                        offset,
+
+        for category in categories:
+            if len(out) >= limit:
+                break
+            cat_offset = start_offset
+            cat_limit = limit - len(out)
+            try:
+                while len(out) < limit:
+                    page_size = min(50, cat_limit - (len(out) - (limit - cat_limit)))
+                    if page_size <= 0:
+                        break
+                    resp = self.session.get(
+                        "https://data-api.polymarket.com/v1/leaderboard",
+                        params={
+                            "category": category,
+                            "limit": page_size,
+                            "offset": cat_offset,
+                        },
+                        timeout=20,
                     )
-                    break
-                data = resp.json()
-                if not isinstance(data, list) or not data:
-                    break
-                for w in data:
-                    addr = w.get("proxyWallet") or w.get("address")
-                    if not addr or not str(addr).startswith("0x"):
-                        continue
-                    vol = w.get("vol") or w.get("volume") or 0
-                    try:
-                        vol = float(vol)
-                    except (TypeError, ValueError):
-                        vol = 0
-                    out.append(
-                        {
-                            "address": str(addr).lower(),
-                            "username": (
-                                w.get("userName")
-                                or w.get("username")
-                                or w.get("name")
-                                or w.get("pseudonym")
-                                or "Trader"
-                            ),
-                            "source": "polymarket",
-                            "volume": vol,
-                            "pnl": w.get("pnl") or w.get("realizedPnl") or 0,
-                        }
-                    )
-                offset += len(data)
-                if len(data) < page_size:
-                    break
-            logger.info(
-                "Leaderboard (Polymarket-only): %d Ethereum proxy wallets",
-                len(out),
-            )
-        except Exception as e:
-            logger.warning("Polymarket leaderboard-only fetch failed: %s", e)
+                    if resp.status_code != 200:
+                        logger.warning(
+                            "Polymarket leaderboard-only [%s]: HTTP %s (offset=%s)",
+                            category, resp.status_code, cat_offset,
+                        )
+                        break
+                    data = resp.json()
+                    if not isinstance(data, list) or not data:
+                        break
+                    added_this_page = 0
+                    for w in data:
+                        addr = w.get("proxyWallet") or w.get("address")
+                        if not addr or not str(addr).startswith("0x"):
+                            continue
+                        addr_lower = str(addr).lower()
+                        if addr_lower in seen_addrs:
+                            continue
+                        seen_addrs.add(addr_lower)
+                        vol = w.get("vol") or w.get("volume") or 0
+                        try:
+                            vol = float(vol)
+                        except (TypeError, ValueError):
+                            vol = 0
+                        pnl = w.get("pnl") or w.get("realizedPnl") or 0
+                        try:
+                            pnl = float(pnl)
+                        except (TypeError, ValueError):
+                            pnl = 0
+                        out.append(
+                            {
+                                "address": addr_lower,
+                                "username": (
+                                    w.get("userName")
+                                    or w.get("username")
+                                    or w.get("name")
+                                    or w.get("pseudonym")
+                                    or "Trader"
+                                ),
+                                "source": "polymarket",
+                                "category": category,
+                                "volume": vol,
+                                "pnl": pnl,
+                            }
+                        )
+                        added_this_page += 1
+                    cat_offset += len(data)
+                    if len(data) < page_size:
+                        break
+            except Exception as e:
+                logger.warning("Polymarket leaderboard-only [%s] fetch failed: %s", category, e)
+
+        logger.info(
+            "Leaderboard (Polymarket-only): %d Ethereum proxy wallets (offset=%d, categories=%s)",
+            len(out), start_offset, categories,
+        )
         return out
 
     def fetch_gamma_leaderboard_wallets(self, limit: int = 80) -> List[Dict]:

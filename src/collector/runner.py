@@ -58,43 +58,83 @@ def _dedupe_trader_rows(traders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def run_wallet_discovery_step(storage, config, api_factory, last_ts_ref: List[float]) -> int:
+def run_wallet_discovery_step(
+    storage,
+    config,
+    api_factory,
+    last_ts_ref: List[float],
+    offset_ref: Optional[List[int]] = None,
+    category_idx_ref: Optional[List[int]] = None,
+) -> int:
     """Auto-add Polymarket leaderboard wallets when under cap.
 
-    Respects ``wallet_discovery_interval_sec``. ``last_ts_ref`` must be a one-element
-    list ``[last_run_unix_time]``; updated **after** a successful Polymarket leaderboard
-    fetch with at least one 0x row (empty API responses do not advance the clock, so the
-    next poll can retry sooner).
+    Rotates through the leaderboard by advancing ``offset_ref`` each run so we
+    discover wallets ranked 0–N on run 1, N–2N on run 2, etc. Resets when it
+    reaches ``wallet_discovery_rotate_depth``. Also cycles through configured
+    categories (OVERALL, CRYPTO, POLITICS, SPORTS…) so specialists from each
+    pool are discovered over time.
 
     Returns number of wallets added this invocation (0 if skipped or error).
     """
     if not last_ts_ref:
         last_ts_ref.append(0.0)
+    if offset_ref is None:
+        offset_ref = [0]
+    if category_idx_ref is None:
+        category_idx_ref = [0]
+
     if not config.get("wallet_discovery_enabled", True):
         return 0
     interval = int(config.get("wallet_discovery_interval_sec", 1800) or 1800)
     now = time.time()
     if now - last_ts_ref[0] < interval:
         return 0
+
     max_new = int(config.get("wallet_discovery_max_new", 15) or 15)
-    max_wallets = int(config.get("wallet_discovery_max_wallets", 100) or 100)
+    max_wallets = int(config.get("wallet_discovery_max_wallets", 250) or 250)
+    rotate_depth = int(config.get("wallet_discovery_rotate_depth", 500) or 500)
+    fetch_limit = int(config.get("wallet_discovery_fetch_limit", 150) or 150)
+    min_pnl = float(config.get("wallet_discovery_min_pnl", 0) or 0)
+
+    # Which categories to cycle through
+    from src.market.leaderboard import LeaderboardImporter as _LI
+    all_cats = config.get("wallet_discovery_categories") or ["OVERALL", "CRYPTO", "POLITICS", "SPORTS"]
+    if isinstance(all_cats, str):
+        all_cats = [c.strip() for c in all_cats.split(",") if c.strip()]
+    # Pick category for this run and advance index
+    cat_idx = category_idx_ref[0] % len(all_cats)
+    categories = [all_cats[cat_idx]]
+    category_idx_ref[0] = (cat_idx + 1) % len(all_cats)
+
+    # Current offset into leaderboard
+    current_offset = offset_ref[0]
+
     added = 0
     try:
         from src.wallet import Wallet
-        from src.market.leaderboard import LeaderboardImporter
         from src.utils import is_valid_address
 
         wallets = storage.list_wallets()
         if len(wallets) >= max_wallets:
             logger.info(
-                "[Discovery] At wallet cap (%d/%d); not adding. Raise wallet_discovery_max_wallets or remove wallets.",
-                len(wallets),
-                max_wallets,
+                "[Discovery] At wallet cap (%d/%d); not adding.",
+                len(wallets), max_wallets,
             )
             return 0
-        importer = LeaderboardImporter(api_factory)
-        # Data API + optional Gamma /leaderboards (both 0x proxy wallets).
-        traders = importer.fetch_polymarket_leaderboard_only(limit=150)
+
+        importer = _LI(api_factory)
+        traders = importer.fetch_polymarket_leaderboard_only(
+            limit=fetch_limit,
+            start_offset=current_offset,
+            categories=categories,
+        )
+
+        # Advance offset for next run; reset when we've covered rotate_depth
+        next_offset = current_offset + fetch_limit
+        offset_ref[0] = 0 if next_offset >= rotate_depth else next_offset
+        if next_offset >= rotate_depth:
+            logger.info("[Discovery] Offset rotated back to 0 after reaching depth %d", rotate_depth)
+
         if config.get("wallet_discovery_gamma_supplement", True):
             extra = importer.fetch_gamma_leaderboard_wallets(limit=100)
             seen_addr = {
@@ -107,6 +147,7 @@ def run_wallet_discovery_step(storage, config, api_factory, last_ts_ref: List[fl
                 if a and a.startswith("0x") and a not in seen_addr:
                     seen_addr.add(a)
                     traders.append(t)
+
         traders = _dedupe_trader_rows(traders)
         if not traders:
             logger.warning(
@@ -114,31 +155,28 @@ def run_wallet_discovery_step(storage, config, api_factory, last_ts_ref: List[fl
                 "will retry on next poll (interval not advanced)"
             )
             return 0
+
+        # Min volume filter
         min_vol = float(config.get("wallet_discovery_min_volume", 0) or 0)
         if min_vol > 0:
             before = len(traders)
-            # Only filter when leaderboard provides volume; unknown (0/missing) = allow
-            def _passes_vol(tx):
-                v = tx.get("volume")
-                if v is None:
-                    return True
-                try:
-                    return float(v) >= min_vol
-                except (TypeError, ValueError):
-                    return True
-            traders = [t for t in traders if _passes_vol(t)]
+            traders = [t for t in traders if (t.get("volume") is None or float(t.get("volume") or 0) >= min_vol)]
             if before > len(traders):
-                logger.info(
-                    "[Discovery] Filtered by min_volume %.0f: %d -> %d traders",
-                    min_vol,
-                    before,
-                    len(traders),
-                )
+                logger.info("[Discovery] Filtered by min_volume %.0f: %d -> %d", min_vol, before, len(traders))
+
+        # Min PnL filter — skip low-PnL wallets at intake
+        if min_pnl > 0:
+            before = len(traders)
+            traders = [t for t in traders if (t.get("pnl") is None or float(t.get("pnl") or 0) >= min_pnl)]
+            if before > len(traders):
+                logger.info("[Discovery] Filtered by min_pnl %.0f: %d -> %d", min_pnl, before, len(traders))
+
         blocklist = {
             a.strip().lower()
             for a in (config.get("wallet_blocklist") or [])
             if isinstance(a, str) and a.strip()
         }
+
         last_ts_ref[0] = now
         for i, t in enumerate(traders or [], 1):
             if added >= max_new:
@@ -159,9 +197,11 @@ def run_wallet_discovery_step(storage, config, api_factory, last_ts_ref: List[fl
             if storage.add_wallet(w):
                 added += 1
                 logger.info(
-                    "[Discovery] Added wallet %s (%s)", addr[:16] + "...", nick[:20]
+                    "[Discovery] Added wallet %s (%s) [%s offset=%d]",
+                    addr[:16] + "...", nick[:20], categories[0], current_offset,
                 )
                 time.sleep(0.2)
+
         if added:
             logger.info("[Discovery] Wallet discovery: added %d new wallet(s)", added)
         elif traders and not added:
@@ -312,6 +352,8 @@ class MarketDataCollector:
         self._alerts_log_max = 100
         self._scan_results_storage = None
         self._discovery_ts_ref: List[float] = [0.0]
+        self._discovery_offset_ref: List[int] = [0]   # rotates through leaderboard depth
+        self._discovery_cat_idx_ref: List[int] = [0]  # cycles through categories
         self._last_cleanup_ts_ref: List[float] = [0.0]
         # Round-robin offset when wallet_stats_max_per_cycle < number of wallets
         self._wallet_stats_offset = 0
@@ -422,7 +464,9 @@ class MarketDataCollector:
     def _collect_wallet_discovery(self):
         """Add new wallets from leaderboard when under limit."""
         run_wallet_discovery_step(
-            self.storage, self.config, self.api_factory, self._discovery_ts_ref
+            self.storage, self.config, self.api_factory, self._discovery_ts_ref,
+            offset_ref=self._discovery_offset_ref,
+            category_idx_ref=self._discovery_cat_idx_ref,
         )
 
     def _collect_wallet_cleanup(self):
