@@ -6,10 +6,13 @@ Design goals:
 - Chat-style AI is secondary to alert quality.
 """
 
+import logging
 import os
-import requests
 from typing import List, Dict, Optional
 
+import requests
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_MESSAGE = """You are the AI Engine for Prediction Suite, a prediction market monitoring bot.
 
@@ -96,7 +99,7 @@ class AIFilter:
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            print(f"[AI-Groq] Error: {e}")
+            logger.debug("AI-Groq error: %s", e)
         return None
 
     def _call_openrouter(self, prompt: str, max_tokens: int = 200) -> Optional[str]:
@@ -123,7 +126,7 @@ class AIFilter:
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            print(f"[AI-OpenRouter] Error: {e}")
+            logger.debug("AI-OpenRouter error: %s", e)
         return None
 
     def _call_ollama(self, prompt: str, max_tokens: int = 200) -> Optional[str]:
@@ -142,11 +145,11 @@ class AIFilter:
             )
             return response["message"]["content"]
         except ImportError:
-            print(
-                "[AI-Ollama] Ollama SDK not installed. Please run `pip install ollama`"
+            logger.warning(
+                "AI-Ollama: Ollama SDK not installed. Run `pip install ollama`"
             )
         except Exception as e:
-            print(f"[AI-Ollama] Error: {e}")
+            logger.debug("AI-Ollama error: %s", e)
         return None
 
     def _call(self, prompt: str, max_tokens: int = 200) -> Optional[str]:

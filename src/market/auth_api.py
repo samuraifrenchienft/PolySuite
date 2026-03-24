@@ -1,10 +1,13 @@
 """Authenticated Polymarket API client for PolySuite."""
 
+import logging
 import requests
 import base64
 import time
 from typing import List, Dict, Optional
 import json
+
+logger = logging.getLogger(__name__)
 
 
 class AuthenticatedPolymarketAPI:
@@ -66,10 +69,12 @@ class AuthenticatedPolymarketAPI:
             try:
                 return resp.json()
             except requests.exceptions.JSONDecodeError as e:
-                print(f"Error decoding JSON from Polymarket authenticated API: {e}")
+                logger.warning(
+                    "Error decoding JSON from Polymarket authenticated API: %s", e
+                )
                 return None
         except requests.RequestException as e:
-            print(f"API error: {e}")
+            logger.warning("Polymarket authenticated API error: %s", e)
             return None
 
     def get_user_profile(self, address: str) -> Optional[dict]:
@@ -82,10 +87,10 @@ class AuthenticatedPolymarketAPI:
                 try:
                     return resp.json()
                 except requests.exceptions.JSONDecodeError as e:
-                    print(f"Error decoding JSON from user profile: {e}")
+                    logger.warning("Error decoding JSON from user profile: %s", e)
                     return None
         except requests.RequestException as e:
-            print(f"Error fetching user profile for {address}: {e}")
+            logger.warning("Error fetching user profile for %s: %s", address, e)
         return None
 
     def get_user_positions(self, address: str) -> List[dict]:
@@ -97,10 +102,10 @@ class AuthenticatedPolymarketAPI:
                 try:
                     return resp.json()
                 except requests.exceptions.JSONDecodeError as e:
-                    print(f"Error decoding JSON from user positions: {e}")
+                    logger.warning("Error decoding JSON from user positions: %s", e)
                     return []
         except requests.RequestException as e:
-            print(f"Error fetching user positions for {address}: {e}")
+            logger.warning("Error fetching user positions for %s: %s", address, e)
         return []
 
     def get_user_trades(
@@ -114,7 +119,7 @@ class AuthenticatedPolymarketAPI:
                 try:
                     trades = resp.json()
                 except requests.exceptions.JSONDecodeError as e:
-                    print(f"Error decoding JSON from user trades: {e}")
+                    logger.warning("Error decoding JSON from user trades: %s", e)
                     return []
                 if not trades or after is None:
                     return trades or []
@@ -145,7 +150,7 @@ class AuthenticatedPolymarketAPI:
                         continue
                 return result
         except requests.RequestException as e:
-            print(f"Error fetching user trades for {address}: {e}")
+            logger.warning("Error fetching user trades for %s: %s", address, e)
         return []
 
     def get_user_activity(self, address: str, limit: int = 100) -> List[dict]:
@@ -157,10 +162,10 @@ class AuthenticatedPolymarketAPI:
                 try:
                     return resp.json()
                 except requests.exceptions.JSONDecodeError as e:
-                    print(f"Error decoding JSON from user activity: {e}")
+                    logger.warning("Error decoding JSON from user activity: %s", e)
                     return []
         except requests.RequestException as e:
-            print(f"Error fetching user activity for {address}: {e}")
+            logger.warning("Error fetching user activity for %s: %s", address, e)
         return []
 
     def get_wallet_stats(self, address: str) -> dict:
@@ -230,7 +235,7 @@ class AuthenticatedPolymarketAPI:
                 if isinstance(result, list):
                     return result
         except Exception as e:
-            print(f"Error fetching Polymarket leaderboard: {e}")
+            logger.warning("Error fetching Polymarket leaderboard: %s", e)
         return []
 
     def get_market(self, market_id: str) -> Optional[Dict]:
@@ -248,7 +253,7 @@ class AuthenticatedPolymarketAPI:
             if resp.status_code == 200:
                 return resp.json()
         except Exception as e:
-            print(f"Error fetching markets: {e}")
+            logger.warning("Error fetching markets: %s", e)
         return []
 
     def get_active_markets(self, limit: int = 500, order: str = "volume") -> List[Dict]:

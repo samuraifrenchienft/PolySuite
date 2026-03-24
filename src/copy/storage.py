@@ -9,10 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+from src.config.paths import COPY_TARGETS_PATH
 from src.utils import is_valid_eth_address
 
 
-COPY_TARGETS_PATH = "data/copy_targets.json"
 MAX_COPY_TARGETS = 20
 
 

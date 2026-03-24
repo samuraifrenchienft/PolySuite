@@ -1,6 +1,10 @@
 """Client for scraping data from PolyScope."""
+
+import logging
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 
 class PolyScopeClient:
@@ -17,7 +21,7 @@ class PolyScopeClient:
             response = requests.get(url, timeout=30)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching smart traders: {e}")
+            logger.warning("PolyScope error fetching smart traders: %s", e)
             return []
 
         soup = BeautifulSoup(response.content, "html.parser")

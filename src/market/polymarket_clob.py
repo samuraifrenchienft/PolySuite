@@ -1,8 +1,11 @@
 """Polymarket CLOB API client using py-clob-client."""
 
+import logging
 from typing import Dict, List, Optional
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds, OrderArgs, PartialCreateOrderOptions
+
+logger = logging.getLogger(__name__)
 
 
 class PolymarketCLOB:
@@ -39,7 +42,7 @@ class PolymarketCLOB:
                 return market
             return None
         except Exception as e:
-            print(f"[CLOB] get_market error: {e}")
+            logger.warning("CLOB get_market error: %s", e)
             return None
 
     def get_markets(self, limit: int = 100) -> List[Dict]:
@@ -59,7 +62,7 @@ class PolymarketCLOB:
                     result.append(m)
             return result
         except Exception as e:
-            print(f"Error fetching CLOB markets: {e}")
+            logger.warning("Error fetching CLOB markets: %s", e)
             return []
 
     def get_midpoint(self, token_id: str) -> Optional[float]:
@@ -154,5 +157,5 @@ class PolymarketCLOBTrading:
                 return resp.get("orderID") or resp.get("order_id")
             return str(resp) if resp is not None else None
         except Exception as e:
-            print(f"[CLOB] create_and_post_order error: {e}")
+            logger.warning("CLOB create_and_post_order error: %s", e)
             return None

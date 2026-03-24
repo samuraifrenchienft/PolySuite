@@ -1,5 +1,6 @@
 """Market data storage for PolySuite."""
 
+import logging
 import os
 import shutil
 import sqlite3
@@ -7,13 +8,17 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 
+from src.config.paths import DB_PATH
+
+logger = logging.getLogger(__name__)
+
 
 class MarketStorage:
     """Manages SQLite database for market data."""
 
-    def __init__(self, db_path: str = "data/polysuite.db"):
+    def __init__(self, db_path: str = None):
         """Initialize storage with database path."""
-        self.db_path = db_path
+        self.db_path = db_path or DB_PATH
         self._ensure_db_dir()
         self._init_db()
 
@@ -186,10 +191,10 @@ class MarketStorage:
         backup_path = os.path.join(backup_dir, f"polysuite_{timestamp}.db")
         try:
             shutil.copy2(self.db_path, backup_path)
-            print(f"[BACKUP] Created: {backup_path}")
+            logger.info("BACKUP Created: %s", backup_path)
             return backup_path
         except Exception as e:
-            print(f"[BACKUP] Failed: {type(e).__name__}: {e}")
+            logger.warning("BACKUP Failed: %s: %s", type(e).__name__, e)
             return None
 
     def cleanup_old_backups(
@@ -214,7 +219,7 @@ class MarketStorage:
             except Exception:
                 continue
         if removed > 0:
-            print(f"[BACKUP] Cleaned up {removed} old backups")
+            logger.info("BACKUP Cleaned up %s old backups", removed)
         return removed
 
     def get_db_size(self) -> int:

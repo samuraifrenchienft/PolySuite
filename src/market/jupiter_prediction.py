@@ -1,10 +1,12 @@
 """Jupiter Prediction Market API client for PolySuite."""
 
+import logging
 import requests
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
 from src.config import Config
 
+logger = logging.getLogger(__name__)
 
 JUPITER_PREDICTION_API = "https://api.jup.ag/prediction/v1"
 
@@ -32,7 +34,7 @@ class JupiterPredictionAPI:
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            print(f"Error fetching {url}: {e}")
+            logger.warning("Error fetching %s: %s", url, e)
             return None
 
     def get_events(

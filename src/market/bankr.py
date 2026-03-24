@@ -134,8 +134,8 @@ class BankrClient:
                 try:
                     d = resp.json()
                     return None, d.get("message", "Invalid API key. Check bankr.bot/api")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("[Bankr] Error parsing 401 response: %s", e)
                 return None, "Invalid API key. Check bankr.bot/api"
             if resp.status_code == 403:
                 try:
@@ -143,16 +143,16 @@ class BankrClient:
                     msg = d.get("message", "Access denied")
                     if "agent" in msg.lower() or "enable" in msg.lower():
                         return None, "❌ Agent API not enabled. Enable at bankr.bot/api"
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("[Bankr] Error parsing 403 response: %s", e)
                 return None, "❌ Bankr access denied (403). Enable Agent API at bankr.bot/api"
             if resp.status_code == 429:
                 try:
                     d = resp.json()
                     msg = d.get("message", "Rate limit exceeded")
                     return None, f"❌ {msg}"
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("[Bankr] Error parsing 429 response: %s", e)
                 return None, "❌ Daily limit exceeded (100 msg/day free). Upgrade at bankr.bot"
             return None, "Bankr error"
         except Exception as e:
@@ -178,7 +178,7 @@ class BankrClient:
                     data["result"] = data.get("response", "") or data.get("result", "")
                 return data
         except Exception as e:
-            print(f"[Bankr] Error: {e}")
+            logger.warning("Bankr error: %s", e)
         return None
 
     def execute_polymarket_bet(
@@ -285,7 +285,7 @@ class BankrClient:
         blocked = ["buy", "sell", "swap", "trade", "bet", "purchase", "order"]
         if any(word in query_lower for word in blocked):
             if not is_read_only:
-                print("[Bankr] Read-only mode: blocking trade command")
+                logger.warning("Bankr read-only mode: blocking trade command")
                 return None
 
         job_id, _ = self.send_prompt(query)
@@ -333,44 +333,11 @@ class BankrCLI:
         fee_recipient: str = None,
         simulate_only: bool = False,
     ) -> Optional[Dict]:
-        """Deploy a token via Bankr API.
-
-        Args:
-            token_name: Name of the token (required)
-            token_symbol: Symbol/ticker (optional, auto-generated)
-            description: Token description (optional)
-            fee_recipient: Wallet address to receive fees (optional)
-            simulate_only: Just simulate without deploying
-
-        Returns:
-            Dict with tokenAddress, poolId, txHash, etc.
-        """
-        if not self.is_configured():
-            return None
-
-        try:
-            data = {"tokenName": token_name, "simulateOnly": simulate_only}
-
-            if token_symbol:
-                data["tokenSymbol"] = token_symbol
-            if description:
-                data["description"] = description
-            if fee_recipient:
-                data["feeRecipient"] = {"type": "wallet", "value": fee_recipient}
-
-            resp = requests.post(
-                f"{self.client.base_url}/token-launches/deploy",
-                headers={"Content-Type": "application/json", "X-API-Key": self.client.api_key},
-                json=data,
-                timeout=60,
-            )
-
-            if resp.status_code in (200, 201):
-                return resp.json()
-            else:
-                logger.warning("[Bankr] Deploy error: %s", resp.status_code)
-                return {"error": "Deploy failed", "status": resp.status_code}
-
-        except Exception as e:
-            logger.warning("[Bankr] Deploy exception: %s", type(e).__name__)
-            return None
+        """Deploy a token via Bankr API."""
+        return self.client.deploy_token(
+            token_name=token_name,
+            token_symbol=token_symbol,
+            description=description,
+            fee_recipient=fee_recipient,
+            simulate_only=simulate_only,
+        )

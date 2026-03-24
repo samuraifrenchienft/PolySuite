@@ -1,15 +1,22 @@
 """Configuration for PolySuite."""
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+
 from dotenv import load_dotenv
 
+logger = logging.getLogger(__name__)
+
+# Bump when DEFAULT_CONFIG vetting / discovery defaults change and existing config.json should refresh.
+CONFIG_SCHEMA_VERSION = 11
 
 DEFAULT_CONFIG = {
-    "win_rate_threshold": 55.0,
+    "config_schema_version": CONFIG_SCHEMA_VERSION,
+    "win_rate_threshold": 50.0,  # 50 = match solid wallets (~53% WR); 55 = stricter
     "min_trades_for_high_performer": 10,
     "polling_interval": 60,
     "alert_cooldown": 300,
@@ -17,104 +24,140 @@ DEFAULT_CONFIG = {
     "tracked_categories": [],
     "priority_categories": ["crypto", "politics"],
     "crypto_short_term_interval": 90,
-    "sports_alert_interval": 240,  # 4 min (reduced noise)
-    "politics_alert_interval": 300,  # 5 min (reduced noise)
+    "sports_alert_interval": 120,
+    "politics_alert_interval": 180,
     "kalshi_jupiter_interval": 180,
-    # Kalshi combo/parlay strategy controls
-    "kalshi_combo_enabled": True,
-    "kalshi_combo_top_n": 1,
-    "kalshi_combo_min_volume": 100,
     "channel_overrides": {},
     "whale_alert_cooldown": 1200,
     "whale_check_interval": 300,
     "whale_min_size": 50000,
-    "whale_alerts_enabled": False,  # Disabled until curated AI-vetted wallet list
-    "insider_signal_enabled": True,  # High priority: fresh wallet + large trade + winning
-    "insider_signal_interval": 300,  # 5 min
-    "insider_signal_min_trade_usd": 5000,
-    "insider_signal_fresh_max_trades": 10,
-    "weird_wallet_liquidity_threshold": 0.02,  # Flag size anomaly if trade > 2% of order book
-    "weird_wallet_niche_volume_max": 50000,  # Flag niche market if volume < $50k
-    "contrarian_alerts_enabled": False,  # Long-shot: high vol one side, high payout other
-    "contrarian_interval": 600,  # 10 min
-    "contrarian_min_volume": 10000,
-    "contrarian_min_imbalance": 0.6,
-    "contrarian_payout_min": 0.20,
-    "contrarian_payout_max": 0.40,
-    "trend_scanner_enabled": False,  # Deprioritized - meme coins, different use case
-    "ai_daily_summary_enabled": False,  # Deprioritized - overlaps with 30-min report
-    "jupiter_alerts_enabled": True,  # Jupiter prediction market alerts (set False if geo-restricted)
-    "ai_filter_low_value_alerts": True,
-    "ai_report_enabled": True,
-    "ai_report_min_gross_return_pct": 8.0,  # Skip report picks with too little upside
-    "ai_report_min_easy_side_price": 0.55,  # Keep high-probability picks
-    "ai_report_max_easy_side_price": 0.92,  # Avoid near-certain no-upside picks
-    "min_volume_for_alert": 5000,
-    "qualification_strict_mode": False,
-    "min_liquidity_depth_usd": 5000,
-    "max_spread_pct": 5.0,
-    "require_liquidity_check": False,
+    "insider_min_size": 10000,
+    "ai_filter_low_value_alerts": False,
     "trade_volume_threshold": 1000,
+    # Alert noise reduction
+    "alert_min_pnl": 500,
+    "alert_skip_low_confidence": True,
+    "alert_min_confidence": "MEDIUM",
+    "convergence_min_volume": 5000,
     "position_size_threshold": 1000,
     "leaderboard_import_interval": 3600,  # 1 hour
-    "background_vetting_interval": 86400,  # 24 hours - vet leaderboard in background
-    "vet_min_pnl": 0,  # Minimum realized PnL (USD) to qualify as vetted
-    "vet_min_roi_pct": 0,  # Minimum ROI % (0 = no filter initially)
-    "vet_max_trades_per_day": 100,  # Reject arbitrage-like frequency
-    "vet_min_conviction": 0,  # Minimum conviction score 0-100 (0 = no filter)
-    "vet_min_recent_wins": 3,  # Min wins in last N resolved trades to qualify via recent-wins path
-    "vet_recent_wins_window": 10,  # Look at last N resolved trades for recent-wins
-    "vet_min_specialty_wins": 3,  # Min wins in a market to qualify as specialty
-    "vet_min_specialty_streak": 2,  # Min wins in a row in that market
-    "vet_max_specialty_losses": 1,  # Max losses in that market for specialty (low losses)
-    "vet_min_estimated_fees": 0,  # Min estimated fees paid (Polymarket only; Kalshi/Jupiter bypass)
-    "vet_min_trades_won": 5,  # Min total wins in resolved markets
-    "vet_max_losses": 0,  # Max total losses allowed (0 = no limit)
-    "vet_min_current_win_streak": 0,  # Optional gate: require current streak >= N
-    "vet_min_reliability_score": 0,  # Optional gate: require reliability score >= N (0-100)
-    "wallet_list_interval": 604800,  # Weekly (7 days) - seconds between wallet list broadcasts
-    "wallet_list_min": 10,  # Min wallets to include in weekly list
-    "wallet_list_max": 30,  # Max wallets in weekly list
-    # AI suggestion outcome tracking
-    "suggestion_tracking_enabled": True,
-    "suggestion_eval_interval": 900,  # Re-check open suggestions every 15 min
-    "suggestion_report_interval": 604800,  # Weekly scorecard
-    "suggestion_report_days": 7,
-    "suggestion_stake_usd": 100.0,  # Simulated stake per recommendation for P&L
-    # Copy trading (Phase D)
+    "scan_interval_sec": 180,  # Background collector: 3 min between scans (fresh data)
+    "cache_ttl_sec": 0,  # 0 = always fresh; >0 = seconds to cache scan results
+    "wallet_discovery_enabled": True,  # Auto-add wallets from leaderboard/insider
+    "wallet_discovery_interval_sec": 1800,  # 30 min — refill leaderboard wallets faster
+    "wallet_discovery_max_new": 15,  # Max new wallets per discovery run
+    "wallet_discovery_max_wallets": 150,  # Cap total tracked wallets (manual + auto)
+    "wallet_discovery_min_volume": 50000,  # Skip traders below this vol when leaderboard provides it; 0 = no filter
+    "wallet_discovery_gamma_supplement": True,  # Merge gamma-api.polymarket.com/leaderboards (0x)
+    # 0 = refresh every wallet each collector cycle; set e.g. 40 to round-robin and reduce API load
+    "wallet_stats_max_per_cycle": 0,
+    "wallet_cleanup_enabled": True,  # Auto-remove useless wallets (0 trades, 0 wins, low win rate)
+    "wallet_cleanup_interval_sec": 3600,  # Run cleanup every hour
+    "wallet_cleanup_min_win_rate": 45,  # Remove if win_rate below this (when trades >= 1)
+    "wallet_cleanup_min_trades": 5,  # Require this many trades before win-rate / 0-wins removal (0 = no minimum)
+    "wallet_cleanup_grace_days": 7,  # Don't remove wallets added in last N days
+    "wallet_cleanup_remove_farmer": True,  # Remove wallets the classifier marks as farmers
+    "wallet_cleanup_remove_bot": True,  # Remove classifier-flagged bots (requires vet confirmation below)
+    "wallet_cleanup_bot_min_bot_score": 90,  # Only remove bots when vet bot_score >= this; NULL score = skip
+    # Known-bad addresses — never auto-added by discovery (manual adds are unaffected)
+    "wallet_blocklist": [],  # e.g. ["0xabc...", "0xdef..."]
+    # Execution priority order: 1=Vetting (HIGH), 2=Alerts (MEDIUM), 3=Copy/Trade (LOW)
+    # Specialty (recalibrated): category focus + profit, NOT win streak
+    "vet_min_specialty_wins": 4,          # Min wins in top category within window
+    "vet_min_specialty_trades": 10,       # Min trades in top category within window
+    "vet_min_specialty_category_pct": 50, # Top category must be >= this % of all window trades (focus gate)
+    "vet_min_specialty_profit_pct": 15,   # Reserved; not enforced (ROI shown in note only)
+    "vet_specialty_window_days": 14,      # Lookback window for category stats
+    "vet_max_specialty_losses": 0,        # Max losses in top category; 0 = disabled
+    # Vetting pass gates (0 = disabled for numeric mins). Fee gate uses estimated_fees_paid proxy.
+    "vet_min_trades_won": 0,
+    "vet_max_losses": 0,
+    "vet_min_pnl": 0,
+    "vet_min_roi_pct": 30,  # Prefer profitable; 0 = disabled
+    "vet_min_conviction": 70,  # High-conviction bettors; 0 = disabled
+    "vet_min_estimated_fees": 0,
+    "vet_max_trades_per_day": 100,
+    "vet_min_current_win_streak": 0,
+    "vet_min_reliability_score": 0,
+    "win_streak_badge_threshold": 5,
+    "farming_min_profit_pct": 5,
+    "farming_zero_weight_below_pct": 2,
+    "farming_penalty_pct": 20,
+    "farming_score_cap": 60,
+    "farming_avg_profit_pct_min": 5,
+    # Copy/execution removed: pure wallet finder (no copy trading)
+    "copy_removed": True,
     "copy_enabled": False,
-    "copy_size_multiplier": 1.0,
-    "copy_max_order_usd": 100,
-    "copy_min_odds": 0.05,
-    "copy_max_odds": 0.95,
-    "copy_min_liquidity_usd": 2000,
-    "copy_pause": False,
-    "copy_dry_run": True,
-    "copy_default_user_id": "",  # Discord/Telegram user ID for copy execution (optional)
-    # Safety controls
-    "copy_max_trades_per_minute": 0,  # 0 = no throttle
-    "copy_reduce_multiplier_after_trades": 0,  # 0 = disabled; after N trades in window, use reduced multiplier
-    "copy_reduced_multiplier": 0.5,
-    "copy_reduction_window_minutes": 60,
-    "copy_freeze_after_trades": 0,  # 0 = disabled; freeze new positions after N trades in window
-    "copy_freeze_duration_minutes": 60,
-    "copy_fee_pct": 0.77,  # Fee % on copy trades (future monetization)
-    "copy_referral_discount_pct": 10,  # Referral discount % (future)
+    # Vetting UI / hot-streak (used by WalletVetting; kept in file on schema upgrade)
+    "vet_recent_wins_window": 10,
+    "vet_min_recent_wins": 3,
+    # Overrides for known-good wallets when API resolution is thin
+    "vet_min_resolved_markets": 0,  # 0 = skip gate; 5 = require 5+ resolved markets
+    "vet_max_bot_score": 70,  # Fail vetting if bot_score > this; lower = stricter; 100 = off
+    # Unresolved losses: only count when market resolution date is days past + wallet holds losing position
+    # 0 = disable gate (can't reliably track); >0 = max allowed before fail
+    "vet_max_unresolved_losses": 0,
+    "vet_unresolved_min_days_past": 3,  # Only count if endDate is this many days past (avoids false positives)
+    # Background collector: skip stats refresh if last_updated is newer than this (hours). 0 = refresh all.
+    "collector_stats_skip_hours": 24,
+    # Dashboard bulk Classify: skip if last_scored_at within this many hours. 0 = classify all.
+    "classify_bulk_skip_hours": 24,
+    # Bulk Vet All: skip if last_vetted_at within this many hours (e.g. 48–72 when vetting 4×/day). 0 = vet all.
+    "vet_skip_hours": 48,
+    # Dashboard UI: poll /api/dashboard/data this often (seconds). 0 = manual refresh only.
+    "dashboard_poll_interval_sec": 90,
 }
+
+# Keys reset from DEFAULT_CONFIG when config.json is older than CONFIG_SCHEMA_VERSION.
+_VETTING_AND_WALLET_PIPELINE_KEYS = tuple(
+    k
+    for k in DEFAULT_CONFIG
+    if k.startswith("vet_")
+    or k
+    in (
+        "wallet_cleanup_enabled",
+        "wallet_cleanup_interval_sec",
+        "wallet_cleanup_min_win_rate",
+        "wallet_cleanup_min_trades",
+        "wallet_cleanup_grace_days",
+        "wallet_cleanup_remove_farmer",
+        "wallet_cleanup_remove_bot",
+        "wallet_cleanup_bot_min_bot_score",
+        "wallet_blocklist",
+        "wallet_discovery_enabled",
+        "wallet_discovery_interval_sec",
+        "wallet_discovery_max_new",
+        "wallet_discovery_max_wallets",
+        "wallet_discovery_min_volume",
+        "wallet_discovery_gamma_supplement",
+        "win_rate_threshold",  # high-performer / discovery alignment
+        "collector_stats_skip_hours",
+        "classify_bulk_skip_hours",
+    )
+)
 
 # Shared Bankr client instance
 _bankr_client = None
 
 
-def get_bankr_client(api_key: str = None) -> "BankrClient | None":
-    """Get or create shared Bankr client. Returns None if api_key is empty or unset.
-    Callers must guard: if not bankr or not bankr.is_configured(): ..."""
+def get_bankr_client(api_key: str = None) -> "BankrClient":
+    """Get or create shared Bankr client."""
     global _bankr_client
     if _bankr_client is None and api_key:
         from src.market.bankr import BankrClient
 
         _bankr_client = BankrClient(api_key)
-    return _bankr_client
+        return _bankr_client
+
+
+def max_tracked_wallets(config: Any = None) -> int:
+    """Max wallets for CLI, Discord, and manual adds (same cap as auto wallet discovery)."""
+    default_cap = int(DEFAULT_CONFIG.get("wallet_discovery_max_wallets", 100) or 100)
+    if config is None:
+        return default_cap
+    if isinstance(config, dict):
+        return int(config.get("wallet_discovery_max_wallets", default_cap) or default_cap)
+    return int(config.get("wallet_discovery_max_wallets", default_cap) or default_cap)
 
 
 # Secrets that will be loaded from .env
@@ -138,6 +181,7 @@ SECRET_KEYS = [
     "jupiter_id",
     "bankr_api_key",
     "hashdive_api_key",
+    "DASHBOARD_API_KEY",
 ]
 
 # Backup config defaults
@@ -165,16 +209,59 @@ class Config:
 
         # Start with default config
         config = DEFAULT_CONFIG.copy()
+        loaded_from_file: Dict[str, Any] = {}
+        file_existed = Path(self.config_path).exists()
 
         # Load from config.json for non-secret values
-        if Path(self.config_path).exists():
+        if file_existed:
             try:
                 with open(self.config_path, "r") as f:
                     loaded_from_file = json.load(f)
+                    # Strip PumpFun keys (feature removed)
+                    pump_keys = [k for k in loaded_from_file if str(k).startswith("pump_")]
+                    for k in pump_keys:
+                        del loaded_from_file[k]
+                    if pump_keys:
+                        try:
+                            with open(self.config_path, "w", encoding="utf-8") as fw:
+                                json.dump(loaded_from_file, fw, indent=2)
+                            logger.info("Removed %d pump_* keys from config (PumpFun removed)", len(pump_keys))
+                        except OSError:
+                            pass
                     config.update(loaded_from_file)
             except (json.JSONDecodeError, OSError) as e:
-                print(f"Error loading config file: {e}")
-                print("Using default configuration for non-secrets.")
+                logger.warning("Error loading config file: %s — using defaults for non-secrets", e)
+
+        # One-time (per schema) refresh: old config.json often had strict vet_* / cleanup on disk.
+        old_schema = int(loaded_from_file.get("config_schema_version") or 0)
+        if file_existed and old_schema < CONFIG_SCHEMA_VERSION:
+            for key in _VETTING_AND_WALLET_PIPELINE_KEYS:
+                if key in DEFAULT_CONFIG:
+                    config[key] = DEFAULT_CONFIG[key]
+            config["config_schema_version"] = CONFIG_SCHEMA_VERSION
+            try:
+                # Do not persist env-only secrets (not in file yet at this point in _load).
+                with open(self.config_path, "w", encoding="utf-8") as f:
+                    json.dump(config, f, indent=2)
+                logger.info(
+                    "config.json upgraded to schema %s (vetting & wallet pipeline keys synced from defaults)",
+                    CONFIG_SCHEMA_VERSION,
+                )
+            except OSError as e:
+                logger.warning(
+                    "Could not save config.json after schema upgrade (%s); using merged values in memory only",
+                    e,
+                )
+
+        # Renamed vet_bulk_skip_hours → classify_bulk_skip_hours + collector_stats_skip_hours (schema 11)
+        if "vet_bulk_skip_hours" in loaded_from_file:
+            try:
+                vbi = int(loaded_from_file.get("vet_bulk_skip_hours", 24) or 0)
+            except (TypeError, ValueError):
+                vbi = 24
+            config["classify_bulk_skip_hours"] = vbi
+            config["collector_stats_skip_hours"] = vbi
+        config.pop("vet_bulk_skip_hours", None)
 
         # Load secrets from environment variables, overriding any other values
         for key in SECRET_KEYS:
@@ -182,44 +269,24 @@ class Config:
             if env_value:
                 config[key] = env_value
 
-        # Env overrides for copy trading
-        if os.getenv("COPY_DEFAULT_USER_ID"):
-            config["copy_default_user_id"] = os.getenv("COPY_DEFAULT_USER_ID").strip()
-
-        # MED-001: Warn if secrets came from file (config.json) instead of env
-        if os.getenv("POLYSUITE_STRICT_SECRETS", "").lower() in ("1", "true", "yes"):
-            for key in SECRET_KEYS:
-                if config.get(key) and not os.getenv(key.upper()):
-                    raise RuntimeError(
-                        f"Secret '{key}' loaded from config.json but POLYSUITE_STRICT_SECRETS=1. "
-                        "Set secrets via environment variables only."
-                    )
-
         return config
 
     def save(self) -> None:
         """Save config to file."""
-        # Only save non-secret keys
-        config_to_save = {
-            k: v for k, v in self.config.items() if k not in SECRET_KEYS
-        }
         with open(self.config_path, "w") as f:
-            json.dump(config_to_save, f, indent=2)
+            json.dump(self.config, f, indent=2)
+
+    def reload(self) -> None:
+        """Reload merged config from disk (`config.json`) and environment.
+
+        Used by the dashboard so edits to `config.json` apply without restarting
+        the server (collector intervals still require restart for `main.py run`).
+        """
+        self.config = self._load()
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get config value."""
         return self.config.get(key, default)
-
-    def get_safe_for_logging(self) -> Dict[str, Any]:
-        """Return config with secrets redacted (HIGH-002). Use for logging/debug."""
-        return {
-            k: ("***" if k in SECRET_KEYS else v)
-            for k, v in self.config.items()
-        }
-
-    def __repr__(self) -> str:
-        """Avoid leaking secrets when config is printed or logged (SEC-003)."""
-        return repr(self.get_safe_for_logging())
 
     def set(self, key: str, value: Any) -> None:
         """Set config value."""
@@ -260,6 +327,10 @@ class Config:
     @property
     def alert_cooldown_convergence(self) -> int:
         return self.config.get("alert_cooldown_convergence", 1800)
+
+    @property
+    def alert_cooldown_arb(self) -> int:
+        return self.config.get("alert_cooldown_arb", 900)
 
     @property
     def alert_cooldown_new_market(self) -> int:
@@ -338,64 +409,9 @@ class Config:
         return self.config.get("whale_min_size", 50000)
 
     @property
-    def whale_alerts_enabled(self) -> bool:
-        """Enable whale trade alerts (disabled until curated AI-vetted wallet list)."""
-        return self.config.get("whale_alerts_enabled", False)
-
-    @property
-    def trend_scanner_enabled(self) -> bool:
-        """Enable trend scanner (pump.fun, meme coins)."""
-        return self.config.get("trend_scanner_enabled", False)
-
-    @property
-    def ai_daily_summary_enabled(self) -> bool:
-        """Enable AI daily summary (overlaps with 30-min report)."""
-        return self.config.get("ai_daily_summary_enabled", False)
-
-    @property
-    def jupiter_alerts_enabled(self) -> bool:
-        """Enable Jupiter prediction market alerts (Polymarket-sourced)."""
-        return self.config.get("jupiter_alerts_enabled", False)
-
-    @property
-    def background_vetting_interval(self) -> int:
-        """Seconds between background leaderboard vetting runs (default 24h)."""
-        return self.config.get("background_vetting_interval", 86400)
-
-    @property
     def ai_filter_low_value_alerts(self) -> bool:
         """Skip new market alerts when AI scores opportunity as LOW and volume < 5k."""
         return self.config.get("ai_filter_low_value_alerts", False)
-
-    @property
-    def ai_report_enabled(self) -> bool:
-        """Enable AI 30-min market report."""
-        return self.config.get("ai_report_enabled", True)
-
-    @property
-    def min_liquidity_depth_usd(self) -> float:
-        """Minimum order book depth (USD) for alert qualification."""
-        return float(self.config.get("min_liquidity_depth_usd", 5000))
-
-    @property
-    def max_spread_pct(self) -> float:
-        """Maximum spread (percent) for alert qualification."""
-        return float(self.config.get("max_spread_pct", 5.0))
-
-    @property
-    def require_liquidity_check(self) -> bool:
-        """Require liquidity depth check before sending new market alerts."""
-        return self.config.get("require_liquidity_check", False)
-
-    @property
-    def min_volume_for_alert(self) -> float:
-        """Minimum market volume for new market alerts."""
-        return float(self.config.get("min_volume_for_alert", 5000))
-
-    @property
-    def qualification_strict_mode(self) -> bool:
-        """Reject on any qualification gate failure."""
-        return self.config.get("qualification_strict_mode", False)
 
     @property
     def telegram_bot_token(self) -> str:
@@ -432,6 +448,16 @@ class Config:
     @property
     def leaderboard_import_interval(self) -> int:
         return self.config.get("leaderboard_import_interval", 604800)
+
+    @property
+    def scan_interval_sec(self) -> int:
+        """Seconds between background collector runs (default 30 min)."""
+        return self.config.get("scan_interval_sec", 1800)
+
+    @property
+    def cache_ttl_sec(self) -> int:
+        """Cache TTL for scan results in seconds (default 10 min)."""
+        return self.config.get("cache_ttl_sec", 600)
 
     @property
     def domeapi_key(self) -> str:
@@ -486,81 +512,6 @@ class Config:
         return self.config.get("min_bet_size", 10.0)
 
     @property
-    def vet_min_pnl(self) -> float:
-        """Minimum realized PnL (USD) to qualify as vetted."""
-        return float(self.config.get("vet_min_pnl", 0))
-
-    @property
-    def vet_min_roi_pct(self) -> float:
-        """Minimum ROI % to qualify (0 = no filter)."""
-        return float(self.config.get("vet_min_roi_pct", 0))
-
-    @property
-    def vet_max_trades_per_day(self) -> float:
-        """Reject arbitrage-like wallets above this trades/day."""
-        return float(self.config.get("vet_max_trades_per_day", 100))
-
-    @property
-    def vet_min_conviction(self) -> float:
-        """Minimum conviction score 0-100 (0 = no filter)."""
-        return float(self.config.get("vet_min_conviction", 0))
-
-    @property
-    def vet_min_recent_wins(self) -> int:
-        """Min wins in last N resolved trades to qualify via recent-wins path."""
-        return int(self.config.get("vet_min_recent_wins", 3))
-
-    @property
-    def vet_recent_wins_window(self) -> int:
-        """Look at last N resolved trades for recent-wins."""
-        return int(self.config.get("vet_recent_wins_window", 10))
-
-    @property
-    def vet_min_specialty_wins(self) -> int:
-        """Min wins in a market to qualify as specialty."""
-        return int(self.config.get("vet_min_specialty_wins", 3))
-
-    @property
-    def vet_min_specialty_streak(self) -> int:
-        """Min wins in a row in that market for specialty."""
-        return int(self.config.get("vet_min_specialty_streak", 2))
-
-    @property
-    def vet_max_specialty_losses(self) -> int:
-        """Max losses in that market for specialty (low losses)."""
-        return int(self.config.get("vet_max_specialty_losses", 1))
-
-    @property
-    def vet_min_estimated_fees(self) -> float:
-        """Min estimated fees paid (Polymarket only; Kalshi/Jupiter bypass)."""
-        return float(self.config.get("vet_min_estimated_fees", 0))
-
-    @property
-    def vet_min_trades_won(self) -> int:
-        """Min total wins in resolved markets."""
-        return int(self.config.get("vet_min_trades_won", 5))
-
-    @property
-    def vet_max_losses(self) -> int:
-        """Max total losses allowed (0 = no limit)."""
-        return int(self.config.get("vet_max_losses", 0))
-
-    @property
-    def wallet_list_interval(self) -> int:
-        """Seconds between weekly wallet list broadcasts (default 7 days)."""
-        return int(self.config.get("wallet_list_interval", 604800))
-
-    @property
-    def wallet_list_min(self) -> int:
-        """Minimum wallets to include in weekly list."""
-        return int(self.config.get("wallet_list_min", 10))
-
-    @property
-    def wallet_list_max(self) -> int:
-        """Maximum wallets in weekly list."""
-        return int(self.config.get("wallet_list_max", 30))
-
-    @property
     def convergence_time_window_hours(self) -> int:
         return self.config.get("convergence_time_window_hours", 6)
 
@@ -583,3 +534,95 @@ class Config:
     @property
     def odds_move_threshold(self) -> float:
         return self.config.get("odds_move_threshold", 0.15)
+
+    @property
+    def vet_recent_wins_window(self) -> int:
+        return self.config.get("vet_recent_wins_window", 10)
+
+    @property
+    def vet_min_recent_wins(self) -> int:
+        return self.config.get("vet_min_recent_wins", 3)
+
+    @property
+    def vet_min_specialty_wins(self) -> int:
+        return self.config.get("vet_min_specialty_wins", 4)
+
+    @property
+    def vet_min_specialty_trades(self) -> int:
+        return self.config.get("vet_min_specialty_trades", 10)
+
+    @property
+    def vet_min_specialty_category_pct(self) -> int:
+        return self.config.get("vet_min_specialty_category_pct", 50)
+
+    @property
+    def vet_min_specialty_profit_pct(self) -> int:
+        return self.config.get("vet_min_specialty_profit_pct", 15)
+
+    @property
+    def vet_specialty_window_days(self) -> int:
+        return self.config.get("vet_specialty_window_days", 14)
+
+    @property
+    def vet_max_specialty_losses(self) -> int:
+        return self.config.get("vet_max_specialty_losses", 2)
+
+    @property
+    def win_streak_badge_threshold(self) -> int:
+        return self.config.get("win_streak_badge_threshold", 5)
+
+    @property
+    def farming_min_profit_pct(self) -> float:
+        return self.config.get("farming_min_profit_pct", 5)
+
+    @property
+    def farming_zero_weight_below_pct(self) -> float:
+        return self.config.get("farming_zero_weight_below_pct", 2)
+
+    @property
+    def farming_penalty_pct(self) -> float:
+        return self.config.get("farming_penalty_pct", 20)
+
+    @property
+    def farming_score_cap(self) -> float:
+        return self.config.get("farming_score_cap", 60)
+
+    @property
+    def farming_avg_profit_pct_min(self) -> float:
+        return self.config.get("farming_avg_profit_pct_min", 5)
+
+    @property
+    def vet_min_pnl(self) -> int:
+        return self.config.get("vet_min_pnl", 0)
+
+    @property
+    def vet_max_trades_per_day(self) -> int:
+        return self.config.get("vet_max_trades_per_day", 100)
+
+    @property
+    def vet_min_roi_pct(self) -> int:
+        return self.config.get("vet_min_roi_pct", 0)
+
+    @property
+    def vet_min_conviction(self) -> int:
+        return self.config.get("vet_min_conviction", 0)
+
+    @property
+    def vet_min_trades_won(self) -> int:
+        return self.config.get("vet_min_trades_won", 0)
+
+    @property
+    def vet_max_losses(self) -> int:
+        return self.config.get("vet_max_losses", 0)
+
+    @property
+    def vet_min_current_win_streak(self) -> int:
+        return self.config.get("vet_min_current_win_streak", 0)
+
+    @property
+    def vet_min_reliability_score(self) -> int:
+        return self.config.get("vet_min_reliability_score", 0)
+
+    @property
+    def vet_min_estimated_fees(self) -> int:
+        return self.config.get("vet_min_estimated_fees", 0)

@@ -68,3 +68,8 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+# Windows reserved / accidental NUL device file
+nul
+
+# Local scratch HTML exports (optional)
+*temp*dashboard*.html

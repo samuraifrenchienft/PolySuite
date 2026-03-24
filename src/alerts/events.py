@@ -1,11 +1,14 @@
 """Event-based alerts for PolySuite."""
 
 import json
+import logging
 import re
 from collections import OrderedDict
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta, timezone
 from src.market.api import APIClientFactory
+
+logger = logging.getLogger(__name__)
 
 
 class _BoundedDict(OrderedDict):
@@ -23,1003 +26,6 @@ class _BoundedDict(OrderedDict):
 
 class EventAlerter:
     """Detect interesting events in prediction markets."""
-
-    # Category keywords - comprehensive matching
-    # Based on CoinMarketCap top cryptos + prediction market terms
-    CATEGORY_KEYWORDS = {
-        "crypto": [
-            # Top by market cap (2026)
-            "bitcoin",
-            "btc",
-            "ethereum",
-            "eth",
-            "ether",
-            "tether",
-            "usdt",
-            "usdc",
-            "xrp",
-            "bnb",
-            "binance",
-            "solana",
-            "sol",
-            "dogecoin",
-            "doge",
-            "cardano",
-            "ada",
-            "tron",
-            "trx",
-            "sui",
-            "chainlink",
-            "link",
-            "avax",
-            "avalanche",
-            "stellar",
-            "xlm",
-            "shiba inu",
-            "shib",
-            "shiba",
-            "hedera",
-            "hbar",
-            "ton",
-            "telegram",
-            "polkadot",
-            "dot",
-            "bitcoin cash",
-            "bch",
-            "uniswap",
-            "uni",
-            "litecoin",
-            "ltc",
-            "aave",
-            "maker",
-            "mkr",
-            "cosmos",
-            "atom",
-            "filecoin",
-            "fil",
-            "internet computer",
-            "icp",
-            "render",
-            "rndr",
-            "optimism",
-            "op",
-            "arbitrum",
-            "arb",
-            "base",
-            "sei",
-            "injective",
-            "inj",
-            "aptos",
-            "apt",
-            "synthetix",
-            "snx",
-            "gmx",
-            "pyth",
-            "fetch",
-            "fet",
-            "ai16z",
-            "bonk",
-            "wif",
-            "popcat",
-            "goat",
-            "fartcoin",
-            "vitalik",
-            "sbf",
-            # DeFi/Crypto terms
-            "defi",
-            "dao",
-            "nft",
-            "token",
-            "tokenize",
-            "cryptocurrency",
-            "crypto",
-            "altcoin",
-            "coinbase",
-            "kraken",
-            "metamask",
-            "phantom",
-            "solflare",
-            "hyperliquid",
-            "hype",
-            "megaeth",
-            "jupiter",
-            "raydium",
-            "orca",
-            "pump fun",
-            "pump",
-            "memecoin",
-            "meme coin",
-            "加密",
-            # Crypto 5M/15M short-term
-            "5 min",
-            "15 min",
-            "5m",
-            "15m",
-            "hourly",
-            "up or down",
-            "candle",
-            "close",
-            "open",
-        ],
-        "sports": [
-            # NFL
-            "nfl",
-            "super bowl",
-            "nfc",
-            "afc",
-            "falcons",
-            "panthers",
-            "49ers",
-            "packers",
-            "eagles",
-            "cowboys",
-            "ravens",
-            "bengals",
-            "bills",
-            "broncos",
-            "browns",
-            "buccaneers",
-            "cardinals",
-            "chargers",
-            "chiefs",
-            "colts",
-            "commanders",
-            "cowboys",
-            "dolphins",
-            "falcons",
-            "giants",
-            "jaguars",
-            "jets",
-            "lions",
-            "packers",
-            "panthers",
-            "patriots",
-            "raiders",
-            "rams",
-            "ravens",
-            "saints",
-            "seahawks",
-            "steelers",
-            "texans",
-            "titans",
-            "vikings",
-            # NBA
-            "nba",
-            "nba finals",
-            "playoffs",
-            "draft",
-            "lakers",
-            "celtics",
-            "warriors",
-            "bulls",
-            "heat",
-            "nets",
-            "knicks",
-            "mavericks",
-            "grizzlies",
-            "suns",
-            "clippers",
-            "nuggets",
-            "cavaliers",
-            "hornets",
-            "pelicans",
-            "pistons",
-            "raptors",
-            "rockets",
-            "kings",
-            "spurs",
-            "jazz",
-            "wizards",
-            "magic",
-            "hawks",
-            "thunder",
-            "bucks",
-            "pacers",
-            "blazers",
-            # MLB
-            "mlb",
-            "world series",
-            "yankees",
-            "dodgers",
-            "red sox",
-            "baseball",
-            "astros",
-            "cubs",
-            "giants",
-            "mets",
-            "phillies",
-            "cardinals",
-            "dodgers",
-            "orioles",
-            "rangers",
-            "rays",
-            "reds",
-            "brewers",
-            "guardians",
-            "mariners",
-            "marlins",
-            "athletics",
-            "pirates",
-            "padres",
-            "white sox",
-            "nationals",
-            # NHL
-            "nhl",
-            "stanley cup",
-            "hockey",
-            "hurricanes",
-            "bruins",
-            "sabres",
-            "flames",
-            "ducks",
-            "blackhawks",
-            "blue jackets",
-            "blues",
-            "predators",
-            "senators",
-            "capitals",
-            "golden knights",
-            "islanders",
-            "jets",
-            "kraken",
-            "lightning",
-            "maple leafs",
-            "oilers",
-            "panthers",
-            "penguins",
-            "red wings",
-            "sharks",
-            "stars",
-            "wild",
-            # Soccer - Premier League
-            "premier league",
-            "manchester",
-            "liverpool",
-            "arsenal",
-            "chelsea",
-            "tottenham",
-            "man city",
-            "man utd",
-            "newcastle",
-            "west ham",
-            "brighton",
-            "aston villa",
-            "wolves",
-            "fulham",
-            "crystal palace",
-            # Soccer - La Liga
-            "la liga",
-            "real madrid",
-            "barcelona",
-            "atletico madrid",
-            "sevilla",
-            "villareal",
-            "athletic bilbao",
-            "real sociedad",
-            # Soccer - Champions League
-            "champions league",
-            "uefa",
-            "bayern",
-            "psg",
-            "juventus",
-            "milan",
-            "inter milan",
-            "dortmund",
-            "napoli",
-            "roma",
-            "leverkusen",
-            # Soccer - World Cup/Olympics
-            "world cup",
-            "fifa",
-            "euro",
-            "euro 2028",
-            "world cup 2026",
-            "argentina",
-            "brazil",
-            "france",
-            "germany",
-            "spain",
-            "england",
-            "portugal",
-            "netherlands",
-            "italy",
-            "belgium",
-            # Olympics
-            "olympics",
-            "olympic",
-            "paris 2028",
-            "los angeles 2028",
-            "milan 2026",
-            "brisbane 2032",
-            # Tennis
-            "tennis",
-            "wimbledon",
-            "us open",
-            "french open",
-            "australian open",
-            "ao",
-            "rg",
-            "usao",
-            "atp",
-            "wta",
-            "djokovic",
-            "alcaraz",
-            "sinner",
-            "fritz",
-            "zverev",
-            "medvedev",
-            "rune",
-            "ruud",
-            "tsitsipas",
-            # Golf
-            "golf",
-            "pga",
-            "masters",
-            "us open",
-            "british open",
-            "pga championship",
-            "liv golf",
-            " LIV",
-            "ryder cup",
-            "seppi",
-            "scottie",
-            "rory",
-            "schauffele",
-            # UFC/Boxing/MMA
-            "ufc",
-            "boxing",
-            "mma",
-            "wrestling",
-            "wwe",
-            "one championship",
-            "jon jones",
-            "jones",
-            "mcgregor",
-            "poirier",
-            "islam",
-            # Cricket
-            "cricket",
-            "ipl",
-            "big bash",
-            "ashes",
-            "world cup t20",
-            "india",
-            "australia",
-            "england",
-            "pakistan",
-            "south africa",
-            # College Football (CFB)
-            "cfb",
-            "college football",
-            "ncaa football",
-            "sec",
-            "big ten",
-            "big 12",
-            "acc",
-            "pac-12",
-            "pac12",
-            "alabama",
-            "crimson tide",
-            "georgia",
-            "bulldogs",
-            "ohio state",
-            "buckeyes",
-            "michigan",
-            "wolverines",
-            "texas",
-            "longhorns",
-            "oregon",
-            "ducks",
-            "lsu",
-            "tigers",
-            "clemson",
-            "tigers",
-            "notre dame",
-            "fighting irish",
-            "penn state",
-            "nittany lions",
-            "tennessee",
-            "volunteers",
-            "florida",
-            "gators",
-            "auburn",
-            "war eagles",
-            "oklahoma",
-            "sooners",
-            "usc",
-            "trojans",
-            "ucla",
-            "bruins",
-            "florida state",
-            "seminoles",
-            "miami",
-            "hurricanes",
-            "texas a&m",
-            "aggies",
-            "ole miss",
-            "rebels",
-            "arkansas",
-            "razorbacks",
-            "kentucky",
-            "wildcats",
-            "south carolina",
-            "gamecocks",
-            "missouri",
-            "tigers",
-            "iowa",
-            "hawkeyes",
-            "wisconsin",
-            "badgers",
-            "nebraska",
-            "cornhuskers",
-            "michigan state",
-            "spartans",
-            "washington",
-            "huskies",
-            "utah",
-            "utes",
-            "colorado",
-            "buffaloes",
-            "baylor",
-            "bears",
-            "oklahoma state",
-            "cowboys",
-            "kansas state",
-            "wildcats",
-            "tcu",
-            "horned frogs",
-            "west virginia",
-            "mountaineers",
-            "iowa state",
-            "cyclones",
-            "north carolina",
-            "tar heels",
-            "virginia tech",
-            "hokies",
-            "louisville",
-            "cardinals",
-            "nc state",
-            "wolfpack",
-            "syracuse",
-            "orange",
-            "pitt",
-            "panthers",
-            "boston college",
-            "eagles",
-            "wake forest",
-            "demon deacons",
-            "duke",
-            "blue devils",
-            "georgia tech",
-            "yellow jackets",
-            "virginia",
-            "cavaliers",
-            "miami hurricanes",
-            "bowl game",
-            "college playoff",
-            "cfp",
-            # College Basketball
-            "college basketball",
-            "ncaa basketball",
-            "march madness",
-            "final four",
-            "ncaa tournament",
-            "duke blue devils",
-            "kansas",
-            "jayhawks",
-            "kentucky wildcats",
-            "north carolina tar heels",
-            "ucla bruins",
-            "villanova",
-            "wildcats",
-            "gonzaga",
-            "bulldogs",
-            "arizona",
-            "wildcats",
-            "houston",
-            "cougars",
-            "purdue",
-            "boilermakers",
-            "uconn",
-            "huskies",
-            "creighton",
-            "bluejays",
-            "marquette",
-            "golden eagles",
-            "tennessee volunteers",
-            "alabama crimson tide",
-            "arkansas razorbacks",
-            "baylor bears",
-            "iowa hawkeyes",
-            "illinois",
-            "fighting illini",
-            "michigan state spartans",
-            "wisconsin badgers",
-            "indiana",
-            "hoosiers",
-            "maryland",
-            "terrapins",
-            "ohio state buckeyes",
-            "michigan wolverines",
-            "penn state nittany lions",
-            "syracuse orange",
-            "louisville cardinals",
-            "virginia cavaliers",
-            "florida state seminoles",
-            "miami hurricanes",
-            "nc state wolfpack",
-            "wake forest demon deacons",
-            "georgia tech yellow jackets",
-            "clemson tigers",
-            "virginia tech hokies",
-            "texas longhorns",
-            "kansas jayhawks",
-            "texas tech",
-            "red raiders",
-            "oklahoma sooners",
-            "oklahoma state cowboys",
-            "west virginia mountaineers",
-            "iowa state cyclones",
-            "kansas state wildcats",
-            "tcu horned frogs",
-            "baylor bears",
-            "san diego state",
-            "aztecs",
-            "st. john's",
-            "red storm",
-            "georgetown",
-            "hoyas",
-            "xavier",
-            "musketeers",
-            "butler",
-            "bulldogs",
-            "providence",
-            "friars",
-            "seton hall",
-            "pirates",
-            "depaul",
-            "blue demons",
-            # College Baseball
-            "college baseball",
-            "ncaa baseball",
-            "college world series",
-            "cws",
-            "omaha",
-            "sec baseball",
-            "acc baseball",
-            "big 12 baseball",
-            "tennessee volunteers",
-            "arkansas razorbacks",
-            "lsu tigers",
-            "texas a&m aggies",
-            "vanderbilt",
-            "commodores",
-            "florida gators",
-            "ole miss rebels",
-            "auburn tigers",
-            "alabama crimson tide",
-            "georgia bulldogs",
-            "south carolina gamecocks",
-            "kentucky wildcats",
-            "mississippi state",
-            "bulldogs",
-            "clemson tigers",
-            "florida state seminoles",
-            "north carolina tar heels",
-            "virginia cavaliers",
-            "duke blue devils",
-            "nc state wolfpack",
-            "miami hurricanes",
-            "louisville cardinals",
-            "wake forest demon deacons",
-            "georgia tech yellow jackets",
-            "boston college eagles",
-            "oregon state",
-            "beavers",
-            "stanford",
-            "cardinal",
-            "ucla bruins",
-            "arizona wildcats",
-            "oregon ducks",
-            "washington huskies",
-            "super regional",
-            "regionals",
-            # Other Sports
-            "f1",
-            "formula 1",
-            "nascar",
-            "indy 500",
-            "daytona",
-            "nba all star",
-            "all star game",
-            "mvp",
-            "roty",
-            # Esports
-            "valorant",
-            "league of legends",
-            "lol",
-            "dota",
-            "csgo",
-            "overwatch",
-            # Gaming/Entertainment
-            "gta",
-            "video game",
-            "call of duty",
-            "madden",
-            "nba 2k",
-            "fifa",
-            "mario",
-            "zelda",
-            "fortnite",
-            "playstation",
-            "xbox",
-        ],
-        "politics": [
-            # US Politics
-            "president",
-            "election",
-            "trump",
-            "biden",
-            "harris",
-            "pence",
-            "congress",
-            "senate",
-            "house",
-            "parliament",
-            "prime minister",
-            "governor",
-            "republican",
-            "democrat",
-            "gop",
-            "democratic",
-            "voting",
-            "vote",
-            "ballot",
-            "inauguration",
-            "nominee",
-            "primary",
-            "caucus",
-            "convention",
-            "debate",
-            "rally",
-            "campaign",
-            "white house",
-            "capitol",
-            "supreme court",
-            "scotus",
-            "senator",
-            "representative",
-            "congressman",
-            "congresswoman",
-            "mayor",
-            "attorney general",
-            "secretary",
-            "ambassador",
-            # US Elections 2028
-            "2028",
-            "hillary",
-            "clinton",
-            "obama",
-            "bush",
-            "clinton",
-            "tim walz",
-            "gavin newsom",
-            "j.d. vance",
-            "vance",
-            "pence",
-            "ron desantis",
-            "desantis",
-            "nikki haley",
-            "haley",
-            "christie",
-            "mayor pete",
-            "buttigieg",
-            "ramaswamy",
-            "vivek",
-            "youngkin",
-            "beshear",
-            "andrew yang",
-            "yang",
-            "mike pence",
-            "mike johnson",
-            "marco rubio",
-            "rubio",
-            "bernie",
-            "sanders",
-            "aoc",
-            "ocasio-cortez",
-            "warren",
-            "booker",
-            "klobuchar",
-            "bennet",
-            "scaled",
-            "whitmer",
-            "gregg",
-            "shapiro",
-            "pritzker",
-            "newsom",
-            "adams",
-            "adams",
-            # US Elections 2024/2026
-            "2024",
-            "2026",
-            "2025",
-            "hunter biden",
-            "impeachment",
-            "indictment",
-            "supreme court",
-            "roe",
-            "wade",
-            "abortion",
-            # International Politics
-            "ukraine",
-            "russia",
-            "putin",
-            "zelensky",
-            "war",
-            "invasion",
-            "nato",
-            "eu",
-            "europe",
-            "united nations",
-            "security council",
-            "china",
-            "xi",
-            "taiwan",
-            "beijing",
-            "hong kong",
-            "iran",
-            "israel",
-            "netanyahu",
-            "gaza",
-            "hamas",
-            "hezbollah",
-            "north korea",
-            "kim jong",
-            "putin",
-            "biden",
-            "trump",
-            "brexit",
-            "uk",
-            "britain",
-            "british",
-            "european union",
-            "canada",
-            "mexico",
-            "immigration",
-            "border",
-            "deportation",
-            "tariff",
-            "tariffs",
-            "trade war",
-            "sanction",
-            "nuclear",
-            "weapon",
-            # Cabinet / Legislative
-            "cabinet",
-            "veto",
-            "executive order",
-            "nomination",
-            "confirmation",
-            "mcconnell",
-            "schumer",
-            "pelosi",
-            "mccarthy",
-            "jeffries",
-            "johnson",
-            "speaker",
-            # Kalshi/Polymarket overlap
-            "cfb",
-            "kalshi",
-            "daily",
-            "fed",
-            "rate cut",
-            "rate hike",
-            "fomc",
-            # World Leaders
-            "macron",
-            "le pen",
-            "starmer",
-            "sunak",
-            "meloni",
-            "scholz",
-            "modi",
-            "india",
-            "japan",
-            "australia",
-            "brazil",
-            "mexico",
-            "erdogan",
-            "turkey",
-            "saudi",
-            "uae",
-            "king",
-            "queen",
-        ],
-        "tech": [
-            "ai",
-            "artificial intelligence",
-            "openai",
-            "chatgpt",
-            "gpt",
-            "llm",
-            "machine learning",
-            "nvidia",
-            "meta",
-            "earnings",
-            "ipo",
-            "amd",
-            "intel",
-            "quantum",
-            "cybersecurity",
-            "robotics",
-            "software",
-            "startup",
-            "tech",
-        ],
-        "economy": [
-            "inflation",
-            "gdp",
-            "unemployment",
-            "interest rate",
-            "fed",
-            "recession",
-            # Kalshi
-            "cfb",
-            "cpi",
-            "jobs report",
-            "tariff",
-            "tariffs",
-            "revenue",
-            "market cap",
-            "stock",
-            "nasdaq",
-            "sp500",
-            "dow",
-            "s&p",
-            "treasury",
-            "bond",
-            "natural gas",
-            "oil",
-            "gold",
-            "silver",
-            "commodity",
-        ],
-        "weather": [
-            "earthquake",
-            "hurricane",
-            "tornado",
-            "weather",
-            "storm",
-            "flood",
-            "blizzard",
-            "rain",
-            "snow",
-            "temperature",
-            "forecast",
-            "climate",
-            "el nino",
-            "la nina",
-            "typhoon",
-            "cyclone",
-        ],
-        "esports": [
-            "esports",
-            "esport",
-            "league of legends",
-            "lol",
-            "valorant",
-            "csgo",
-            "cs2",
-            "counter-strike",
-            "dota",
-            "dota 2",
-            "overwatch",
-            "ow2",
-            "fortnite",
-            "apex legends",
-            "pubg",
-            "call of duty",
-            "cod",
-            "minecraft",
-            "roblox",
-            "twitch",
-            "steam",
-            "pgl",
-            "esl",
-            "blizzcon",
-            "worlds",
-            "msi",
-            "iem",
-            "eleague",
-            "major",
-        ],
-        "business": [
-            "market cap",
-            "ipo",
-            "stock",
-            "revenue",
-            "profit",
-            "earnings",
-            "tesla",
-            "apple",
-            "amazon",
-            "google",
-            "microsoft",
-            "meta",
-            "tesla",
-            "coinbase",
-            "spacex",
-            "twitter",
-            "x.com",
-        ],
-        "entertainment": [
-            "grammy",
-            "oscar",
-            "emmy",
-            "tony",
-            "movie",
-            "film",
-            "netflix",
-            "disney",
-            "hbo",
-            "streaming",
-            "box office",
-            "album",
-            "song",
-            "music",
-            "chart",
-            "billboard",
-        ],
-        "esports": [
-            "esports",
-            "esport",
-            "league of legends",
-            "lol",
-            "valorant",
-            "csgo",
-            "cs2",
-            "counter-strike",
-            "dota",
-            "dota 2",
-            "overwatch",
-            "ow2",
-            "fortnite",
-            "apex legends",
-            "pubg",
-            "call of duty",
-            "cod",
-            "minecraft",
-            "roblox",
-            "twitch",
-            "steam",
-            "pgl",
-            "esl",
-            "blizzcon",
-            "worlds",
-            "msi",
-            "iem",
-            "eleague",
-            "major",
-        ],
-    }
-
-    CRYPTO_SHORT_TERM_KEYWORDS = [
-        "5 min",
-        "15 min",
-        "5m",
-        "15m",
-        "5-minute",
-        "15-minute",
-        "5 minute",
-        "15 minute",
-        "hourly",
-        "up or down",
-        "higher",
-        "lower",
-        "up",
-        "down",
-    ]
 
     def __init__(
         self,
@@ -1045,6 +51,33 @@ class EventAlerter:
             maxsize=50
         )  # coin_id -> {price, change}
         self._previous_volumes = _BoundedDict(maxsize=500)
+        self.CATEGORY_KEYWORDS = self._load_category_keywords()
+
+    def _load_category_keywords(self) -> Dict[str, List[str]]:
+        """Load category keywords from JSON file."""
+        try:
+            with open("src/alerts/category_keywords.json", "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning("Error loading category keywords: %s", e)
+            return {}
+
+    CRYPTO_SHORT_TERM_KEYWORDS = [
+        "5 min",
+        "15 min",
+        "5m",
+        "15m",
+        "5-minute",
+        "15-minute",
+        "5 minute",
+        "15 minute",
+        "hourly",
+        "up or down",
+        "higher",
+        "lower",
+        "up",
+        "down",
+    ]
 
     def is_crypto_short_term(self, question: str) -> bool:
         """Check if question describes a crypto 5M/15M short-term market."""
@@ -1060,9 +93,11 @@ class EventAlerter:
         )
         return has_timeframe and has_asset and has_direction
 
-    def get_category(self, question: str) -> Optional[str]:
-        """Determine market category from question."""
-        q = question.lower()
+    def get_category(self, question: str, group_title: str = "") -> Optional[str]:
+        """Determine market category from question and optional group title."""
+        q = (question or "").lower()
+        group = (group_title or "").lower()
+        q = q + " " + group
         if self.is_crypto_short_term(q):
             return "crypto"
 
@@ -1157,11 +192,12 @@ class EventAlerter:
         if not categories:
             return markets
         return [
-            m for m in markets if self.get_category(m.get("question", "")) in categories
+            m for m in markets
+            if self.get_category(m.get("question", ""), m.get("groupItemTitle", "")) in categories
         ]
 
     def check_new_markets(
-        self, limit: int = 20, categories: List[str] = None
+        self, limit: int = 20, categories: List[str] = None, hours: int = None
     ) -> List[Dict]:
         """Find newly created markets."""
         markets = self.api.get_active_markets(limit=limit) or []
@@ -1172,7 +208,7 @@ class EventAlerter:
 
         new_markets = []
         now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(hours=self.new_market_hours)
+        cutoff = now - timedelta(hours=hours or self.new_market_hours)
 
         for m in markets:
             created_at = m.get("createdAt") or m.get("created_at")
@@ -1189,10 +225,10 @@ class EventAlerter:
 
                 if created > cutoff:
                     m["hours_old"] = (now - created).total_seconds() / 3600
-                    m["category"] = self.get_category(m.get("question", ""))
+                    m["category"] = self.get_category(m.get("question", ""), m.get("groupItemTitle", ""))
                     new_markets.append(m)
-            except Exception:
-                pass
+            except (ValueError, TypeError) as e:
+                logger.debug("Error parsing date: %s", e)
 
         new_markets.sort(key=lambda x: x.get("hours_old", 999))
         return new_markets
@@ -1216,8 +252,8 @@ class EventAlerter:
                     if mid and mid not in seen_sports:
                         seen_sports.add(mid)
                         sports.append(m)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Error fetching sports markets from events: %s", e)
 
         all_ids = {m.get("id") or m.get("conditionId") for m in markets if m}
         for m in sports:
@@ -1232,20 +268,31 @@ class EventAlerter:
             "all_market_ids": all_ids,
         }
 
+    def _fetch_and_filter_markets(self, category: str, limit: int, markets: List[Dict] = None) -> List[Dict]:
+        """Fetch and filter markets by category."""
+        if markets is not None:
+            return self.filter_by_category(markets, [category])
+        
+        if category == "sports" and hasattr(self.api, "get_sports_markets_from_events"):
+            tag_markets = self.api.get_sports_markets_from_events(limit=limit) or []
+            if tag_markets:
+                return self.filter_by_category(tag_markets, ["sports"])
+
+        m = self.api.get_active_markets(limit=limit) or []
+        return self.filter_by_category(m, [category])
+
     def check_crypto_markets(
         self, limit: int = 200, markets: List[Dict] = None
     ) -> List[Dict]:
         """Get only crypto-related markets. Pass pre-fetched markets to avoid extra API call."""
-        if markets is not None:
-            return self.filter_by_category(markets, ["crypto"])
-        m = self.api.get_active_markets(limit=limit) or []
-        return self.filter_by_category(m, ["crypto"])
+        return self._fetch_and_filter_markets("crypto", limit, markets)
 
     def check_crypto_short_term_markets(self, limit: int = 100) -> List[Dict]:
         """Fetch crypto 5M/15M/hourly markets ordered by volume, enriched for alerts."""
         try:
             markets = self.api.get_crypto_short_term_markets(limit=limit) or []
-        except Exception:
+        except Exception as e:
+            logger.warning("Error fetching crypto short term markets: %s", e)
             markets = []
         enriched = []
         for m in markets:
@@ -1272,24 +319,13 @@ class EventAlerter:
         self, limit: int = 400, markets: List[Dict] = None
     ) -> List[Dict]:
         """Get sports markets. Pass pre-fetched markets to avoid extra API call."""
-        if markets is not None:
-            return self.filter_by_category(markets, ["sports"])
-        tag_markets = []
-        if hasattr(self.api, "get_sports_markets_from_events"):
-            tag_markets = self.api.get_sports_markets_from_events(limit=limit) or []
-        if tag_markets:
-            return self.filter_by_category(tag_markets, ["sports"])
-        m = self.api.get_active_markets(limit=limit) or []
-        return self.filter_by_category(m, ["sports"])
+        return self._fetch_and_filter_markets("sports", limit, markets)
 
     def check_politics_markets(
         self, limit: int = 400, markets: List[Dict] = None
     ) -> List[Dict]:
         """Get only politics-related markets. Pass pre-fetched markets to avoid extra API call."""
-        if markets is not None:
-            return self.filter_by_category(markets, ["politics"])
-        m = self.api.get_active_markets(limit=limit) or []
-        return self.filter_by_category(m, ["politics"])
+        return self._fetch_and_filter_markets("politics", limit, markets)
 
     def check_volume_spikes(self, limit: int = 30) -> List[Dict]:
         """Find markets with unusual volume."""
@@ -1357,8 +393,8 @@ class EventAlerter:
                     "yes": current_yes,
                     "timestamp": datetime.now(timezone.utc),
                 }
-            except Exception:
-                pass
+            except (ValueError, TypeError) as e:
+                logger.debug("Error parsing date in expiring events: %s", e)
 
         movements.sort(key=lambda x: x.get("odds_change", 0), reverse=True)
         return movements
@@ -1408,34 +444,7 @@ class EventAlerter:
 
         return "\n".join(lines)
 
-    def check_new_events(self, hours: int = 1, limit: int = 50) -> List[Dict]:
-        """Find newly created events/markets within specified hours."""
-        markets = self.api.get_active_markets(limit=limit) or []
-        new_events = []
-        now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(hours=hours)
 
-        for m in markets:
-            created_at = m.get("createdAt") or m.get("created_at")
-            if not created_at:
-                continue
-
-            try:
-                if isinstance(created_at, str):
-                    if created_at.endswith("Z"):
-                        created_at = created_at[:-1] + "+00:00"
-                    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                else:
-                    created = datetime.fromtimestamp(created_at / 1000, tz=timezone.utc)
-
-                if created > cutoff:
-                    m["hours_old"] = (now - created).total_seconds() / 3600
-                    new_events.append(m)
-            except Exception:
-                pass
-
-        new_events.sort(key=lambda x: x.get("hours_old", 999))
-        return new_events
 
     def check_expiring_events(self, hours: int = 2, limit: int = 20) -> List[Dict]:
         """Find events ending soon (sports games, etc)."""
@@ -1551,7 +560,7 @@ class EventAlerter:
                 }
 
         except Exception as e:
-            print(f"[check_crypto_moves] Error: {e}")
+            logger.warning("check_crypto_moves error: %s", e)
 
         return moves
 
@@ -1627,7 +636,7 @@ class EventAlerter:
                     }
 
         except Exception as e:
-            pass
+            logger.warning("Error fetching crypto prices: %s", e)
 
         return moves
 
@@ -1757,28 +766,6 @@ class EventAlerter:
                 "cyclone",
                 "tsunami",
             ],
-            "esports": [
-                "esports",
-                "esport",
-                "league of legends",
-                "lol",
-                "valorant",
-                "csgo",
-                "cs2",
-                "counter-strike",
-                "dota",
-                "dota 2",
-                "overwatch",
-                "fortnite",
-                "apex legends",
-                "call of duty",
-                "twitch",
-                "steam",
-                "pgl",
-                "esl",
-                "worlds",
-                "msi",
-            ],
             "pop_culture": [
                 "movie",
                 "music",
@@ -1837,5 +824,6 @@ class EventAlerter:
                         break
 
             return results
-        except Exception:
+        except Exception as e:
+            logger.warning("Error checking market categories: %s", e)
             return {cat: [] for cat in categories}

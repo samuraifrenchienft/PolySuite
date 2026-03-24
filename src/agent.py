@@ -1,5 +1,7 @@
 """Ollama agent for natural language queries."""
 
+import logging
+
 try:
     import ollama
 
@@ -12,6 +14,8 @@ from src.market.api import APIClientFactory
 from src.wallet.storage import WalletStorage
 from src.config import Config
 from src.market.bankr import BankrClient
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "llama3.2"
 
@@ -92,7 +96,7 @@ class Agent:
             else:
                 return self._handle_general_query(message)
         except Exception as e:
-            print(f"[Agent] Error: {e}")
+            logger.exception("Agent error: %s", e)
             return "An error occurred. Please try again."
 
     def _handle_wallet_query(self, message: str) -> str:
@@ -404,7 +408,7 @@ Provide a helpful answer about Polymarket prediction markets, smart money tracki
             )
             return response["message"]["content"]
         except Exception as e:
-            print(f"[Agent/LLM] Error: {e}")
+            logger.warning("Agent/LLM error: %s", e)
             return "AI temporarily unavailable. Try asking about: wallets, markets, convergence, volume, or whale activity"
 
     def _get_help(self) -> str:

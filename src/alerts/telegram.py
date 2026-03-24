@@ -1,7 +1,10 @@
 """Telegram alert dispatcher for PolySuite."""
 
+import logging
 import requests
 from typing import List, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class TelegramDispatcher:
@@ -58,7 +61,7 @@ class TelegramDispatcher:
             resp = requests.post(url, data=data, timeout=30)
             return resp.status_code == 200
         except requests.RequestException as e:
-            print(f"Telegram photo error: {e}")
+            logger.warning("Telegram photo error: %s", e)
             return False
 
     def send_photo_bytes(self, image_bytes: bytes, caption: str = "") -> bool:
@@ -75,7 +78,7 @@ class TelegramDispatcher:
             resp = requests.post(url, data=data, files=files, timeout=30)
             return resp.status_code == 200
         except requests.RequestException as e:
-            print(f"Telegram photo error: {e}")
+            logger.warning("Telegram photo error: %s", e)
             return False
 
     def send_message(self, text: str, parse_mode: str = "Markdown") -> bool:
@@ -89,7 +92,7 @@ class TelegramDispatcher:
             True if successful
         """
         if not self.is_configured():
-            print("Telegram not configured")
+            logger.debug("Telegram not configured")
             return False
 
         url = f"{self.api_url}/sendMessage"
@@ -99,7 +102,7 @@ class TelegramDispatcher:
             resp = requests.post(url, json=data, timeout=30)
             return resp.status_code == 200
         except requests.RequestException as e:
-            print(f"Telegram send error: {e}")
+            logger.warning("Telegram send error: %s", e)
             return False
 
     def format_convergence_alert(
@@ -192,13 +195,19 @@ class TelegramDispatcher:
                 chart_url = chart.convergence_chart(market_name, wallets)
                 self.send_photo(chart_url, caption=text[:1024])
         except Exception as e:
-            print(f"Chart error: {e}")
+            logger.warning("Telegram chart error: %s", e)
 
         return self.send_message(text)
 
     def send_new_market_alert(self, market: Dict) -> bool:
         """Send new market alert."""
         text = self.format_new_market_alert(market)
+        return self.send_message(text)
+
+    def send_insider_alert(self, signal: Dict) -> bool:
+        """Send insider/whale signal alert."""
+        from src.alerts.formatter import AlertFormatter
+        text = AlertFormatter.format_insider_signal(signal)
         return self.send_message(text)
 
     def test_connection(self) -> bool:
@@ -211,4 +220,4 @@ class TelegramDispatcher:
             resp = requests.get(url, timeout=30)
             return resp.status_code == 200
         except requests.RequestException as e:
-            print(f"Telegram connection test error: {e}")
+            logger.warning("Telegram connection test error: %s", e)

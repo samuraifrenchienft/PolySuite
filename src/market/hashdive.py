@@ -1,6 +1,9 @@
 """HashDive API client for whale trade tracking."""
+import logging
 import requests
 from typing import List, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class HashdiveClient:
@@ -26,7 +29,7 @@ class HashdiveClient:
             List of whale trade dicts
         """
         if not self.api_key:
-            print("[-] HashDive API key not configured")
+            logger.warning("HashDive API key not configured")
             return []
 
         min_usd = max(0, min(1_000_000, int(min_usd)))
@@ -41,13 +44,13 @@ class HashdiveClient:
                 try:
                     data = resp.json()
                 except requests.exceptions.JSONDecodeError as e:
-                    print(f"Error decoding JSON from Hashdive: {e}")
+                    logger.warning("Error decoding JSON from Hashdive: %s", e)
                     return None
                 return data if isinstance(data, list) else []
             else:
-                print(f"[-] HashDive API error: {resp.status_code}")
+                logger.warning("HashDive API error: %s", resp.status_code)
         except requests.RequestException as e:
-            print(f"[-] HashDive request failed: {e}")
+            logger.warning("HashDive request failed: %s", e)
 
         return []
 

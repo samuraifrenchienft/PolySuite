@@ -1,10 +1,13 @@
 """Advanced convergence detection for PolySuite."""
 
+import logging
 from typing import List, Dict, Set, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 from src.wallet import Wallet
 from src.wallet.storage import WalletStorage
 from src.market.api import APIClientFactory
+
+logger = logging.getLogger(__name__)
 
 
 class ConvergenceDetector:
@@ -26,6 +29,7 @@ class ConvergenceDetector:
         time_window_hours: int = 6,
         max_market_age_hours: int = 24,
         early_entry_minutes: int = 10,
+        min_market_volume: float = 5000,
     ):
         """Initialize detector.
 
@@ -37,6 +41,7 @@ class ConvergenceDetector:
             time_window_hours: Only consider wallet activity within this window
             max_market_age_hours: Only consider markets younger than this
             early_entry_minutes: Flag convergences where wallets entered within X mins
+            min_market_volume: Minimum market volume (USD) to reduce noise
         """
         self.wallet_storage = wallet_storage or WalletStorage()
         self.threshold = threshold
@@ -45,6 +50,7 @@ class ConvergenceDetector:
         self.time_window_hours = time_window_hours
         self.max_market_age_hours = max_market_age_hours
         self.early_entry_minutes = early_entry_minutes
+        self.min_market_volume = min_market_volume
 
     def get_high_performers(self) -> List[Wallet]:
         """Get all tracked wallets above win rate threshold."""
@@ -76,7 +82,7 @@ class ConvergenceDetector:
             age = datetime.now(timezone.utc) - created_time
             return age.total_seconds() / 3600
         except Exception as e:
-            print(f"[Convergence] _get_market_age error: {e}")
+            logger.debug("Convergence _get_market_age error: %s", e)
             return None
 
     def _get_wallet_entry_time(self, wallet: str, market_id: str) -> Optional[datetime]:
@@ -93,12 +99,12 @@ class ConvergenceDetector:
                             ts = ts[:-1] + "+00:00"
                         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
                     except Exception as e:
-                        print(f"[Convergence] _get_wallet_entry_time parse error: {e}")
+                        logger.debug("Convergence _get_wallet_entry_time parse error: %s", e)
 
         try:
             positions = self.api.get_wallet_positions(wallet) if self.api else []
         except Exception as e:
-            print(f"[Convergence] get_wallet_positions error: {e}")
+            logger.debug("Convergence get_wallet_positions error: %s", e)
             positions = []
         for pos in positions:
             pos_market = pos.get("conditionId") or pos.get("market")
@@ -141,7 +147,7 @@ class ConvergenceDetector:
                     created_at / 1000, tz=timezone.utc
                 )
         except Exception as e:
-            print(f"[Convergence] _is_early_entry parse error: {e}")
+            logger.debug("Convergence _is_early_entry parse error: %s", e)
             return False
 
         entry_time = self._get_wallet_entry_time(wallet, market_id)
@@ -184,7 +190,9 @@ class ConvergenceDetector:
                     self.api.get_wallet_positions(wallet.address) if self.api else []
                 )
             except Exception as e:
-                print(f"[Convergence] get_wallet_positions for {wallet.nickname}: {e}")
+                logger.debug(
+                    "Convergence get_wallet_positions for %s: %s", wallet.nickname, e
+                )
                 positions = []
 
             for pos in positions:
@@ -211,7 +219,7 @@ class ConvergenceDetector:
                         if pos_time < time_window:
                             continue
                     except Exception as e:
-                        print(f"[Convergence] pos timestamp parse: {e}")
+                        logger.debug("Convergence pos timestamp parse: %s", e)
 
                 if market_id not in market_convergences:
                     market_convergences[market_id] = {
@@ -272,6 +280,11 @@ class ConvergenceDetector:
                 if age > self.max_market_age_hours:
                     continue
                 conv["market_age_hours"] = age
+
+            # Volume gate: skip low-volume markets to reduce noise
+            vol = float(market.get("volume", 0) or market.get("volumeNum", 0) or 0)
+            if vol < self.min_market_volume:
+                continue
 
             convergences.append(conv)
 

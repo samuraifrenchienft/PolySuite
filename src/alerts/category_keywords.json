@@ -1,0 +1,57 @@
+{
+    "crypto": [
+        "bitcoin", "btc", "ethereum", "eth", "ether", "tether", "usdt", "usdc", "xrp", "bnb", "binance", "solana", "sol", "dogecoin", "doge", "cardano", "ada", "tron", "trx", "sui", "chainlink", "link", "avax", "avalanche", "stellar", "xlm", "shiba inu", "shib", "shiba", "hedera", "hbar", "ton", "telegram", "polkadot", "dot", "bitcoin cash", "bch", "uniswap", "uni", "litecoin", "ltc", "aave", "maker", "mkr", "cosmos", "atom", "filecoin", "fil", "internet computer", "icp", "render", "rndr", "optimism", "op", "arbitrum", "arb", "base", "sei", "injective", "inj", "aptos", "apt", "synthetix", "snx", "gmx", "pyth", "fetch", "fet", "ai16z", "bonk", "wif", "popcat", "goat", "fartcoin", "vitalik", "sbf",
+        "defi", "dao", "nft", "token", "tokenize", "cryptocurrency", "crypto", "altcoin", "coinbase", "kraken", "metamask", "phantom", "solflare", "hyperliquid", "hype", "megaeth", "jupiter", "raydium", "orca", "pump fun", "pump", "memecoin", "meme coin", "加密",
+        "5 min", "15 min", "5m", "15m", "5min", "15min", "5-minute", "15-minute", "5 minute", "15 minute",
+        "hourly", "up or down", "candle", "close", "open", "higher", "lower", "above", "below", "intraday", "rolling"
+    ],
+    "sports": [
+        "nfl", "super bowl", "nfc", "afc", "falcons", "panthers", "49ers", "packers", "eagles", "cowboys", "ravens", "bengals", "bills", "broncos", "browns", "buccaneers", "cardinals", "chargers", "chiefs", "colts", "commanders", "dolphins", "giants", "jaguars", "jets", "lions", "patriots", "raiders", "rams", "saints", "seahawks", "steelers", "texans", "titans", "vikings",
+        "nba", "nba finals", "playoffs", "draft", "lakers", "celtics", "warriors", "bulls", "heat", "nets", "knicks", "mavericks", "grizzlies", "suns", "clippers", "nuggets", "cavaliers", "hornets", "pelicans", "pistons", "raptors", "rockets", "kings", "spurs", "jazz", "wizards", "magic", "hawks", "thunder", "bucks", "pacers", "blazers",
+        "mlb", "world series", "yankees", "dodgers", "red sox", "baseball", "astros", "cubs", "giants", "mets", "phillies", "cardinals", "orioles", "rangers", "rays", "reds", "brewers", "guardians", "mariners", "marlins", "athletics", "pirates", "padres", "white sox", "nationals",
+        "nhl", "stanley cup", "hockey", "hurricanes", "bruins", "sabres", "flames", "ducks", "blackhawks", "blue jackets", "blues", "predators", "senators", "capitals", "golden knights", "islanders", "jets", "kraken", "lightning", "maple leafs", "oilers", "panthers", "penguins", "red wings", "sharks", "stars", "wild",
+        "premier league", "manchester", "liverpool", "arsenal", "chelsea", "tottenham", "man city", "man utd", "newcastle", "west ham", "brighton", "aston villa", "wolves", "fulham", "crystal palace",
+        "la liga", "real madrid", "barcelona", "atletico madrid", "sevilla", "villareal", "athletic bilbao", "real sociedad",
+        "champions league", "uefa", "bayern", "psg", "juventus", "milan", "inter milan", "dortmund", "napoli", "roma", "leverkusen",
+        "world cup", "fifa", "euro", "euro 2028", "world cup 2026", "argentina", "brazil", "france", "germany", "spain", "england", "portugal", "netherlands", "italy", "belgium",
+        "olympics", "olympic", "paris 2028", "los angeles 2028", "milan 2026", "brisbane 2032",
+        "tennis", "wimbledon", "us open", "french open", "australian open", "ao", "rg", "usao", "atp", "wta", "djokovic", "alcaraz", "sinner", "fritz", "zverev", "medvedev", "rune", "ruud", "tsitsipas",
+        "golf", "pga", "masters", "us open", "british open", "pga championship", "liv golf", " LIV", "ryder cup", "seppi", "scottie", "rory", "schauffele",
+        "ufc", "boxing", "mma", "wrestling", "wwe", "one championship", "jon jones", "jones", "mcgregor", "poirier", "islam",
+        "cricket", "ipl", "big bash", "ashes", "world cup t20", "india", "australia", "england", "pakistan", "south africa",
+        "cfb", "college football", "ncaa football", "sec", "big ten", "big 12", "acc", "pac-12", "pac12", "alabama", "crimson tide", "georgia", "bulldogs", "ohio state", "buckeyes", "michigan", "wolverines", "texas", "longhorns", "oregon", "ducks", "lsu", "tigers", "clemson", "notre dame", "fighting irish", "penn state", "nittany lions", "tennessee", "volunteers", "florida", "gators", "auburn", "war eagles", "oklahoma", "sooners", "usc", "trojans", "ucla", "bruins", "florida state", "seminoles", "miami", "hurricanes", "texas a&m", "aggies", "ole miss", "rebels", "arkansas", "razorbacks", "kentucky", "wildcats", "south carolina", "gamecocks", "missouri", "iowa", "hawkeyes", "wisconsin", "badgers", "nebraska", "cornhuskers", "michigan state", "spartans", "washington", "huskies", "utah", "utes", "colorado", "buffaloes", "baylor", "bears", "oklahoma state", "cowboys", "kansas state", "tcu", "horned frogs", "west virginia", "mountaineers", "iowa state", "cyclones", "north carolina", "tar heels", "virginia tech", "hokies", "louisville", "cardinals", "nc state", "wolfpack", "syracuse", "orange", "pitt", "panthers", "boston college", "eagles", "wake forest", "demon deacons", "duke", "blue devils", "georgia tech", "yellow jackets", "virginia", "cavaliers", "miami hurricanes", "bowl game", "college playoff", "cfp",
+        "college basketball", "ncaa basketball", "march madness", "final four", "ncaa tournament", "duke blue devils", "kansas", "jayhawks", "kentucky wildcats", "north carolina tar heels", "ucla bruins", "villanova", "gonzaga", "arizona", "houston", "cougars", "purdue", "boilermakers", "uconn", "huskies", "creighton", "bluejays", "marquette", "golden eagles", "tennessee volunteers", "alabama crimson tide", "arkansas razorbacks", "baylor bears", "iowa hawkeyes", "illinois", "fighting illini", "michigan state spartans", "wisconsin badgers", "indiana", "hoosiers", "maryland", "terrapins", "ohio state buckeyes", "michigan wolverines", "penn state nittany lions", "syracuse orange", "louisville cardinals", "virginia cavaliers", "florida state seminoles", "miami hurricanes", "nc state wolfpack", "wake forest demon deacons", "georgia tech yellow jackets", "clemson tigers", "virginia tech hokies", "texas longhorns", "kansas jayhawks", "texas tech", "red raiders", "oklahoma sooners", "oklahoma state cowboys", "west virginia mountaineers", "iowa state cyclones", "kansas state wildcats", "tcu horned frogs", "san diego state", "aztecs", "st. john's", "red storm", "georgetown", "hoyas", "xavier", "musketeers", "butler", "providence", "friars", "seton hall", "pirates", "depaul", "blue demons",
+        "college baseball", "ncaa baseball", "college world series", "cws", "omaha", "sec baseball", "acc baseball", "big 12 baseball", "tennessee volunteers", "arkansas razorbacks", "lsu tigers", "texas a&m aggies", "vanderbilt", "commodores", "florida gators", "ole miss rebels", "auburn tigers", "alabama crimson tide", "georgia bulldogs", "south carolina gamecocks", "kentucky wildcats", "mississippi state", "clemson tigers", "florida state seminoles", "north carolina tar heels", "virginia cavaliers", "duke blue devils", "nc state wolfpack", "miami hurricanes", "louisville cardinals", "wake forest demon deacons", "georgia tech yellow jackets", "boston college eagles", "oregon state", "beavers", "stanford", "cardinal", "ucla bruins", "arizona wildcats", "oregon ducks", "washington huskies", "super regional", "regionals",
+        "f1", "formula 1", "nascar", "indy 500", "daytona", "nba all star", "all star game", "mvp", "roty",
+        "valorant", "league of legends", "lol", "dota", "csgo", "overwatch",
+        "gta", "video game", "call of duty", "madden", "nba 2k", "fifa", "mario", "zelda", "fortnite", "playstation", "xbox"
+    ],
+    "politics": [
+        "president", "election", "trump", "biden", "harris", "pence", "congress", "senate", "house", "parliament", "prime minister", "governor", "republican", "democrat", "gop", "democratic", "voting", "vote", "ballot", "inauguration", "nominee", "primary", "caucus", "convention", "debate", "rally", "campaign", "white house", "capitol", "supreme court", "scotus", "senator", "representative", "congressman", "congresswoman", "mayor", "attorney general", "secretary", "ambassador",
+        "2028", "hillary", "clinton", "obama", "bush", "tim walz", "gavin newsom", "j.d. vance", "vance", "ron desantis", "desantis", "nikki haley", "haley", "christie", "mayor pete", "buttigieg", "ramaswamy", "vivek", "youngkin", "beshear", "andrew yang", "yang", "mike pence", "mike johnson", "marco rubio", "rubio", "bernie", "sanders", "aoc", "ocasio-cortez", "warren", "booker", "klobuchar", "bennet", "scaled", "whitmer", "gregg", "shapiro", "pritzker", "newsom", "adams",
+        "2024", "2026", "2025", "hunter biden", "impeachment", "indictment", "roe", "wade", "abortion",
+        "ukraine", "russia", "putin", "zelensky", "war", "invasion", "nato", "eu", "europe", "united nations", "security council", "china", "xi", "taiwan", "beijing", "hong kong", "iran", "israel", "netanyahu", "gaza", "hamas", "hezbollah", "north korea", "kim jong", "brexit", "uk", "britain", "british", "european union", "canada", "mexico", "immigration", "border", "deportation", "tariff", "tariffs", "trade war", "sanction", "nuclear", "weapon",
+        "cabinet", "veto", "executive order", "nomination", "confirmation", "mcconnell", "schumer", "pelosi", "mccarthy", "jeffries", "johnson", "speaker",
+        "cfb", "kalshi", "daily", "fed", "rate cut", "rate hike", "fomc",
+        "macron", "le pen", "starmer", "sunak", "meloni", "scholz", "modi", "india", "japan", "australia", "brazil", "mexico", "erdogan", "turkey", "saudi", "uae", "king", "queen"
+    ],
+    "tech": [
+        "ai", "artificial intelligence", "openai", "chatgpt", "gpt", "llm", "machine learning", "nvidia", "meta", "earnings", "ipo", "amd", "intel", "quantum", "cybersecurity", "robotics", "software", "startup", "tech"
+    ],
+    "economy": [
+        "inflation", "gdp", "unemployment", "interest rate", "fed", "recession",
+        "cfb", "cpi", "jobs report", "tariff", "tariffs", "revenue", "market cap", "stock", "nasdaq", "sp500", "dow", "s&p", "treasury", "bond", "natural gas", "oil", "gold", "silver", "commodity"
+    ],
+    "weather": [
+        "earthquake", "hurricane", "tornado", "weather", "storm", "flood", "blizzard", "rain", "snow", "temperature", "forecast", "climate", "el nino", "la nina", "typhoon", "cyclone"
+    ],
+    "esports": [
+        "esports", "esport", "league of legends", "lol", "valorant", "csgo", "cs2", "counter-strike", "dota", "dota 2", "overwatch", "ow2", "fortnite", "apex legends", "pubg", "call of duty", "cod", "minecraft", "roblox", "twitch", "steam", "pgl", "esl", "blizzcon", "worlds", "msi", "iem", "eleague", "major"
+    ],
+    "business": [
+        "market cap", "ipo", "stock", "revenue", "profit", "earnings", "tesla", "apple", "amazon", "google", "microsoft", "meta", "coinbase", "spacex", "twitter", "x.com"
+    ],
+    "entertainment": [
+        "grammy", "oscar", "emmy", "tony", "movie", "film", "netflix", "disney", "hbo", "streaming", "box office", "album", "song", "music", "chart", "billboard"
+    ]
+}

@@ -14,7 +14,7 @@ from typing import Optional
 
 from cryptography.fernet import Fernet
 
-DB_PATH = "data/polysuite.db"
+from src.config.paths import DB_PATH
 TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS user_credentials (
     user_id TEXT NOT NULL,

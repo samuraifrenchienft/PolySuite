@@ -129,7 +129,7 @@ class CombinedDispatcher:
             resp = requests.post(url, json={"content": message}, timeout=10)
             return resp.status_code in (200, 204)
         except Exception as e:
-            print(f"[Discord] Error: {e}")
+            logger.warning("Discord alert error: %s", e)
             return False
 
     def _send_discord_webhook(self, payload: dict, url: Optional[str] = None) -> bool:
@@ -176,7 +176,7 @@ class CombinedDispatcher:
             )
             return resp.status_code == 200
         except Exception as e:
-            print(f"[Telegram] Error: {e}")
+            logger.warning("Telegram alert error: %s", e)
             return False
 
     def _get_market_link(self, market_id_or_obj) -> str:
@@ -552,7 +552,7 @@ class CombinedDispatcher:
                 }
                 self._send_discord_webhook(payload, url=webhook)
             except Exception as e:
-                print(f"[Alerts-Discord] Error: {e}")
+                logger.warning("Alerts-Discord error: %s", e)
 
         if chat:
             self._send_telegram(message, chat)
@@ -565,7 +565,7 @@ class CombinedDispatcher:
             )
 
     def send_to_trends(self, message: str):
-        """Send to trends channel (pump.fun, crypto moves)."""
+        """Send to trends channel (crypto moves, etc.)."""
         chat = (
             getattr(self.config, "telegram_trends_chat_id", None)
             or self.telegram_health_chat

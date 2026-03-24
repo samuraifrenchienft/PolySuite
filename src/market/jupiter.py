@@ -1,8 +1,10 @@
 """Client for interacting with the Jupiter API."""
 
+import logging
 import requests
 from src.config import Config
 
+logger = logging.getLogger(__name__)
 
 JUPITER_API_URL = "https://api.jup.ag"
 
@@ -41,10 +43,10 @@ class JupiterClient:
             try:
                 return response.json()
             except requests.exceptions.JSONDecodeError as e:
-                print(f"Error decoding JSON from Jupiter quote API: {e}")
+                logger.warning("Error decoding JSON from Jupiter quote API: %s", e)
                 return None
         except requests.exceptions.RequestException as e:
-            print(f"Error getting quote from Jupiter API: {e}")
+            logger.warning("Error getting quote from Jupiter API: %s", e)
             return None
 
     def get_swap_instructions(self, quote_response: dict, user_public_key: str):
@@ -64,8 +66,8 @@ class JupiterClient:
             try:
                 return response.json()
             except requests.exceptions.JSONDecodeError as e:
-                print(f"Error decoding JSON from Jupiter swap API: {e}")
+                logger.warning("Error decoding JSON from Jupiter swap API: %s", e)
                 return None
         except requests.exceptions.RequestException as e:
-            print(f"Error getting swap instructions from Jupiter API: {e}")
+            logger.warning("Error getting swap instructions from Jupiter API: %s", e)
             return None

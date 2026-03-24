@@ -3,161 +3,3145 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>PolySuite Dashboard</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+        /* Toggle: add class "glass-theme" to <body> for frosted no-color glass look instead of black+glow */
         :root {
-            --bg: #0f0f14;
-            --card: #1a1a24;
-            --accent: #3498db;
-            --accent-alt: #2ecc71;
-            --text: #e8e8ed;
-            --muted: #8888a0;
+            --bg-primary: #000000;
+            --bg-secondary: #0d0d0d;
+            --bg-tertiary: #1a1a1a;
+            --border: #333333;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --accent: #2563eb;
+            --success: #3fb950;
+            --warning: #f0b429;
+            --danger: #f85149;
+            --purple: #a371f7;
+            --pink: #db61a2;
+            --gridline: #0a1f3d;
         }
-        * { box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            background: var(--bg);
-            color: var(--text);
+
+        * {
             margin: 0;
-            padding: 2rem;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000000;
+            color: var(--text-primary);
             min-height: 100vh;
+            background-image: 
+                linear-gradient(var(--gridline) 1px, transparent 1px),
+                linear-gradient(90deg, var(--gridline) 1px, transparent 1px);
+            background-size: 50px 50px;
         }
-        h1 {
-            font-size: 1.75rem;
-            margin-bottom: 1.5rem;
-            background: linear-gradient(90deg, var(--accent), var(--accent-alt));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        .cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }
-        .card {
-            background: var(--card);
+
+        /* Black cards with white glowing trim on hover */
+        .glass-effect {
+            background: #080808;
+            border: 1px solid rgba(255, 255, 255, 0.06);
             border-radius: 12px;
-            padding: 1.25rem;
-            border: 1px solid rgba(255,255,255,0.06);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            transition: border-color 0.25s, box-shadow 0.25s;
         }
-        .card h3 {
-            font-size: 0.85rem;
-            color: var(--muted);
-            margin: 0 0 0.5rem 0;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+
+        .glass-effect:hover {
+            border-color: rgba(255, 255, 255, 0.35);
+            box-shadow: 0 0 24px rgba(0, 0, 0, 0.6);
         }
-        .card .value {
+
+        .header, .nav-tabs {
+            background: #050505 !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .stat-card, .chart-card, .wallets-table, .health-card, .settings-card {
+            background: #080808 !important;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            transition: border-color 0.25s, box-shadow 0.25s;
+        }
+
+        .stat-card:hover, .chart-card:hover, .health-card:hover, .settings-card:hover {
+            border-color: rgba(255, 255, 255, 0.35);
+            box-shadow: 0 0 24px rgba(0, 0, 0, 0.6);
+        }
+
+        .wallets-table:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Glass theme: frosted translucent look, more opaque / less color tint */
+        body.glass-theme .stat-card,
+        body.glass-theme .chart-card,
+        body.glass-theme .wallets-table,
+        body.glass-theme .health-card,
+        body.glass-theme .settings-card,
+        body.glass-theme .user-card,
+        body.glass-theme .exchange-card {
+            background: rgba(18, 18, 24, 0.85) !important;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 2px solid rgba(255, 255, 255, 0.08);
+            box-shadow: none;
+        }
+        body.glass-theme .stat-card:hover,
+        body.glass-theme .chart-card:hover,
+        body.glass-theme .wallets-table:hover,
+        body.glass-theme .health-card:hover,
+        body.glass-theme .settings-card:hover,
+        body.glass-theme .user-card:hover,
+        body.glass-theme .exchange-card:hover {
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            box-shadow: 0 0 16px rgba(0, 0, 0, 0.5);
+        }
+
+        .wallets-table:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .table-header {
+            background: #0a0a0a !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .table-row {
+            background: transparent !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .table-row:hover {
+            background: rgba(255, 255, 255, 0.03) !important;
+        }
+
+        .modal-content {
+            background: #0a0a0a;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 16px;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
+        }
+
+        /* Header */
+        .header {
+            background: #0d0d0d;
+            border-bottom: 1px solid #333;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
             font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent), var(--purple));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+            color: #ffffff;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .stat-value.success { color: #3fb950; }
+        .stat-value.warning { color: #f0b429; }
+        .stat-value.danger { color: #f85149; }
+        .stat-value.accent { color: var(--accent); }
+        .stat-value.purple { color: #a371f7; }
+        .stat-value.muted { color: #a0a0a0; }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: #a0a0a0;
+            text-transform: uppercase;
+        }
+
+        /* Navigation */
+        .nav-tabs {
+            display: flex;
+            gap: 0.25rem;
+            background: #0d0d0d;
+            padding: 0.5rem 2rem;
+            border-bottom: 1px solid #333;
+            overflow-x: auto;
+        }
+
+        .nav-tab {
+            padding: 0.75rem 1.25rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+
+        .nav-tab:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .nav-tab.active {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        /* Main Content */
+        .main-content {
+            padding: 1.5rem 2rem 2.5rem;
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .stat-card {
+            padding: 1.25rem;
+        }
+
+        .stat-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card-title {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stat-card-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+        }
+
+        .stat-card-icon.blue { background: rgba(37, 99, 235, 0.25); color: var(--accent); }
+        .stat-card-icon.green { background: rgba(63, 185, 80, 0.2); color: var(--success); }
+        .stat-card-icon.purple { background: rgba(163, 113, 247, 0.2); color: var(--purple); }
+        .stat-card-icon.yellow { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
+        .stat-card-icon.pink { background: rgba(219, 97, 162, 0.2); color: var(--pink); }
+        .stat-card-icon.red { background: rgba(248, 81, 73, 0.2); color: var(--danger); }
+
+        .stat-card-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+        }
+
+        .stat-card-change {
+            font-size: 0.75rem;
+            margin-top: 0.25rem;
+        }
+
+        .positive { color: var(--success); }
+        .negative { color: var(--danger); }
+        .neutral { color: var(--text-secondary); }
+
+        /* Charts Grid */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .chart-card {
+            padding: 1.25rem;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .chart-title {
+            font-size: 1rem;
             font-weight: 600;
         }
-        .card .address {
-            font-family: monospace;
-            font-size: 0.8rem;
-            color: var(--muted);
-            word-break: break-all;
+
+        /* Buttons */
+        .btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.2s;
         }
-        .badge {
-            display: inline-block;
-            padding: 0.2em 0.5em;
-            border-radius: 6px;
+
+        .btn:hover {
+            background: var(--border);
+        }
+
+        .btn-sm {
+            padding: 0.35rem 0.75rem;
             font-size: 0.75rem;
-            margin-top: 0.5rem;
         }
-        .badge-volume { background: rgba(52,152,219,0.2); color: var(--accent); }
-        .badge-rate { background: rgba(46,204,113,0.2); color: var(--accent-alt); }
-        .chart-card {
-            background: var(--card);
+
+        .btn-primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #4393e6;
+        }
+
+        .btn-success {
+            background: var(--success);
+            border-color: var(--success);
+            color: #fff;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            border-color: var(--danger);
+            color: #fff;
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #f0b429, #d4941c);
+            border-color: #f0b429;
+            color: #000;
+            font-weight: 600;
+        }
+        
+        .btn-warning:hover {
+            background: linear-gradient(135deg, #ffc107, #f0b429);
+            transform: translateY(-1px);
+        }
+
+        /* Action Bar */
+        .action-bar {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+            align-items: center;
+        }
+
+        .search-input {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            width: 280px;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .filter-select {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+
+        /* Table */
+        .wallets-table {
+            overflow: hidden;
+        }
+
+        .table-header {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr minmax(92px, 1.35fr) 80px 60px 60px;
+            padding: 1rem 1.5rem;
+            background: #0a0a0a;
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+
+        .table-header > div:hover {
+            color: var(--text-primary);
+        }
+
+        .table-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr minmax(92px, 1.35fr) 80px 60px 60px;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            transition: background 0.2s;
+            cursor: pointer;
+        }
+
+        .table-row:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .table-row:last-child {
+            border-bottom: none;
+        }
+
+        .wallets-table-no-copy .table-header,
+        .wallets-table-no-copy .table-row {
+            grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr minmax(92px, 1.35fr) 80px 60px;
+        }
+
+        .table-header .th-specialty {
+            text-transform: none;
+            letter-spacing: 0.02em;
+        }
+
+        .wallet-specialty-cell .specialty-category-label {
+            display: inline-block;
+            max-width: 100%;
+            font-size: 0.72rem;
+            font-weight: 600;
+            line-height: 1.2;
+            padding: 0.2rem 0.45rem;
+            border-radius: 4px;
+            background: rgba(37, 99, 235, 0.2);
+            color: var(--accent);
+            text-transform: none;
+            word-break: break-word;
+        }
+
+        .wallet-nickname {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .wallet-address {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .badge-smart-money {
+            background: rgba(163, 113, 247, 0.2);
+            color: var(--purple);
+        }
+
+        .badge-specialty {
+            background: rgba(37, 99, 235, 0.2);
+            color: var(--accent);
+        }
+        .badge-bot {
+            background: rgba(248, 81, 73, 0.25);
+            color: #f85149;
+            font-size: 0.65rem;
+            margin-right: 0.2rem;
+        }
+        .badge-farmer {
+            background: rgba(210, 153, 34, 0.25);
+            color: #d29922;
+            font-size: 0.65rem;
+            margin-right: 0.2rem;
+        }
+        .badge-hiloss {
+            background: rgba(139, 148, 158, 0.3);
+            color: var(--text-secondary);
+            font-size: 0.65rem;
+            margin-right: 0.2rem;
+        }
+        .badge-win-streak {
+            background: rgba(210, 153, 34, 0.25);
+            color: #d29922;
+        }
+
+        .badge-elite {
+            background: rgba(255, 215, 0, 0.2);
+            color: #FFD700;
+        }
+
+        .badge-vetted {
+            background: rgba(46, 204, 113, 0.2);
+            color: #2ECC71;
+        }
+
+        .badge-watch {
+            background: rgba(149, 165, 166, 0.2);
+            color: #95A5A6;
+        }
+
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .toggle-switch.active {
+            background: var(--success);
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+
+        .toggle-switch.active::after {
+            transform: translateX(20px);
+        }
+
+        /* Health Tab */
+        .health-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        .health-card {
+            padding: 1.25rem;
+        }
+
+        .health-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .health-title {
+            font-size: 1rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .health-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .health-status.healthy {
+            background: rgba(63, 185, 80, 0.2);
+            color: var(--success);
+        }
+
+        .health-status.warning {
+            background: rgba(210, 153, 34, 0.2);
+            color: var(--warning);
+        }
+
+        .health-status.error {
+            background: rgba(248, 81, 73, 0.2);
+            color: var(--danger);
+        }
+
+        .health-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .health-item:last-child {
+            border-bottom: none;
+        }
+
+        .health-item-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .health-item-value {
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Settings Tab */
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1rem;
+        }
+
+        .settings-card {
+            padding: 1.25rem;
+        }
+
+        .settings-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .settings-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .settings-item:last-child {
+            border-bottom: none;
+        }
+
+        .settings-label {
+            font-size: 0.85rem;
+        }
+
+        .settings-label small {
+            display: block;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            margin-top: 0.25rem;
+        }
+
+        .settings-input {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.4rem 0.75rem;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            width: 100px;
+            text-align: right;
+        }
+
+        .settings-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Users Tab */
+        .users-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .user-card {
+            background: #080808 !important;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            padding: 1.25rem;
+            text-align: center;
+            transition: border-color 0.25s, box-shadow 0.25s;
+        }
+        .user-card:hover {
+            border-color: rgba(255, 255, 255, 0.35);
+            box-shadow: 0 0 24px rgba(255, 255, 255, 0.08);
+        }
+
+        .user-card-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .user-card-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        /* Exchanges Tab */
+        .exchanges-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+
+        .exchange-card {
+            background: #080808 !important;
+            border: 1px solid rgba(255, 255, 255, 0.06);
             border-radius: 12px;
             padding: 1.5rem;
-            border: 1px solid rgba(255,255,255,0.06);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+            transition: border-color 0.25s, box-shadow 0.25s;
+        }
+        .exchange-card:hover {
+            border-color: rgba(255, 255, 255, 0.35);
+            box-shadow: 0 0 24px rgba(255, 255, 255, 0.08);
+        }
+
+        .exchange-icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .exchange-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .exchange-status {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .exchange-status.connected {
+            color: var(--success);
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            overflow-y: auto;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 16px;
+            width: 90%;
             max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.5rem;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .form-input {
+            width: 100%;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            z-index: 2000;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success { border-color: var(--success); }
+        .toast.error { border-color: var(--danger); }
+        .toast.warning { border-color: var(--warning); }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.75rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 1rem;
+        }
+
+        .page-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.4rem 0.75rem;
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .page-btn:hover { background: var(--border); }
+        .page-btn.active { background: var(--accent); border-color: var(--accent); }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header { flex-direction: column; gap: 1rem; }
+            .header-stats { width: 100%; justify-content: space-around; }
+            .charts-grid { grid-template-columns: 1fr; }
+            .table-header, .table-row { grid-template-columns: 1fr 1fr 1fr; }
+            .table-header > *:nth-child(n+4), .table-row > *:nth-child(n+4) { display: none; }
         }
     </style>
 </head>
 <body>
-    <h1>PolySuite Dashboard</h1>
-
-    <div class="cards">
-        {% for wallet in wallets or [] %}
-        <div class="card">
-            <h3>{{ wallet.nickname or 'Wallet' }}</h3>
-            <div class="value">${{ "{:,.0f}".format(wallet.trade_volume or 0) }}</div>
-            <div class="address">{{ wallet.address }}</div>
-            <span class="badge badge-volume">{{ wallet.total_trades or 0 }} trades</span>
-            <span class="badge badge-rate">{{ "%.1f"|format(wallet.win_rate or 0) }}% win</span>
+    <!-- Header -->
+    <div class="header">
+        <div class="logo">
+            <div class="logo-icon">P</div>
+            PolySuite
+            <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: normal;">Dashboard</span>
         </div>
-        {% endfor %}
+        <div class="header-right">
+            <div class="header-stats">
+                <div class="stat-item" title="Qualified wallets: ≥55% win rate, min trades, not bot/farmer/high-loss-rate. Filter by Smart Money in the list below.">
+                    <div class="stat-value purple" id="smartMoneyCount">{{ stats.smart_money_count }}</div>
+                    <div class="stat-label">Smart Money</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value {{ 'success' if (stats.avg_win_rate or 0) >= 55 else 'warning' if (stats.avg_win_rate or 0) >= 40 else 'danger' }}" id="avgWinRate">{{ stats.avg_win_rate|default(0) }}%</div>
+                    <div class="stat-label">Avg Win Rate</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="totalWallets">{{ stats.total_wallets }}</div>
+                    <div class="stat-label">Wallets</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value muted" id="totalTrades">{{ stats.total_trades|default(0)|round|int }}</div>
+                    <div class="stat-label">Total Trades</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value muted">{{ user_count.total_users }}</div>
+                    <div class="stat-label">Users</div>
+                </div>
+            </div>
+            <button class="btn btn-sm" id="themeToggle" onclick="toggleTheme()" title="Switch between Glow and Glass card styles">
+                <i class="fas fa-palette"></i> <span id="themeLabel">Glass</span>
+            </button>
+            <button class="btn btn-primary" onclick="showModal('settings')">
+                <i class="fas fa-cog"></i> Settings
+            </button>
+        </div>
     </div>
 
-    <div class="chart-card">
-        <h3 style="margin:0 0 1rem 0; color: var(--muted);">Trade Volume</h3>
-        <canvas id="walletChart"></canvas>
+    <!-- Navigation -->
+    <nav class="nav-tabs">
+        <button class="nav-tab active" data-tab="wallets">
+            <i class="fas fa-wallet"></i> Wallets
+        </button>
+        <button class="nav-tab" data-tab="health">
+            <i class="fas fa-heartbeat"></i> Health
+        </button>
+        <button class="nav-tab" data-tab="users">
+            <i class="fas fa-users"></i> Users
+        </button>
+        <button class="nav-tab" data-tab="exchanges">
+            <i class="fas fa-exchange-alt"></i> Exchanges
+        </button>
+        <button class="nav-tab" data-tab="alerts">
+            <i class="fas fa-bell"></i> Alerts
+        </button>
+        <button class="nav-tab" data-tab="settings">
+            <i class="fas fa-sliders-h"></i> Settings
+        </button>
+        <button class="nav-tab" data-tab="commands">
+            <i class="fas fa-terminal"></i> Commands
+        </button>
+    </nav>
+
+    <div class="main-content">
+        <!-- WALLETS TAB -->
+        <div class="tab-content active" id="tab-wallets">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-card-header">
+                        <div class="stat-card-title"><i class="fas fa-trophy"></i> Top Performers</div>
+                        <div class="stat-card-icon green"><i class="fas fa-star"></i></div>
+                    </div>
+                    <div class="stat-card-value positive" id="topPerformersDisplay">{{ stats.top_performers }}</div>
+                    <div class="stat-card-change" id="topPerformersHint">≥{{ stats.smart_money_threshold|default(55) }}% WR &amp; ≥{{ stats.top_performer_min_trades|default(10) }} trades (excl. bot/farmer)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-header">
+                        <div class="stat-card-title"><i class="fas fa-bolt"></i> Specialty</div>
+                        <div class="stat-card-icon purple"><i class="fas fa-fire"></i></div>
+                    </div>
+                    <div class="stat-card-value" id="specialtyCountDisplay">{{ stats.specialty_count }}</div>
+                    <div class="stat-card-change">Wallets with a specialty category</div>
+                </div>
+                {% if not settings.copy_removed %}
+                <div class="stat-card">
+                    <div class="stat-card-header">
+                        <div class="stat-card-title"><i class="fas fa-copy"></i> Copy Targets</div>
+                        <div class="stat-card-icon blue"><i class="fas fa-copy"></i></div>
+                    </div>
+                    <div class="stat-card-value" id="copyTargetsCount">0</div>
+                    <div class="stat-card-change">Enabled for copy trading</div>
+                </div>
+                {% endif %}
+                <div class="stat-card">
+                    <div class="stat-card-header">
+                        <div class="stat-card-title" id="totalVolumeTitle"><i class="fas fa-chart-line"></i> {% if stats.vetted_count|default(0) > 0 %}Vetted Volume{% else %}Total Volume{% endif %}</div>
+                        <div class="stat-card-icon yellow"><i class="fas fa-dollar-sign"></i></div>
+                    </div>
+                    <div class="stat-card-value" id="totalVolumeDisplay">${{ (stats.volume_display|default(0)/1000)|round(1) }}K</div>
+                    <div class="stat-card-change" id="totalVolumeHint">{{ stats.volume_display_subtitle|default('') }}</div>
+                </div>
+            </div>
+
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <div class="chart-title">Win Rate Distribution</div>
+                    </div>
+                    <canvas id="winRateChart" height="200"></canvas>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <div class="chart-title">Top Wallets by Win Rate</div>
+                    </div>
+                    <canvas id="topWalletsChart" height="200"></canvas>
+                </div>
+            </div>
+
+            <div class="action-bar">
+                <input type="text" class="search-input" id="searchInput" placeholder="Search wallets...">
+                <select class="filter-select" id="sortSelect">
+                    <option value="winRate-desc">Sort: Win Rate ↓</option>
+                    <option value="winRate-asc">Sort: Win Rate ↑</option>
+                    <option value="trades-desc">Sort: Trades ↓</option>
+                    <option value="name-asc">Sort: Name A-Z</option>
+                </select>
+                <select class="filter-select" id="filterSelect">
+                    <option value="all">All Wallets</option>
+                    <option value="smartMoney">Smart Money</option>
+                    <option value="specialty">Specialty</option>
+                    <option value="winStreak">Win Streak</option>
+                    <option value="highWinRate">&gt;55% Win Rate</option>
+                </select>
+                <button class="btn" id="hideBotBtn" onclick="toggleHideBots()" title="Toggle bot/farmer visibility" style="min-width:auto;padding:0.4rem 0.75rem;">
+                    <i class="fas fa-robot"></i> <span id="hideBotLabel">Hide Bots</span>
+                </button>
+                <button class="btn btn-success" onclick="showModal('addWallet')">
+                    <i class="fas fa-plus"></i> Add Wallet
+                </button>
+                <button class="btn btn-warning" onclick="showModal('bulkImport')">
+                    <i class="fas fa-file-import"></i> Bulk Import
+                </button>
+                <button class="btn" onclick="showModal('filterWallets')">
+                    <i class="fas fa-filter"></i> Filter
+                </button>
+                <button class="btn" onclick="showModal('classifyWallets')">
+                    <i class="fas fa-brain"></i> Classify
+                </button>
+                <button class="btn" onclick="showModal('vetAllWallets')">
+                    <i class="fas fa-shield-alt"></i> Vet All
+                </button>
+                <button class="btn btn-primary" onclick="refreshData()">
+                    <i class="fas fa-sync"></i> Refresh
+                </button>
+                <button class="btn" onclick="exportData('csv')">
+                    <i class="fas fa-download"></i> Export
+                </button>
+            </div>
+
+            <div class="wallets-table{% if settings.copy_removed %} wallets-table-no-copy{% endif %}">
+                <div class="table-header">
+                    <div>Wallet</div>
+                    <div>Tier</div>
+                    <div>Win Rate</div>
+                    <div>Trades</div>
+                    <div>Wins</div>
+                    <div>Volume</div>
+                    <div>Score</div>
+                    <div class="th-specialty" title="Category this wallet specializes in">Specialty</div>
+                    <div title="Smart money (SM), win streak (WS)">Status</div>
+                    {% if not settings.copy_removed %}<div>Copy</div>{% endif %}
+                    <div title="Vet: run analysis and promote to Vetted if passed">Actions</div>
+                </div>
+                <div id="walletsList"></div>
+            </div>
+            <div id="walletsCountDisplay" style="margin: 0.5rem 0; color: var(--text-secondary); font-size: 0.9rem;"></div>
+            <div class="pagination" id="pagination"></div>
+        </div>
+
+        <!-- HEALTH TAB -->
+        <div class="tab-content" id="tab-health">
+            <div class="action-bar" style="margin-bottom: 1rem;">
+                <button class="btn btn-primary" id="healthRefreshBtn" onclick="refreshHealthMetrics()">
+                    <i class="fas fa-sync-alt"></i> Refresh Metrics
+                </button>
+            </div>
+            <div class="stats-grid" id="health-stats-grid">
+                <div class="stat-card">
+                    <div class="stat-card-header">
+                        <div class="stat-card-title"><i class="fas fa-server"></i> System Status</div>
+                        <div class="stat-card-icon {{ 'green' if health.status == 'healthy' else 'red' }}">
+                            <i class="fas {{ 'fa-check' if health.status == 'healthy' else 'fa-exclamation' }}"></i>
+                        </div>
+                    </div>
+                    <div class="stat-card-value" id="health-status" style="text-transform: capitalize;">{{ health.status }}</div>
+                    <div class="stat-card-change" id="health-last-sync">Last sync: {{ health.last_sync }}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-header">
+                        <div class="stat-card-title"><i class="fas fa-clock"></i> Uptime</div>
+                        <div class="stat-card-icon blue"><i class="fas fa-clock"></i></div>
+                    </div>
+                    <div class="stat-card-value" id="health-uptime">{{ health.uptime_hours }}h</div>
+                    <div class="stat-card-change">Running time</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-header">
+                        <div class="stat-card-title"><i class="fas fa-microchip"></i> Memory</div>
+                        <div class="stat-card-icon yellow"><i class="fas fa-memory"></i></div>
+                    </div>
+                    <div class="stat-card-value" id="health-memory-pct">{{ health.memory_usage_pct|default(0) }}%</div>
+                    <div class="stat-card-change">System</div>
+                    <div class="stat-card-change" id="health-memory-detail" style="margin-top: 0.25rem; font-weight: 600;">Suite System Process: {{ health.memory_usage_mb|default(0) }} MB</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-header">
+                        <div class="stat-card-title"><i class="fas fa-tachometer-alt"></i> CPU</div>
+                        <div class="stat-card-icon purple"><i class="fas fa-microchip"></i></div>
+                    </div>
+                    <div class="stat-card-value" id="health-cpu-pct">{{ health.cpu_usage_percent }}%</div>
+                    <div class="stat-card-change">System-wide</div>
+                </div>
+            </div>
+
+            <div class="health-grid">
+                <div class="health-card">
+                    <div class="health-header">
+                        <div class="health-title"><i class="fas fa-plug"></i> API Connections</div>
+                    </div>
+                    <div class="health-item">
+                        <span class="health-item-label">Polymarket</span>
+                        <span class="health-item-value">
+                            <span class="health-status {{ 'healthy' if health.polymarket_connected else 'error' }}">
+                                <i class="fas {{ 'fa-check-circle' if health.polymarket_connected else 'fa-times-circle' }}"></i>
+                                {{ 'Connected' if health.polymarket_connected else 'Disconnected' }}
+                            </span>
+                        </span>
+                    </div>
+                    <div class="health-item">
+                        <span class="health-item-label">Kalshi</span>
+                        <span class="health-item-value">
+                            <span class="health-status {{ 'healthy' if health.kalshi_connected else 'error' }}">
+                                <i class="fas {{ 'fa-check-circle' if health.kalshi_connected else 'fa-times-circle' }}"></i>
+                                {{ 'Connected' if health.kalshi_connected else 'Disconnected' }}
+                            </span>
+                        </span>
+                    </div>
+                    <div class="health-item">
+                        <span class="health-item-label">Jupiter</span>
+                        <span class="health-item-value">
+                            <span class="health-status {{ 'healthy' if health.jupiter_connected else 'error' }}">
+                                <i class="fas {{ 'fa-check-circle' if health.jupiter_connected else 'fa-times-circle' }}"></i>
+                                {{ 'Connected' if health.jupiter_connected else 'Disconnected' }}
+                            </span>
+                        </span>
+                    </div>
+                    <div class="health-item">
+                        <span class="health-item-label">Database</span>
+                        <span class="health-item-value">
+                            <span class="health-status {{ 'healthy' if health.database_connected else 'error' }}">
+                                <i class="fas {{ 'fa-check-circle' if health.database_connected else 'fa-times-circle' }}"></i>
+                                {{ 'Connected' if health.database_connected else 'Disconnected' }}
+                            </span>
+                        </span>
+                    </div>
+                </div>
+
+                <div class="health-card">
+                    <div class="health-header">
+                        <div class="health-title"><i class="fab fa-telegram"></i> Bot Connections</div>
+                    </div>
+                    <div class="health-item">
+                        <span class="health-item-label">Telegram</span>
+                        <span class="health-item-value">
+                            <span class="health-status {{ 'healthy' if health.telegram_connected else 'warning' }}">
+                                <i class="fas {{ 'fa-check-circle' if health.telegram_connected else 'fa-minus-circle' }}"></i>
+                                {{ 'Connected' if health.telegram_connected else 'Not Configured' }}
+                            </span>
+                        </span>
+                    </div>
+                    <div class="health-item">
+                        <span class="health-item-label">Discord</span>
+                        <span class="health-item-value">
+                            <span class="health-status {{ 'healthy' if health.discord_connected else 'warning' }}">
+                                <i class="fas {{ 'fa-check-circle' if health.discord_connected else 'fa-minus-circle' }}"></i>
+                                {{ 'Connected' if health.discord_connected else 'Not Configured' }}
+                            </span>
+                        </span>
+                    </div>
+                    <div class="health-item">
+                        <span class="health-item-label">Test Telegram</span>
+                        <span class="health-item-value">
+                            <button class="btn btn-sm" onclick="testTelegram()">Send Test</button>
+                        </span>
+                    </div>
+                    <div class="health-item">
+                        <span class="health-item-label">Test Discord</span>
+                        <span class="health-item-value">
+                            <button class="btn btn-sm" onclick="testDiscord()">Send Test</button>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- USERS TAB -->
+        <div class="tab-content" id="tab-users">
+            <div class="users-grid">
+                <div class="user-card">
+                    <div class="user-card-value">{{ user_count.total_users }}</div>
+                    <div class="user-card-label">Total Users</div>
+                </div>
+                <div class="user-card">
+                    <div class="user-card-value">{{ user_count.active_users }}</div>
+                    <div class="user-card-label">Active Users</div>
+                </div>
+                <div class="user-card">
+                    <div class="user-card-value">{{ user_count.copy_traders }}</div>
+                    <div class="user-card-label">Copy Traders</div>
+                </div>
+                <div class="user-card">
+                    <div class="user-card-value">{{ user_count.premium_tier }}</div>
+                    <div class="user-card-label">Premium Users</div>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div class="chart-title">User Activity</div>
+                </div>
+                <canvas id="userActivityChart" height="150"></canvas>
+            </div>
+        </div>
+
+        <!-- EXCHANGES TAB -->
+        <div class="tab-content" id="tab-exchanges">
+            <div class="action-bar">
+                <button class="btn btn-primary" onclick="showModal('addExchange')">
+                    <i class="fas fa-plus"></i> Add Exchange
+                </button>
+            </div>
+
+            <div class="exchanges-grid">
+                <div class="exchange-card">
+                    <div class="exchange-icon" style="background: linear-gradient(135deg, #6f42c1, #a855f7);">
+                        <i class="fab fa-ethereum" style="color: white;"></i>
+                    </div>
+                    <div class="exchange-name">Polymarket</div>
+                    <div class="exchange-status {{ 'connected' if health.polymarket_connected else '' }}">
+                        <i class="fas {{ 'fa-check-circle' if health.polymarket_connected else 'fa-times-circle' }}"></i>
+                        {{ 'Connected' if health.polymarket_connected else 'Not Connected' }}
+                    </div>
+                    <button class="btn {{ 'btn-danger' if health.polymarket_connected else 'btn-success' }}" onclick="toggleExchange('polymarket')">
+                        {{ 'Disconnect' if health.polymarket_connected else 'Connect' }}
+                    </button>
+                </div>
+
+                <div class="exchange-card">
+                    <div class="exchange-icon" style="background: linear-gradient(135deg, #2563eb, #3b82f6);">
+                        <i class="fas fa-chart-line" style="color: white;"></i>
+                    </div>
+                    <div class="exchange-name">Kalshi</div>
+                    <div class="exchange-status {{ 'connected' if health.kalshi_connected else '' }}">
+                        <i class="fas {{ 'fa-check-circle' if health.kalshi_connected else 'fa-times-circle' }}"></i>
+                        {{ 'Connected' if health.kalshi_connected else 'Not Connected' }}
+                    </div>
+                    <button class="btn {{ 'btn-danger' if health.kalshi_connected else 'btn-success' }}" onclick="toggleExchange('kalshi')">
+                        {{ 'Disconnect' if health.kalshi_connected else 'Connect' }}
+                    </button>
+                </div>
+
+                <div class="exchange-card">
+                    <div class="exchange-icon" style="background: linear-gradient(135deg, #dc2626, #f97316);">
+                        <i class="fas fa-meteor" style="color: white;"></i>
+                    </div>
+                    <div class="exchange-name">Jupiter</div>
+                    <div class="exchange-status {{ 'connected' if health.jupiter_connected else '' }}">
+                        <i class="fas {{ 'fa-check-circle' if health.jupiter_connected else 'fa-times-circle' }}"></i>
+                        {{ 'Connected' if health.jupiter_connected else 'Not Connected' }}
+                    </div>
+                    <button class="btn {{ 'btn-danger' if health.jupiter_connected else 'btn-success' }}" onclick="toggleExchange('jupiter')">
+                        {{ 'Disconnect' if health.jupiter_connected else 'Connect' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ALERTS TAB -->
+        <div class="tab-content" id="tab-alerts">
+            <div class="stat-card" style="margin-bottom: 1rem;">
+                <div class="stat-card-header">
+                    <div class="stat-card-title"><i class="fas fa-history"></i> Recent Alerts</div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <button class="btn btn-sm" onclick="loadRecentAlerts()">
+                            <i class="fas fa-sync"></i> Refresh
+                        </button>
+                        <a href="/" target="_blank" rel="noopener noreferrer" class="btn btn-sm" style="text-decoration: none;" title="Open dashboard in new tab">
+                            <i class="fas fa-external-link-alt"></i> New tab
+                        </a>
+                    </div>
+                </div>
+                <div class="stat-card-change" style="margin-bottom: 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">
+                    Alerts fired by the collector (Insider/Whale, Convergence). Run mode only.
+                </div>
+                <div id="recentAlertsList" style="min-height: 100px; font-size: 0.85rem; max-height: 280px; overflow-y: auto;">
+                    <div class="loading" style="color: var(--text-secondary);">Loading...</div>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-card-header">
+                        <div class="stat-card-title"><i class="fas fa-bell"></i> Alert Settings</div>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
+                        <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                            <span>Enable All Alerts</span>
+                            <div class="toggle-switch {{ 'active' if settings.alerts_enabled else '' }}" onclick="toggleSetting('alerts_enabled')"></div>
+                        </div>
+                        <div class="settings-item" style="border: none; padding: 0.5rem 0;" title="Large trades (whale) + fresh wallet + winning outcome. Whale data feeds insider detection.">
+                            <span>Insider / Whale</span>
+                            <div class="toggle-switch {{ 'active' if settings.insider_alerts else '' }}" onclick="toggleSetting('insider_alerts')"></div>
+                        </div>
+                        <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                            <span>Convergence Alerts</span>
+                            <div class="toggle-switch {{ 'active' if settings.convergence_alerts else '' }}" onclick="toggleSetting('convergence_alerts')"></div>
+                        </div>
+                        <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                            <span>Smart Money Alerts</span>
+                            <div class="toggle-switch {{ 'active' if settings.smart_money_alerts else '' }}" onclick="toggleSetting('smart_money_alerts')"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="insider-panel stat-card" style="margin-top: 1rem;">
+                <div class="stat-card-header">
+                    <div class="stat-card-title"><i class="fas fa-chart-line"></i> Insider / Whale</div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <button class="btn btn-sm btn-primary" onclick="scanInsider(false)">
+                            <i class="fas fa-search"></i> Scan
+                        </button>
+                        <a href="#" onclick="scanInsider(true); return false;" style="font-size: 0.75rem; color: var(--text-secondary);" title="Force fresh scan">Force</a>
+                    </div>
+                </div>
+                <div class="stat-card-change" style="margin-bottom: 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">
+                    Large trades (whale) + fresh wallet + winning outcome. Whale data feeds insider detection.
+                </div>
+                <div id="insiderResults" class="insider-results" style="min-height: 80px; font-size: 0.85rem;">
+                    <div class="loading" style="color: var(--text-secondary);">Click Scan to run</div>
+                </div>
+            </div>
+
+            <div class="stat-card" style="margin-top: 1rem;">
+                <div class="stat-card-header">
+                    <div class="stat-card-title"><i class="fas fa-users"></i> Convergence</div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <button class="btn btn-sm btn-primary" onclick="scanConvergence(false)">
+                            <i class="fas fa-search"></i> Check
+                        </button>
+                        <a href="#" onclick="scanConvergence(true); return false;" style="font-size: 0.75rem; color: var(--text-secondary);" title="Force fresh check">Force</a>
+                    </div>
+                </div>
+                <div class="stat-card-change" style="margin-bottom: 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">
+                    Markets where 2+ high-performers overlap. Early entry = wallets entered within 10 min of market creation.
+                </div>
+                <div id="convergenceResults" style="min-height: 80px; font-size: 0.85rem;">
+                    <div class="loading" style="color: var(--text-secondary);">Click Check to run</div>
+                </div>
+            </div>
+
+            <div class="stat-card" style="margin-top: 1rem;">
+                <div class="stat-card-header">
+                    <div class="stat-card-title"><i class="fas fa-balance-scale"></i> Contrarian</div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <button class="btn btn-sm btn-primary" onclick="scanContrarian(false)">
+                            <i class="fas fa-search"></i> Scan
+                        </button>
+                        <a href="#" onclick="scanContrarian(true); return false;" style="font-size: 0.75rem; color: var(--text-secondary);" title="Force fresh scan">Force</a>
+                    </div>
+                </div>
+                <div class="stat-card-change" style="margin-bottom: 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">
+                    Crowd on one side, high payout on minority. Look for YES/NO imbalance with attractive odds.
+                </div>
+                <div id="contrarianResults" style="min-height: 80px; font-size: 0.85rem;">
+                    <div class="loading" style="color: var(--text-secondary);">Click Scan to run</div>
+                </div>
+            </div>
+
+            <div class="action-bar">
+                <button class="btn btn-primary" onclick="showModal('testAlert')">
+                    <i class="fas fa-paper-plane"></i> Send Test Alert
+                </button>
+                <button class="btn" onclick="refreshAlerts()">
+                    <i class="fas fa-sync"></i> Refresh Alerts
+                </button>
+            </div>
+        </div>
+
+        <!-- COMMANDS TAB -->
+        <div class="tab-content" id="tab-commands">
+            <div class="stat-card" style="margin-bottom: 1rem;">
+                <div class="stat-card-header">
+                    <div class="stat-card-title"><i class="fas fa-terminal"></i> CLI Commands</div>
+                </div>
+                <div class="stat-card-change" style="margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-secondary);">
+                    Copy to terminal or click <strong>Run</strong> to execute in-dashboard.
+                </div>
+                <div id="cmd-output" style="display:none; margin-bottom: 1rem; padding: 0.75rem; background: rgba(0,0,0,0.5); border-radius: 8px; font-family: monospace; font-size: 0.8rem; max-height: 300px; overflow-y: auto;"></div>
+                <div style="display: flex; flex-direction: column; gap: 0.75rem; font-family: 'Monaco','Menlo',monospace; font-size: 0.85rem;">
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="cd {{ project_root|default('.') }}; python main.py run" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">cd {{ project_root|default('.') }}; python main.py run</code>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Full run (copy-paste from anywhere): dashboard + background collector</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py run" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py run</code>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Full run (when already in project dir)</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py dashboard" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py dashboard</code>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Dashboard only (no background scans)</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py add 0x... Nickname" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py add &lt;address&gt; &lt;nickname&gt;</code>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Add wallet</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py remove 0x..." style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py remove &lt;address&gt;</code>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Remove wallet</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py list" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py list</code>
+                        <button class="cmd-run" data-api="list" style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— List wallets</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py refresh all" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py refresh all</code>
+                        <button class="cmd-run" data-api="refresh" data-payload='{"address":"all"}' style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Refresh all wallet stats</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py monitor" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py monitor</code>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Continuous monitoring</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py check" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py check</code>
+                        <button class="cmd-run" data-api="check" style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Check convergences</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py markets --limit 20" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py markets --limit 20</code>
+                        <button class="cmd-run" data-api="markets" data-params="?limit=20" style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— List markets</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py import --limit 10" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py import --limit 10</code>
+                        <button class="cmd-run" data-api="import" data-payload='{"limit":10}' style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Import from leaderboard</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py portfolio 0x..." style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py portfolio &lt;address&gt;</code>
+                        <select class="cmd-address" style="padding: 0.25rem 0.5rem; background: rgba(0,0,0,0.5); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); font-size: 0.75rem;">
+                            <option value="">Select wallet</option>
+                            {% for w in wallets %}
+                            <option value="{{ w.address }}">{{ w.nickname|default(w.address[:12]) }}</option>
+                            {% endfor %}
+                        </select>
+                        <button class="cmd-run" data-api="portfolio" data-param="address" style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Show portfolio</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py history 0x..." style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py history &lt;address&gt;</code>
+                        <select class="cmd-address" style="padding: 0.25rem 0.5rem; background: rgba(0,0,0,0.5); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); font-size: 0.75rem;">
+                            <option value="">Select wallet</option>
+                            {% for w in wallets %}
+                            <option value="{{ w.address }}">{{ w.nickname|default(w.address[:12]) }}</option>
+                            {% endfor %}
+                        </select>
+                        <button class="cmd-run" data-api="history" data-param="address" style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Performance history</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py smart-money" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py smart-money</code>
+                        <button class="cmd-run" data-api="smart-money" style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Identify smart money</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py bot" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py bot</code>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Start Telegram bot</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py discord" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py discord</code>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Start Discord bot</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py jupiter quote --input-mint ... --output-mint ... --amount 1000000" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py jupiter quote|swap [--input-mint --output-mint --amount]</code>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Jupiter API (quote/swap)</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py signals" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py signals</code>
+                        <button class="cmd-run" data-api="signals" style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Generate trading signals</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py check_positions" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py check_positions</code>
+                        <button class="cmd-run" data-api="check_positions" style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Check for position changes</span>
+                    </div>
+                    <div class="cmd-row" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <code class="cmd-block" data-cmd="python main.py check_odds" style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.3); border-radius: 6px; cursor: pointer;" title="Copy">python main.py check_odds</code>
+                        <button class="cmd-run" data-api="check_odds" style="padding: 0.25rem 0.5rem; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Run</button>
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">— Check odds movement</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SETTINGS TAB -->
+        <div class="tab-content" id="tab-settings">
+            <div class="settings-grid">
+                <div class="settings-card">
+                    <div class="settings-title"><i class="fas fa-search"></i> Vetting Parameters</div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Min Trades Won
+                            <small>Minimum wins in resolved markets</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.vet_min_trades_won }}" onchange="updateSetting('vet_min_trades_won', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Min Recent Wins
+                            <small>Wins in last N trades</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.vet_min_recent_wins }}" onchange="updateSetting('vet_min_recent_wins', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Collector: skip stats if refreshed within (hours)
+                            <small>Background wallet stats refresh. 0 = refresh all each cycle (still stalest-first). Default 24 skips recently updated wallets.</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" step="1" value="{{ settings.collector_stats_skip_hours|default(24) }}" onchange="updateSetting('collector_stats_skip_hours', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Bulk classify: skip if scored within (hours)
+                            <small>Dashboard bulk Classify only. 0 = classify everyone (still ordered never-scored &amp; stalest first).</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" step="1" value="{{ settings.classify_bulk_skip_hours|default(24) }}" onchange="updateSetting('classify_bulk_skip_hours', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Bulk vet: skip if vetted within (hours)
+                            <small>Vet All only (per-row Vet always runs). 0 = vet everyone. Default 48 fits ~4 runs/day; use 72 for a longer quiet period.</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" step="1" value="{{ settings.vet_skip_hours|default(48) }}" onchange="updateSetting('vet_skip_hours', parseInt(this.value, 10) || 0)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Win Rate Threshold %
+                            <small>Minimum win rate for smart money</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.win_rate_threshold }}" onchange="updateSetting('win_rate_threshold', this.value)">
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-title"><i class="fas fa-broom"></i> Wallet cleanup (tracked list)</div>
+                    <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                        <span>Auto-remove wallets outside win-rate / activity zones</span>
+                        <div class="toggle-switch {{ 'active' if settings.wallet_cleanup_enabled else '' }}" onclick="toggleSetting('wallet_cleanup_enabled')"></div>
+                        <small style="display: block; color: var(--text-secondary); margin-top: 0.25rem;">Runs with the background collector and dashboard-only mode. Removes bot/farmer, inactive (0 trades after grace), and poor performers vs. thresholds below.</small>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Min win rate % (cleanup)
+                            <small>Remove when trades ≥ min trades and win rate is below this</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" max="100" step="1" value="{{ settings.wallet_cleanup_min_win_rate }}" onchange="updateSetting('wallet_cleanup_min_win_rate', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Min trades before judging WR
+                            <small>Skip win-rate / zero-wins removal until this many trades (protects new wallets)</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" step="1" value="{{ settings.wallet_cleanup_min_trades }}" onchange="updateSetting('wallet_cleanup_min_trades', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Cleanup interval (sec)
+                            <small>How often the removal pass is allowed to run</small>
+                        </div>
+                        <input type="number" class="settings-input" min="300" step="60" value="{{ settings.wallet_cleanup_interval_sec }}" onchange="updateSetting('wallet_cleanup_interval_sec', this.value)">
+                    </div>
+                    <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                        <span>Remove farmers on cleanup</span>
+                        <div class="toggle-switch {{ 'active' if settings.wallet_cleanup_remove_farmer else '' }}" onclick="toggleSetting('wallet_cleanup_remove_farmer')"></div>
+                        <small style="display: block; color: var(--text-secondary); margin-top: 0.25rem;">Delete wallets the classifier flags as high-volume / low-profit farmers</small>
+                    </div>
+                    <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                        <span>Remove bots on cleanup</span>
+                        <div class="toggle-switch {{ 'active' if settings.wallet_cleanup_remove_bot else '' }}" onclick="toggleSetting('wallet_cleanup_remove_bot')"></div>
+                        <small style="display: block; color: var(--text-secondary); margin-top: 0.25rem;">Only removes when vet bot_score ≥ threshold below (classifier alone is not enough)</small>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Bot cleanup min bot_score (0–100)
+                            <small>Bots are only removed when their vet bot_score meets this; unvetted wallets are skipped. Tune alongside the vet bot gate below.</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" max="100" step="5" value="{{ settings.wallet_cleanup_bot_min_bot_score }}" onchange="updateSetting('wallet_cleanup_bot_min_bot_score', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Vet max bot score (0–100)
+                            <small>Wallets scoring above this fail the bot gate and cannot reach vetted tier. Lower = stricter. 100 = off.</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" max="100" step="5" value="{{ settings.vet_max_bot_score }}" onchange="updateSetting('vet_max_bot_score', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Dashboard auto-refresh (sec)
+                            <small>How often to reload wallet list &amp; stats from the server. 0 = off (use Refresh button).</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" step="15" value="{{ settings.dashboard_poll_interval_sec|default(90) }}" onchange="updateSetting('dashboard_poll_interval_sec', parseInt(this.value, 10) || 0)">
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-title"><i class="fas fa-bell"></i> Alert Thresholds</div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Insider / Whale Min Size ($)
+                            <small>Min trade size for whale scan (industry: $10K+ for high-value signals)</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.insider_min_size }}" onchange="updateSetting('insider_min_size', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Alert Min PnL ($)
+                            <small>Skip insider alerts with winning trade PnL below this (high-value signals only; industry: $500+)</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.alert_min_pnl|default(500) }}" onchange="updateSetting('alert_min_pnl', this.value)">
+                    </div>
+                    <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                        <span>Skip LOW Confidence (Insider)</span>
+                        <div class="toggle-switch {{ 'active' if settings.alert_skip_low_confidence else '' }}" onclick="toggleSetting('alert_skip_low_confidence')"></div>
+                        <small style="display: block; color: var(--text-secondary); margin-top: 0.25rem;">Only alert MEDIUM/HIGH confidence insider signals</small>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Convergence Min Volume ($)
+                            <small>Skip convergence alerts for markets with volume below this</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.convergence_min_volume|default(5000) }}" onchange="updateSetting('convergence_min_volume', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Scan Interval (sec)
+                            <small>Run mode: background scans every N sec (default 1800 = 30 min)</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.scan_interval_sec }}" onchange="updateSetting('scan_interval_sec', this.value)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Cache TTL (sec)
+                            <small>How long cached scan results stay fresh (default 600 = 10 min)</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.cache_ttl_sec }}" onchange="updateSetting('cache_ttl_sec', this.value)">
+                    </div>
+                </div>
+
+                {% if not settings.copy_removed %}
+                <div class="settings-card">
+                    <div class="settings-title"><i class="fas fa-copy"></i> Copy Trading</div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Copy Trading Enabled
+                            <small>Enable or disable copy trading</small>
+                        </div>
+                        <div class="toggle-switch {{ 'active' if settings.copy_enabled else '' }}" onclick="toggleSetting('copy_enabled')"></div>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Default Multiplier
+                            <small>Position size multiplier</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.copy_multiplier }}" step="0.1" onchange="updateSetting('copy_multiplier', this.value)">
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="settings-card">
+                    <div class="settings-title"><i class="fas fa-robot"></i> Bot Settings</div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Telegram Enabled
+                            <small>Enable Telegram bot</small>
+                        </div>
+                        <div class="toggle-switch {{ 'active' if settings.telegram_enabled else '' }}" onclick="toggleSetting('telegram_enabled')"></div>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Discord Enabled
+                            <small>Enable Discord bot</small>
+                        </div>
+                        <div class="toggle-switch {{ 'active' if settings.discord_enabled else '' }}" onclick="toggleSetting('discord_enabled')"></div>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Monitor Interval (sec)
+                            <small>How often to check for updates</small>
+                        </div>
+                        <input type="number" class="settings-input" value="{{ settings.monitor_interval }}" onchange="updateSetting('monitor_interval', this.value)">
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
+                <button class="btn btn-primary" onclick="saveSettings()">
+                    <i class="fas fa-save"></i> Save Settings
+                </button>
+                <button class="btn" onclick="resetSettings()">
+                    <i class="fas fa-undo"></i> Reset to Defaults
+                </button>
+            </div>
+        </div>
     </div>
 
+    <!-- Modals -->
+    <div class="modal" id="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title" id="modalTitle">Modal</div>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+            <div class="modal-footer" id="modalFooter"></div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast">
+        <span id="toastMessage"></span>
+    </div>
+
+    <script type="application/json" id="dashboard-wallets">{{ wallets_json|safe }}</script>
     <script>
-        // Telegram Mini App: init when opened in Telegram
-        (function() {
-            if (window.Telegram && window.Telegram.WebApp) {
-                const tg = window.Telegram.WebApp;
-                tg.ready();
-                tg.expand();
-                tg.enableClosingConfirmation();
+        let walletsData = [];
+        let statsData = {{ stats | tojson }};
+        let healthData = {{ health | tojson }};
+        let userCountData = {{ user_count | tojson }};
+        let settingsData = {{ settings | tojson }};
+        let __dashboardPollTimer = null;
+        let __dashboardPollInFlight = false;
+        let wallets = [];
+        let filteredWallets = [];
+        let currentPage = 1;
+        const itemsPerPage = 15;
+        let currentSort = { field: 'winRate', direction: 'desc' };
+        let currentFilter = 'all';
+        let hideBots = localStorage.getItem('polysuite_hide_bots') !== 'false'; // default: true
+        let copyTargets = new Set();
+
+        /** Sync header stat cards from stats object (after vet / API refresh without full page reload). */
+        function updateStatCardsFromStats(s) {
+            if (!s || typeof s !== 'object') return;
+            const tp = document.getElementById('topPerformersDisplay');
+            if (tp && s.top_performers != null) tp.textContent = String(s.top_performers);
+            const tph = document.getElementById('topPerformersHint');
+            if (tph && s.smart_money_threshold != null && s.top_performer_min_trades != null) {
+                tph.textContent = '≥' + s.smart_money_threshold + '% WR & ≥' + s.top_performer_min_trades + ' trades (excl. bot/farmer)';
             }
-        })();
+            const vol = document.getElementById('totalVolumeDisplay');
+            const volHint = document.getElementById('totalVolumeHint');
+            const volTitle = document.getElementById('totalVolumeTitle');
+            const disp = s.volume_display != null ? s.volume_display : s.total_volume;
+            if (vol != null && disp != null) {
+                const k = (Number(disp) / 1000).toFixed(1);
+                vol.textContent = '$' + k + 'K';
+            }
+            if (volHint && s.volume_display_subtitle != null) {
+                volHint.textContent = String(s.volume_display_subtitle);
+            }
+            if (volTitle) {
+                const vc = Number(s.vetted_count || 0);
+                volTitle.innerHTML = '<i class="fas fa-chart-line"></i> ' + (vc > 0 ? 'Vetted Volume' : 'Total Volume');
+            }
+            const sp = document.getElementById('specialtyCountDisplay');
+            if (sp && s.specialty_count != null) sp.textContent = String(s.specialty_count);
+        }
 
-        const ctx = document.getElementById('walletChart');
+        /** (1) Specialty stat card: match server stats when no rows yet; else count rows with specialty. */
+        function updateSpecialtyCountDisplay() {
+            const spEl = document.getElementById('specialtyCountDisplay');
+            if (!spEl) return;
+            if (Array.isArray(wallets) && wallets.length > 0) {
+                spEl.textContent = String(wallets.filter(x => x.isSpecialty).length);
+            } else if (statsData != null && statsData.specialty_count != null) {
+                spEl.textContent = String(statsData.specialty_count);
+            } else {
+                spEl.textContent = '0';
+            }
+        }
 
-        const walletChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: [{% for wallet in (wallets or []) %}{{ (wallet.nickname or "Wallet")|tojson }}{% if not loop.last %},{% endif %}{% endfor %}],
-                datasets: [{
-                    label: 'Trade Volume',
-                    data: [{% for wallet in (wallets or []) %}{{ wallet.trade_volume or 0 }},{% endfor %}],
-                    backgroundColor: 'rgba(52, 152, 219, 0.5)',
-                    borderColor: 'rgba(52, 152, 219, 0.8)',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: { display: false }
+        function loadWalletsFromPage() {
+            const el = document.getElementById('dashboard-wallets');
+            if (!el) return [];
+            const raw = (el.textContent || '').trim();
+            if (!raw) return [];
+            try {
+                const parsed = JSON.parse(raw);
+                const arr = Array.isArray(parsed) ? parsed : [];
+                return arr;
+            } catch (e) {
+                if (window.__DASHBOARD_DEBUG) console.warn('loadWalletsFromPage:', e.message);
+                return [];
+            }
+        }
+
+        /** Prefer live JSON from /api/dashboard/data; embedded #dashboard-wallets is fallback if fetch fails. */
+        function loadDashboardStateFromApi() {
+            return fetch('/api/dashboard/data?_=' + Date.now())
+                .then(r => {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                })
+                .then(d => {
+                    walletsData = Array.isArray(d.wallets) ? d.wallets : [];
+                    if (d.stats) statsData = d.stats;
+                    if (d.health) healthData = d.health;
+                    if (d.settings && typeof d.settings === 'object') {
+                        settingsData = { ...settingsData, ...d.settings };
+                    }
+                    updateStatCardsFromStats(d.stats);
+                    return true;
+                })
+                .catch(e => {
+                    if (window.__DASHBOARD_DEBUG) console.warn('[Dashboard] /api/dashboard/data failed:', e.message);
+                    return false;
+                });
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('glass-theme');
+            const isGlass = document.body.classList.contains('glass-theme');
+            const label = document.getElementById('themeLabel');
+            if (label) label.textContent = isGlass ? 'Glow' : 'Glass';
+            try { localStorage.setItem('dashboardTheme', isGlass ? 'glass' : 'glow'); } catch (_) {}
+        }
+        function initTheme() {
+            try {
+                const saved = localStorage.getItem('dashboardTheme');
+                if (saved === 'glass') { document.body.classList.add('glass-theme'); document.getElementById('themeLabel').textContent = 'Glow'; }
+            } catch (_) {}
+        }
+
+        const CMD_ROUTES = {
+            list: { url: '/api/wallets', method: 'GET' },
+            refresh: { url: '/api/refresh/wallets', method: 'POST' },
+            import: { url: '/api/import/leaderboard', method: 'POST' },
+            check: { url: '/api/command/check', method: 'GET' },
+            markets: { url: '/api/command/markets', method: 'GET' },
+            portfolio: { url: '/api/command/portfolio', method: 'GET' },
+            history: { url: '/api/command/history', method: 'GET' },
+            'smart-money': { url: '/api/command/smart-money', method: 'GET' },
+            signals: { url: '/api/command/signals', method: 'GET' },
+            check_positions: { url: '/api/command/check_positions', method: 'GET' },
+            check_odds: { url: '/api/command/check_odds', method: 'GET' }
+        };
+        function runCommand(btn) {
+            const api = btn.getAttribute('data-api');
+            const route = CMD_ROUTES[api];
+            if (!route) { showToast('Unknown command: ' + api, 'error'); return; }
+            let url = route.url;
+            const params = btn.getAttribute('data-params') || '';
+            const paramName = btn.getAttribute('data-param');
+            if (paramName) {
+                const row = btn.closest('.cmd-row');
+                const select = row ? row.querySelector('.cmd-address') : null;
+                const val = select ? select.value : '';
+                if (!val) { showToast('Select a wallet first', 'error'); return; }
+                url += (url.includes('?') ? '&' : '?') + paramName + '=' + encodeURIComponent(val);
+            } else if (params) url += params;
+            const outEl = document.getElementById('cmd-output');
+            if (outEl) { outEl.style.display = 'block'; outEl.textContent = 'Running...'; }
+            const opts = { method: route.method, headers: {} };
+            if (route.method === 'POST') {
+                opts.headers['Content-Type'] = 'application/json';
+                opts.body = btn.getAttribute('data-payload') || '{}';
+            }
+            fetch(url + (url.includes('?') ? '&' : '?') + '_=' + Date.now(), opts)
+                .then(r => r.json())
+                .then(d => {
+                    if (outEl) outEl.textContent = JSON.stringify(d, null, 2);
+                    if (d.ok !== false) showToast('Command completed', 'success');
+                    else showToast(d.error || 'Command failed', 'error');
+                    if (api === 'list' || api === 'refresh' || api === 'import') {
+                        fetch('/api/dashboard/data?_=' + Date.now()).then(r => r.json()).then(data => {
+                            walletsData = Array.isArray(data.wallets) ? data.wallets : [];
+                            _processWallets();
+                            renderWallets();
+                        }).catch(() => {});
+                    }
+                })
+                .catch(e => {
+                    if (outEl) outEl.textContent = 'Error: ' + e.message;
+                    showToast('Request failed: ' + e.message, 'error');
+                });
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            initTheme();
+            initNav();
+            document.querySelectorAll('.cmd-block').forEach(el => {
+                el.addEventListener('click', () => {
+                    const cmd = el.getAttribute('data-cmd') || el.textContent;
+                    navigator.clipboard.writeText(cmd).then(() => showToast('Copied: ' + (cmd.length > 45 ? cmd.substring(0, 42) + '...' : cmd), 'success')).catch(() => showToast('Copy failed', 'error'));
+                });
+            });
+            document.querySelectorAll('.cmd-run').forEach(btn => {
+                btn.addEventListener('click', () => runCommand(btn));
+            });
+            const apiOk = await loadDashboardStateFromApi();
+            if (!apiOk) {
+                walletsData = loadWalletsFromPage();
+            }
+            updateSpecialtyCountDisplay();
+            runInit();
+        });
+
+        function scheduleDashboardPoll() {
+            if (__dashboardPollTimer) {
+                clearInterval(__dashboardPollTimer);
+                __dashboardPollTimer = null;
+            }
+            const raw = settingsData && settingsData.dashboard_poll_interval_sec != null
+                ? parseInt(settingsData.dashboard_poll_interval_sec, 10)
+                : 90;
+            const sec = isNaN(raw) ? 90 : raw;
+            /* 0 = off; 1–14 treated as off (avoid hammering); 15+ seconds */
+            if (sec < 15) return;
+            __dashboardPollTimer = setInterval(function () {
+                if (document.hidden) return;
+                if (__dashboardPollInFlight) return;
+                __dashboardPollInFlight = true;
+                loadDashboardStateFromApi().then(function (ok) {
+                    if (!ok) return;
+                    _processWallets();
+                }).finally(function () {
+                    __dashboardPollInFlight = false;
+                });
+            }, sec * 1000);
+        }
+
+        function runInit() {
+            _syncHideBotsBtn();
+            initWallets();
+            updateSpecialtyCountDisplay();
+            try { initCharts(); } catch (e) { if (window.__DASHBOARD_DEBUG) console.error('initCharts:', e); }
+            if (settingsData && settingsData.copy_removed) {
+                renderWallets();
+            } else {
+                fetch('/api/copy/list?_=' + Date.now()).then(r => r.json()).then(t => {
+                    copyTargets = new Set((t || []).map(x => (x.address || '').toLowerCase()).filter(Boolean));
+                    renderWallets();
+                }).catch(() => { renderWallets(); });
+            }
+            scheduleDashboardPoll();
+        }
+
+        function toggleCopy(address) {
+            const addr = (address || '').toLowerCase();
+            const enabled = !copyTargets.has(addr);
+            fetch('/api/copy/toggle', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({address: addr, enabled})
+            }).then(r => r.json()).then(d => {
+                if (d.ok) {
+                    if (d.enabled) copyTargets.add(addr); else copyTargets.delete(addr);
+                    const w = wallets.find(x => x.address.toLowerCase() === addr);
+                    if (w) w.copyEnabled = d.enabled;
+                    renderWallets();
+                    showToast(d.enabled ? 'Added to copy targets' : 'Removed from copy targets', 'success');
+                } else {
+                    showToast(d.error || 'Copy toggle failed', 'error');
+                }
+            }).catch(() => showToast('Copy toggle failed', 'error'));
+        }
+
+        function vetWallet(address, btnEl) {
+            const btn = btnEl || document.querySelector(`.btn-vet[data-addr="${address}"]`);
+            const icon = btn ? btn.querySelector('i') : null;
+            const origIcon = icon ? icon.className : '';
+            if (btn) { btn.disabled = true; if (icon) icon.className = 'fas fa-spinner fa-spin'; }
+            (typeof fetchWithTimeout === 'function' ? fetchWithTimeout : fetch)('/api/wallet/vet', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({address})
+            }, 90000).then(r => r && r.json ? r.json() : r).then(d => {
+                if (d.ok) {
+                    let msg = d.message || (d.passed ? 'Vetted — passed' : 'Vetted — did not pass');
+                    if (d.specialty_category) msg += ' · Specialty: ' + formatSpecialtyCategory(d.specialty_category);
+                    else if (d.is_specialty && d.specialty_note) msg += ' · ' + String(d.specialty_note).slice(0, 80);
+                    if (!d.passed && Array.isArray(d.issues) && d.issues.length) msg += ' — ' + d.issues[0];
+                    showToast(msg, d.passed ? 'success' : 'warning');
+                    fetch('/api/dashboard/data?_=' + Date.now()).then(r2 => r2.json()).then(data => {
+                        if (Array.isArray(data.wallets)) {
+                            walletsData = data.wallets;
+                            if (data.stats) { statsData = data.stats; updateStatCardsFromStats(data.stats); }
+                            updateSpecialtyCountDisplay();
+                            _processWallets();
+                            renderWallets();
+                            try { initCharts(); } catch (_) {}
+                        }
+                    }).catch(() => {});
+                } else {
+                    showToast(d.error || 'Vetting failed', 'error');
+                }
+            }).catch(() => showToast('Vetting request failed', 'error')).finally(() => {
+                if (btn) { btn.disabled = false; if (icon) icon.className = origIcon || 'fas fa-shield-alt'; }
+            });
+        }
+
+        function initWallets() {
+            if (!Array.isArray(walletsData)) {
+                if (window.__DASHBOARD_DEBUG) console.warn('walletsData is not an array:', typeof walletsData);
+                walletsData = [];
+            }
+            if (walletsData.length === 0) {
+                fetch('/api/dashboard/data?_=' + Date.now()).then(r => r.json()).then(d => {
+                    walletsData = Array.isArray(d.wallets) ? d.wallets : [];
+                    if (d.stats) statsData = d.stats;
+                    updateStatCardsFromStats(d.stats);
+                    _processWallets();
+                    try { initCharts(); } catch (e) { if (window.__DASHBOARD_DEBUG) console.error('initCharts:', e); }
+                }).catch(() => {
+                    _processWallets();
+                    try { initCharts(); } catch (e) { if (window.__DASHBOARD_DEBUG) console.error('initCharts:', e); }
+                });
+                return;
+            }
+            _processWallets();
+        }
+        function walletHasSpecialty(w) {
+            if (!w) return false;
+            if (w.is_specialty === true || w.is_specialty === 1 || w.is_specialty === '1') return true;
+            const c = w.specialty_category;
+            return !!(c && String(c).trim());
+        }
+
+        /** Pretty label for API category slugs: sports, politics, crypto, etc. */
+        function formatSpecialtyCategory(cat) {
+            if (cat == null || cat === '') return '';
+            const s = String(cat).trim();
+            if (!s) return '';
+            return s.split(/[\s_\-]+/).filter(Boolean).map(function (word) {
+                const lower = word.toLowerCase();
+                return lower.charAt(0).toUpperCase() + lower.slice(1);
+            }).join(' ');
+        }
+        function _processWallets() {
+            wallets = (walletsData || []).map(w => {
+                w = w || {};
+                return {
+                    ...w,
+                    address: w.address || '',
+                    nickname: w.nickname || (w.address || '').substring(0, 8),
+                    winRate: parseFloat(w.win_rate) || 0,
+                    trades: parseInt(w.total_trades) || 0,
+                    wins: parseInt(w.wins) || 0,
+                    trade_volume: w.trade_volume ?? w.tradeVolume ?? 0,
+                    total_score: w.total_score ?? w.totalScore ?? 0,
+                    isSmartMoney: !!(w.is_smart_money === true || w.is_smart_money === 1 || w.is_smart_money === '1'),
+                    isSpecialty: walletHasSpecialty(w),
+                    specialty_category: (w.specialty_category && String(w.specialty_category).trim()) || null,
+                    specialty_win_rate: w.specialty_win_rate != null ? parseFloat(w.specialty_win_rate) : null,
+                    isWinStreakBadge: !!w.is_win_streak_badge,
+                    tier: w.tier || 'watch',
+                    totalScore: w.total_score ?? w.totalScore ?? 0,
+                    classification: w.classification || '',
+                    classificationReason: w.classification_reason || '',
+                    isBot: !!w.is_bot,
+                    isFarmer: !!w.is_farmer,
+                    isHighLossRate: !!w.is_high_loss_rate,
+                    currentWinStreak: parseInt(w.current_win_streak) || 0,
+                    maxWinStreak: parseInt(w.max_win_streak) || 0,
+                    copyEnabled: copyTargets.has((w.address || '').toLowerCase())
+                };
+            });
+            if (statsData && typeof statsData.specialty_count === 'number') {
+                const n = wallets.filter(x => x.isSpecialty).length;
+                statsData = { ...statsData, specialty_count: n };
+            }
+            updateSpecialtyCountDisplay();
+            applyFiltersLocal();
+        }
+
+        function initNav() {
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    tab.classList.add('active');
+                    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+                    if (tab.dataset.tab === 'alerts') loadRecentAlerts();
+                });
+            });
+        }
+
+        function escapeHtml(s) {
+            if (s == null) return '';
+            const div = document.createElement('div');
+            div.textContent = String(s);
+            return div.innerHTML;
+        }
+
+        function initCharts() {
+            if (typeof Chart === 'undefined') return;
+            const winRateEl = document.getElementById('winRateChart');
+            if (!winRateEl) return;
+            const winRateCtx = winRateEl.getContext('2d');
+            const existingWin = Chart.getChart(winRateEl);
+            if (existingWin) existingWin.destroy();
+            const dist = statsData.win_rate_distribution || [0,0,0,0,0];
+            new Chart(winRateCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['<20%', '20-40%', '40-55%', '55-70%', '>70%'],
+                    datasets: [{
+                        data: dist,
+                        backgroundColor: ['#f85149', '#d29922', '#8b949e', '#2563eb', '#3fb950']
+                    }]
                 },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        grid: { color: 'rgba(255,255,255,0.06)' },
-                        ticks: { color: '#8888a0' }
-                    },
-                    x: {
-                        grid: { display: false },
-                        ticks: { color: '#8888a0' }
+                options: {
+                    responsive: true,
+                    plugins: { legend: { position: 'bottom', labels: { color: '#8b949e' } } }
+                }
+            });
+
+            // Top Wallets Chart
+            const topWalletsEl = document.getElementById('topWalletsChart');
+            if (!topWalletsEl) return;
+            const topWalletsCtx = topWalletsEl.getContext('2d');
+            const existingTop = Chart.getChart(topWalletsEl);
+            if (existingTop) existingTop.destroy();
+            const top = [...(wallets || [])].sort((a,b) => (b.winRate || 0) - (a.winRate || 0)).slice(0, 10);
+            new Chart(topWalletsCtx, {
+                type: 'bar',
+                data: {
+                    labels: top.map(w => (w.nickname || '').substring(0, 12)),
+                    datasets: [{
+                        label: 'Win Rate %',
+                        data: top.map(w => w.winRate),
+                        backgroundColor: top.map(w => w.winRate >= 70 ? '#3fb950' : w.winRate >= 55 ? '#2563eb' : '#8b949e')
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { max: 100, ticks: { color: '#8b949e' }, grid: { color: '#30363d' } },
+                        y: { ticks: { color: '#8b949e' }, grid: { display: false } }
                     }
                 }
+            });
+        }
+
+        function toggleHideBots() {
+            hideBots = !hideBots;
+            localStorage.setItem('polysuite_hide_bots', hideBots ? 'true' : 'false');
+            const btn = document.getElementById('hideBotBtn');
+            const lbl = document.getElementById('hideBotLabel');
+            if (btn) btn.classList.toggle('btn-primary', hideBots);
+            if (lbl) lbl.textContent = hideBots ? 'Hide Bots' : 'Show Bots';
+            applyFiltersLocal();
+        }
+
+        function _syncHideBotsBtn() {
+            const btn = document.getElementById('hideBotBtn');
+            const lbl = document.getElementById('hideBotLabel');
+            if (btn) btn.classList.toggle('btn-primary', hideBots);
+            if (lbl) lbl.textContent = hideBots ? 'Hide Bots' : 'Show Bots';
+        }
+
+        function applyFiltersLocal() {
+            let filtered = [...wallets];
+            const search = document.getElementById('searchInput')?.value?.toLowerCase() || '';
+            if (search) {
+                filtered = filtered.filter(w =>
+                    (w.address || '').toLowerCase().includes(search) ||
+                    (w.nickname || '').toLowerCase().includes(search)
+                );
             }
-        });
+            if (hideBots) filtered = filtered.filter(w => !w.isBot && !w.isFarmer);
+            if (currentFilter === 'smartMoney') filtered = filtered.filter(w => w.isSmartMoney);
+            else if (currentFilter === 'specialty') filtered = filtered.filter(w => w.isSpecialty);
+            else if (currentFilter === 'winStreak') filtered = filtered.filter(w => w.isWinStreakBadge);
+            else if (currentFilter === 'highWinRate') filtered = filtered.filter(w => w.winRate > 55);
 
-        const initData = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) || '';
-        const socket = io({ query: initData ? { initData: initData } : {} });
-        socket.on('connect', function() {
-            console.log('Connected to server');
-        });
+            filtered.sort((a, b) => {
+                const aVal = a[currentSort.field] ?? '';
+                const bVal = b[currentSort.field] ?? '';
+                return currentSort.direction === 'asc' ? (aVal > bVal ? 1 : -1) : (aVal < bVal ? 1 : -1);
+            });
 
-        socket.on('update', function(data) {
-            console.log('Received update:', data);
-            // Here you would update the chart data
-            // For example:
-            // walletChart.data.datasets[0].data = data.volumes;
-            // walletChart.update();
+            filteredWallets = filtered;
+            currentPage = 1;
+            renderWallets();
+            renderPagination();
+        }
+
+        function renderWallets() {
+            const listEl = document.getElementById('walletsList');
+            if (!listEl) return;
+            const start = (currentPage - 1) * itemsPerPage;
+            const pageData = (filteredWallets || []).slice(start, start + itemsPerPage);
+            
+            if (!pageData.length) {
+                listEl.innerHTML = '<div class="loading">No wallets found</div>';
+                const countEl = document.getElementById('walletsCountDisplay');
+                if (countEl) countEl.textContent = 'No wallets to display';
+                return;
+            }
+
+            listEl.innerHTML = pageData.map(w => {
+                const tier = w.tier || 'watch';
+                const tierBadge = tier === 'elite' ? '<span class="badge badge-elite">ELITE</span>' : 
+                                 tier === 'vetted' ? '<span class="badge badge-vetted">VETTED</span>' : 
+                                 '<span class="badge badge-watch">WATCH</span>';
+                const addr = w.address || '';
+                const nick = w.nickname || addr.substring(0, 8);
+                const addrSafe = (addr || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+                return `
+                <div class="table-row">
+                    <div>
+                        <div class="wallet-nickname">${escapeHtml(nick)}</div>
+                        <div class="wallet-address">${addr ? escapeHtml(addr.substring(0, 10) + '...' + addr.substring(38)) : '-'}</div>
+                    </div>
+                    <div>
+                        ${tierBadge}
+                    </div>
+                    <div class="${(w.winRate || 0) >= 55 ? 'positive' : (w.winRate || 0) >= 40 ? 'neutral' : 'negative'}">
+                        ${(w.winRate ?? 0).toFixed(1)}%
+                    </div>
+                    <div>${(w.trades ?? 0).toLocaleString()}</div>
+                    <div>${(w.wins ?? 0).toLocaleString()}</div>
+                    <div>$${((w.trade_volume)||0).toLocaleString()}</div>
+                    <div>
+                        ${w.total_score ? '<span style="color: var(--text-primary); font-weight: 600;">' + Math.round(w.total_score) + '</span>' : '-'}
+                    </div>
+                    <div class="wallet-specialty-cell" style="text-align: left;">
+                        ${(() => {
+                            const raw = (w.specialty_category && String(w.specialty_category).trim()) || '';
+                            const label = raw ? formatSpecialtyCategory(raw) : '';
+                            const tip = raw + (w.specialty_win_rate != null && !isNaN(w.specialty_win_rate) ? (' · ' + Number(w.specialty_win_rate).toFixed(0) + '% WR in category') : '');
+                            return label
+                                ? '<span class="specialty-category-label" title="' + escapeHtml(tip || label) + '">' + escapeHtml(label) + '</span>'
+                                : '<span style="color: var(--text-secondary); font-size: 0.75rem;">—</span>';
+                        })()}
+                    </div>
+                    <div>
+                        ${w.isSmartMoney ? '<span class="badge badge-smart-money">SM</span>' : ''}
+                        ${w.isWinStreakBadge ? '<span class="badge badge-win-streak">WS</span>' : ''}
+                    </div>
+                    ${(settingsData && settingsData.copy_removed) ? '' : `<div><div class="toggle-switch ${w.copyEnabled ? 'active' : ''}" onclick="event.stopPropagation(); toggleCopy('${addrSafe}')"></div></div>`}
+                    <div>
+                        <button class="btn btn-sm btn-vet" data-addr="${addrSafe}" title="Vet: run analysis and promote to Vetted if passed" onclick="event.stopPropagation(); vetWallet('${addrSafe}', this)">
+                            <i class="fas fa-shield-alt"></i>
+                        </button>
+                    </div>
+                </div>
+            `}).join('');
+
+            const copyEl = document.getElementById('copyTargetsCount');
+            if (copyEl) copyEl.textContent = copyTargets.size;
+
+            const countEl = document.getElementById('walletsCountDisplay');
+            if (countEl) {
+                const total = filteredWallets.length;
+                const start = (currentPage - 1) * itemsPerPage;
+                const end = Math.min(start + itemsPerPage, total);
+                countEl.textContent = total > 0
+                    ? `Showing ${start + 1}-${end} of ${total} wallets`
+                    : 'No wallets to display';
+            }
+        }
+
+        function renderPagination() {
+            const total = Math.ceil(filteredWallets.length / itemsPerPage);
+            if (total <= 1) { document.getElementById('pagination').innerHTML = ''; return; }
+            let html = '';
+            for (let i = 1; i <= total; i++) {
+                html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="currentPage=${i};renderWallets();renderPagination()">${i}</button>`;
+            }
+            document.getElementById('pagination').innerHTML = html;
+        }
+
+        // Server-side filtering for modal filters
+        function applyFilters() {
+            const tierSelect = document.getElementById('filterTier');
+            const minTradesInput = document.getElementById('filterMinTrades');
+            const minWinRateInput = document.getElementById('filterMinWinRate');
+            const maxLossRateInput = document.getElementById('filterMaxLossRate');
+            const minScoreInput = document.getElementById('filterMinScore');
+            const smartMoneyCheckbox = document.getElementById('filterSmartMoney');
+            const excludeBotsCheckbox = document.getElementById('filterExcludeBots');
+
+            const safeInt = (el, def) => {
+                if (!el || el.value == null || el.value === '') return def;
+                const n = parseInt(el.value, 10);
+                return isNaN(n) ? def : n;
+            };
+
+            const criteria = {
+                tier: (tierSelect && tierSelect.value) ? String(tierSelect.value) : '',
+                min_trades: safeInt(minTradesInput, 0),
+                min_win_rate: safeInt(minWinRateInput, 0),
+                max_loss_rate: safeInt(maxLossRateInput, 100),
+                min_score: safeInt(minScoreInput, 0),
+                smart_money_only: smartMoneyCheckbox ? !!smartMoneyCheckbox.checked : false,
+                exclude_bots: excludeBotsCheckbox !== null ? !!excludeBotsCheckbox.checked : true
+            };
+            
+            fetch('/api/wallets/filter', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({criteria})
+            }).then(r => r.json()).then(d => {
+                if (d && d.ok) {
+                    const count = d.count ?? 0;
+                    const total = d.total ?? count;
+                    showToast(`Found ${count} matching wallets`, 'success');
+                    closeModal();
+                    const list = d.wallets || [];
+                    if (list.length > 0) {
+                        walletsData = list.map(w => ({
+                            ...w,
+                            winRate: parseFloat(w.win_rate) || 0,
+                            trades: parseInt(w.total_trades) || 0,
+                            wins: parseInt(w.wins) || 0,
+                            isSmartMoney: !!(w.is_smart_money === true || w.is_smart_money === 1 || w.is_smart_money === '1'),
+                            isSpecialty: walletHasSpecialty(w),
+                            specialty_category: (w.specialty_category && String(w.specialty_category).trim()) || null,
+                            specialty_win_rate: w.specialty_win_rate != null ? parseFloat(w.specialty_win_rate) : null,
+                            isWinStreakBadge: !!w.is_win_streak_badge,
+                            copyEnabled: copyTargets.has((w.address || '').toLowerCase())
+                        }));
+                        initWallets();
+                        showToast(`Showing ${count} of ${total} wallets`, 'success');
+                    } else {
+                        walletsData = [];
+                        initWallets();
+                        showToast('No wallets match filter', 'warning');
+                    }
+                } else {
+                    showToast((d && d.error) || 'Filter failed', 'error');
+                }
+            }).catch(err => {
+                console.error('applyFilters error:', err);
+                showToast('Filter request failed', 'error');
+            });
+        }
+
+        function addExchange() {
+            const el = document.getElementById('newExchange');
+            const exchange = (el && el.value || '').trim();
+            if (!exchange) {
+                showToast('Enter exchange name', 'error');
+                return;
+            }
+            showToast('Exchange connection added', 'success');
+            closeModal();
+        }
+
+        function sendTestAlert() {
+            const type = document.getElementById('testAlertType').value;
+            const endpoint = type === 'telegram' ? '/api/telegram/test' : '/api/discord/test';
+            fetch(endpoint, {method: 'POST'}).then(r => r.json()).then(d => {
+                showToast(d.message || 'Test sent', 'success');
+                closeModal();
+            });
+        }
+
+        function testTelegram() { showToast('Telegram test sent!', 'success'); }
+        function testDiscord() { showToast('Discord test sent!', 'success'); }
+        function toggleExchange(exchange) { showToast(exchange + ' toggled', 'success'); }
+
+        function toggleSetting(key) {
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({[key]: !settingsData[key]})
+            }).then(() => {
+                settingsData[key] = !settingsData[key];
+                showToast('Setting updated', 'success');
+                location.reload();
+            });
+        }
+
+        function updateSetting(key, value) {
+            settingsData[key] = value;
+        }
+
+        function saveSettings() {
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(settingsData || {})
+            }).then(function (r) { return r.json(); }).then(function () {
+                showToast('Settings saved', 'success');
+                scheduleDashboardPoll();
+            }).catch(function () {
+                showToast('Save failed', 'error');
+            });
+        }
+
+        function resetSettings() {
+            showToast('Settings reset to defaults', 'warning');
+            location.reload();
+        }
+
+        function refreshData() {
+            showToast('Refreshing data...', 'success');
+            setTimeout(() => location.reload(), 1000);
+        }
+
+        async function refreshHealthMetrics() {
+            const btn = document.getElementById('healthRefreshBtn');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...'; }
+            try {
+                const r = await fetch('/api/health?accurate=1&_=' + Date.now());
+                const h = await r.json();
+                const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+                set('health-status', (h.status || 'healthy').toLowerCase());
+                set('health-last-sync', 'Last sync: ' + (h.last_sync || new Date().toISOString().replace('T', ' ').slice(0, 19)));
+                set('health-uptime', (h.uptime_hours ?? 0) + 'h');
+                set('health-memory-pct', (h.memory_usage_pct ?? 0) + '%');
+                set('health-memory-detail', 'Suite System Process: ' + (h.memory_usage_mb ?? 0) + ' MB');
+                set('health-cpu-pct', (h.cpu_usage_percent ?? 0) + '%');
+                showToast('Metrics refreshed', 'success');
+            } catch (e) {
+                showToast('Refresh failed: ' + (e.message || 'Unknown error'), 'error');
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Metrics'; }
+            }
+        }
+
+        function refreshAlerts() {
+            loadRecentAlerts();
+            showToast('Alerts refreshed', 'success');
+        }
+
+        function fetchWithTimeout(url, opts, ms) {
+            const ctrl = new AbortController();
+            const id = setTimeout(() => ctrl.abort(), ms);
+            return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(id));
+        }
+
+        function _shortAddr(a) {
+            if (!a || typeof a !== 'string') return '—';
+            return a.length > 14 ? (a.slice(0, 10) + '…' + a.slice(-4)) : a;
+        }
+
+        function _renderVetProgress(modalBody, currentIndex1, total, addr, passed, failed, phase) {
+            if (!modalBody) return;
+            const completed = phase === 'working' ? (currentIndex1 - 1) : currentIndex1;
+            const barPct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+            const phaseLine = phase === 'working'
+                ? '<p style="color:var(--accent);margin:0.5rem 0 0;"><i class="fas fa-spinner fa-spin"></i> Request in progress…</p>'
+                : '';
+            const titleEl = document.getElementById('modalTitle');
+            if (titleEl) titleEl.textContent = 'Vetting — ' + currentIndex1 + ' / ' + total;
+            modalBody.innerHTML =
+                '<div id="vetProgressRoot" style="padding:0.25rem 0;">' +
+                '<p style="margin:0 0 0.75rem;color:var(--text-secondary);font-size:0.9rem;">Keep this tab open. Each wallet can take up to 2 minutes.</p>' +
+                '<div style="font-size:2.25rem;font-weight:700;letter-spacing:0.02em;margin-bottom:0.35rem;line-height:1.2;">' + currentIndex1 + ' <span style="color:var(--text-secondary);font-weight:500;font-size:1.35rem;">/ ' + total + '</span></div>' +
+                '<div style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:0.5rem;">Now processing wallet <strong>' + currentIndex1 + '</strong> of <strong>' + total + '</strong></div>' +
+                '<div style="font-family:monospace;font-size:0.9rem;word-break:break-all;margin-bottom:0.75rem;">' + _shortAddr(addr) + '</div>' +
+                '<div style="display:flex;gap:1.25rem;margin-bottom:0.75rem;font-size:0.95rem;flex-wrap:wrap;"><span>Passed: <strong style="color:var(--success);">' + passed + '</strong></span><span>Did not pass: <strong style="color:var(--danger);">' + failed + '</strong></span></div>' +
+                '<div style="height:10px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;margin-bottom:0.5rem;"><div style="height:100%;width:' + barPct + '%;background:var(--accent);transition:width 0.25s;"></div></div>' +
+                '<div style="font-size:0.8rem;color:var(--text-secondary);">' + completed + ' of ' + total + ' finished' + (phase === 'working' ? ' (current request running…)' : '') + '</div>' +
+                phaseLine +
+                '</div>';
+            void modalBody.offsetHeight;
+        }
+
+        function _renderClassifyProgress(modalBody, currentIndex1, total, addr, analyzed, phase) {
+            if (!modalBody) return;
+            const completed = phase === 'working' ? (currentIndex1 - 1) : currentIndex1;
+            const barPct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+            const phaseLine = phase === 'working'
+                ? '<p style="color:var(--accent);margin:0.5rem 0 0;"><i class="fas fa-spinner fa-spin"></i> Classifying…</p>'
+                : '';
+            const titleEl = document.getElementById('modalTitle');
+            if (titleEl) titleEl.textContent = 'Classifying — ' + currentIndex1 + ' / ' + total;
+            modalBody.innerHTML =
+                '<div style="padding:0.25rem 0;">' +
+                '<p style="margin:0 0 0.75rem;color:var(--text-secondary);font-size:0.9rem;">Keep this tab open. Each wallet can take up to 2 minutes.</p>' +
+                '<div style="font-size:2rem;font-weight:700;letter-spacing:0.02em;margin-bottom:0.35rem;">' + currentIndex1 + ' <span style="color:var(--text-secondary);font-weight:500;font-size:1.25rem;">/ ' + total + '</span></div>' +
+                '<div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.5rem;">Wallet <strong>' + currentIndex1 + '</strong> of <strong>' + total + '</strong></div>' +
+                '<div style="font-family:monospace;font-size:0.9rem;word-break:break-all;margin-bottom:0.75rem;">' + _shortAddr(addr) + '</div>' +
+                '<div style="margin-bottom:0.75rem;font-size:0.95rem;">Analyzed so far: <strong>' + analyzed + '</strong></div>' +
+                '<div style="height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;margin-bottom:0.5rem;"><div style="height:100%;width:' + barPct + '%;background:var(--accent);transition:width 0.2s;"></div></div>' +
+                '<div style="font-size:0.8rem;color:var(--text-secondary);">' + completed + ' of ' + total + ' finished' + (phase === 'working' ? ' (running…)' : '') + '</div>' +
+                phaseLine +
+                '</div>';
+        }
+
+        function _buildVetQueue(walletRows, skipHours) {
+            const rows = (walletRows || []).filter(function (w) { return w && w.address; }).map(function (w) {
+                return { address: String(w.address).trim(), last_vetted_at: w.last_vetted_at || null };
+            });
+            rows.sort(function (a, b) {
+                const ha = a.last_vetted_at ? 1 : 0;
+                const hb = b.last_vetted_at ? 1 : 0;
+                if (ha !== hb) return ha - hb;
+                const ta = a.last_vetted_at ? new Date(a.last_vetted_at).getTime() : 0;
+                const tb = b.last_vetted_at ? new Date(b.last_vetted_at).getTime() : 0;
+                return ta - tb;
+            });
+            const skipH = parseFloat(skipHours, 10);
+            if (isNaN(skipH) || skipH <= 0) {
+                return { addrs: rows.map(function (r) { return r.address; }), skipped: 0 };
+            }
+            const cutoff = Date.now() - skipH * 3600000;
+            const addrs = [];
+            let skipped = 0;
+            for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                if (!r.last_vetted_at) {
+                    addrs.push(r.address);
+                    continue;
+                }
+                const t = new Date(r.last_vetted_at).getTime();
+                if (isNaN(t) || t < cutoff) addrs.push(r.address);
+                else skipped++;
+            }
+            return { addrs: addrs, skipped: skipped };
+        }
+
+        function _buildClassificationQueue(walletRows, skipHours) {
+            const rows = (walletRows || []).filter(function (w) { return w && w.address; }).map(function (w) {
+                return { address: String(w.address).trim(), last_scored_at: w.last_scored_at || null };
+            });
+            rows.sort(function (a, b) {
+                const ha = a.last_scored_at ? 1 : 0;
+                const hb = b.last_scored_at ? 1 : 0;
+                if (ha !== hb) return ha - hb;
+                const ta = a.last_scored_at ? new Date(a.last_scored_at).getTime() : 0;
+                const tb = b.last_scored_at ? new Date(b.last_scored_at).getTime() : 0;
+                return ta - tb;
+            });
+            const skipH = parseFloat(skipHours, 10);
+            if (isNaN(skipH) || skipH <= 0) {
+                return { addrs: rows.map(function (r) { return r.address; }), skipped: 0 };
+            }
+            const cutoff = Date.now() - skipH * 3600000;
+            const addrs = [];
+            let skipped = 0;
+            for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                if (!r.last_scored_at) {
+                    addrs.push(r.address);
+                    continue;
+                }
+                const t = new Date(r.last_scored_at).getTime();
+                if (isNaN(t) || t < cutoff) addrs.push(r.address);
+                else skipped++;
+            }
+            return { addrs: addrs, skipped: skipped };
+        }
+
+        async function runBulkVet() {
+            let src = (wallets && wallets.length) ? wallets : (walletsData || []);
+            if (src.length === 0) {
+                try {
+                    const r = await fetch('/api/wallets?_=' + Date.now());
+                    const data = await r.json();
+                    src = Array.isArray(data) ? data : [];
+                } catch (_) {}
+            }
+            const skipH = (settingsData && settingsData.vet_skip_hours != null)
+                ? Number(settingsData.vet_skip_hours)
+                : 48;
+            const q = _buildVetQueue(src, skipH);
+            const addrs = q.addrs;
+            const skippedRecent = q.skipped;
+            if (addrs.length === 0) {
+                if (skippedRecent > 0) {
+                    showToast('All ' + skippedRecent + ' wallet(s) were vetted within the last ' + skipH + 'h. Nothing to run. (Use per-wallet Vet to force.)', 'warning');
+                } else {
+                    showToast('No wallets to vet. Add wallets first.', 'error');
+                }
+                return;
+            }
+            if (skippedRecent > 0) {
+                showToast('Skipping ' + skippedRecent + ' recently vetted (<' + skipH + 'h). Queue: ' + addrs.length + ' wallet(s) — never-vetted & stalest first.', 'success');
+            }
+            const btn = document.querySelector('#modalFooter .btn-primary');
+            const modalBody = document.getElementById('modalBody');
+            const CHUNK = 1;
+            const FETCH_MS = 120000;
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Vetting...'; }
+            let sumPass = 0, sumFail = 0;
+            const allErrors = [];
+            try {
+                for (let i = 0; i < addrs.length; i += CHUNK) {
+                    const chunk = addrs.slice(i, i + CHUNK);
+                    const currentNum = i + 1;
+                    const addr = chunk[0] || '';
+                    _renderVetProgress(modalBody, currentNum, addrs.length, addr, sumPass, sumFail, 'working');
+                    await new Promise(function (resolve) { requestAnimationFrame(function () { requestAnimationFrame(resolve); }); });
+                    try {
+                        const r = await fetchWithTimeout('/api/wallets/bulk-vet', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({addresses: chunk})
+                        }, FETCH_MS);
+                        const d = await r.json();
+                        if (d && d.ok) {
+                            sumPass += (d.passed || 0);
+                            sumFail += (d.failed || 0);
+                        } else {
+                            allErrors.push((d && d.error) || 'Batch ' + (Math.floor(i / CHUNK) + 1) + ' failed');
+                            sumFail += chunk.length;
+                        }
+                    } catch (e) {
+                        allErrors.push(e.name === 'AbortError' ? 'Timeout' : (e.message || 'Request failed'));
+                        sumFail += chunk.length;
+                    }
+                    _renderVetProgress(modalBody, currentNum, addrs.length, addr, sumPass, sumFail, 'idle');
+                    await new Promise(function (resolve) { requestAnimationFrame(resolve); });
+                }
+                closeModal();
+                let msg = 'Vet all done: ' + sumPass + ' passed, ' + sumFail + ' did not pass (of ' + addrs.length + ')';
+                if (allErrors.length) msg += '. Errors: ' + allErrors.slice(0, 3).join('; ');
+                showToast(msg, sumPass > 0 ? 'success' : (allErrors.length ? 'error' : 'warning'));
+                const r2 = await fetch('/api/dashboard/data?_=' + Date.now());
+                const data = await r2.json();
+                if (Array.isArray(data.wallets)) {
+                    walletsData = data.wallets;
+                    if (data.stats) { statsData = data.stats; updateStatCardsFromStats(data.stats); }
+                    updateSpecialtyCountDisplay();
+                    _processWallets();
+                    renderWallets();
+                    try { initCharts(); } catch (_) {}
+                }
+            } catch (e) {
+                showToast('Request failed: ' + (e.message || 'Unknown error'), 'error');
+            } finally {
+                const mtf = document.getElementById('modalTitle');
+                if (mtf) mtf.textContent = 'Vet All Wallets';
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-shield-alt"></i> Vet All'; }
+            }
+        }
+
+        async function runClassification() {
+            let src = (wallets && wallets.length) ? wallets : (walletsData || []);
+            if (src.length === 0) {
+                try {
+                    const r = await fetch('/api/wallets?_=' + Date.now());
+                    const data = await r.json();
+                    src = Array.isArray(data) ? data : [];
+                } catch (_) {}
+            }
+            const skipH = (settingsData && settingsData.classify_bulk_skip_hours != null)
+                ? Number(settingsData.classify_bulk_skip_hours)
+                : 24;
+            const q = _buildClassificationQueue(src, skipH);
+            const addrs = q.addrs;
+            const skippedRecent = q.skipped;
+            if (addrs.length === 0) {
+                if (skippedRecent > 0) {
+                    showToast('All ' + skippedRecent + ' wallet(s) were scored within the last ' + skipH + 'h. Nothing to run.', 'warning');
+                } else {
+                    showToast('No wallets to classify. Add wallets first.', 'error');
+                }
+                return;
+            }
+            if (skippedRecent > 0) {
+                showToast('Skipping ' + skippedRecent + ' recently scored (<' + skipH + 'h). Queue: ' + addrs.length + ' wallet(s) — never-scored & stalest first.', 'success');
+            }
+            const btn = document.querySelector('#modalFooter .btn-primary');
+            const modalBody = document.getElementById('modalBody');
+            const CHUNK = 1;
+            const FETCH_MS = 120000;
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Classifying...'; }
+            let analyzed = 0, lastError = null;
+            try {
+                for (let i = 0; i < addrs.length; i += CHUNK) {
+                    const chunk = addrs.slice(i, i + CHUNK);
+                    const currentNum = i + 1;
+                    const addr = chunk[0] || '';
+                    _renderClassifyProgress(modalBody, currentNum, addrs.length, addr, analyzed, 'working');
+                    await new Promise(function (resolve) { requestAnimationFrame(function () { requestAnimationFrame(resolve); }); });
+                    try {
+                        const r = await fetchWithTimeout('/api/wallets/analyze', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({addresses: chunk, trade_limit: 300})
+                        }, FETCH_MS);
+                        const d = await r.json();
+                        if (d && d.ok) {
+                            analyzed += (d.analyzed || 0);
+                        } else {
+                            lastError = (d && d.error) || 'Batch ' + (Math.floor(i / CHUNK) + 1) + ' failed';
+                        }
+                    } catch (err) {
+                        lastError = err.name === 'AbortError' ? 'Request timed out' : (err.message || 'Request failed');
+                    }
+                    _renderClassifyProgress(modalBody, currentNum, addrs.length, addr, analyzed, 'idle');
+                    await new Promise(function (resolve) { requestAnimationFrame(resolve); });
+                }
+                closeModal();
+                const msg = lastError
+                    ? 'Classified ' + analyzed + ' of ' + addrs.length + '. Last: ' + lastError
+                    : 'Classified ' + analyzed + ' wallet(s)';
+                showToast(msg, analyzed > 0 ? 'success' : 'warning');
+                const r2 = await fetch('/api/dashboard/data?_=' + Date.now());
+                const data = await r2.json();
+                if (Array.isArray(data.wallets)) {
+                    walletsData = data.wallets;
+                    if (data.stats) { statsData = data.stats; updateStatCardsFromStats(data.stats); }
+                    updateSpecialtyCountDisplay();
+                    _processWallets();
+                    renderWallets();
+                    try { initCharts(); } catch (_) {}
+                }
+            } catch (e) {
+                showToast('Request failed: ' + (e.message || 'Unknown error'), 'error');
+            } finally {
+                const mtcl = document.getElementById('modalTitle');
+                if (mtcl) mtcl.textContent = 'Classify Wallets';
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-brain"></i> Run Classification'; }
+            }
+        }
+
+        async function loadRecentAlerts() {
+            const el = document.getElementById('recentAlertsList');
+            if (!el) return;
+            try {
+                const r = await fetch('/api/alerts?t=' + Date.now());
+                const alerts = await r.json();
+                if (!Array.isArray(alerts) || alerts.length === 0) {
+                    el.innerHTML = '<div style="color: var(--text-secondary);">No alerts yet. Run <code>python main.py run</code> — alerts fire when Insider/Convergence signals are found.</div>';
+                    return;
+                }
+                let html = '<div style="display: flex; flex-direction: column; gap: 0.6rem;">';
+                for (const a of alerts) {
+                    const d = a.data || {};
+                    const isInsider = a.type === 'insider';
+                    const conf = (d.confidence || '').toUpperCase();
+                    const confCl = conf === 'HIGH' ? 'var(--success)' : conf === 'MEDIUM' ? 'var(--warning)' : 'var(--text-secondary)';
+                    const typeCl = isInsider ? confCl : 'var(--accent)';
+                    const borderCl = isInsider ? (conf === 'HIGH' ? 'rgba(63,185,80,0.4)' : conf === 'MEDIUM' ? 'rgba(240,180,41,0.4)' : 'var(--border)') : 'rgba(37,99,235,0.4)';
+                    const timeAgo = a.ts ? (Math.round((Date.now()/1000 - a.ts)/60) + 'm ago') : '';
+                    html += '<div style="border-left: 4px solid ' + borderCl + '; border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; padding: 0.65rem 0.85rem; background: var(--card-bg); font-size: 0.85rem;">';
+                    html += '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.4rem;">';
+                    const typeLabel = isInsider ? '🐋 Insider' : '👥 Convergence';
+                    html += '<span style="color: ' + typeCl + '; font-weight: 700;">' + typeLabel + '</span>';
+                    html += '<span style="color: var(--text-secondary); font-size: 0.7rem;">' + timeAgo + '</span>';
+                    html += '</div>';
+                    html += '<div style="margin-top: 0.35rem; color: var(--text-primary); line-height: 1.35;">' + (d.question || d.name || d.symbol || d.address || '—') + '</div>';
+                    if (isInsider) {
+                        const parts = [];
+                        if (d.confidence) parts.push('<span style="color:' + confCl + ';font-weight:600">' + d.confidence + '</span>');
+                        if (d.trade_size) parts.push('$' + Number(d.trade_size).toLocaleString() + ' size');
+                        if (d.side && d.side !== '?') parts.push('Side: <strong>' + d.side + '</strong>');
+                        if (d.pnl) parts.push('PnL $' + Number(d.pnl).toFixed(2));
+                        if (parts.length) html += '<div style="margin-top: 0.3rem; font-size: 0.8rem; color: var(--text-secondary);">' + parts.join(' · ') + '</div>';
+                        html += '<div style="margin-top: 0.4rem; font-size: 0.8rem;">';
+                        if (d.market_link) html += '<a href="' + d.market_link + '" target="_blank" rel="noopener noreferrer" style="color: var(--accent); margin-right: 1rem;">View market →</a>';
+                        if (d.profile_link) html += '<a href="' + d.profile_link + '" target="_blank" rel="noopener noreferrer" style="color: var(--accent);">View profile →</a>';
+                        if (d.side && d.side !== '?') html += '<span style="color: var(--success); margin-left: 0.5rem;">→ Consider ' + d.side + '</span>';
+                        html += '</div>';
+                    } else {
+                        if (d.wallet_count) html += '<div style="margin-top: 0.3rem; font-size: 0.8rem; color: var(--text-secondary);">' + d.wallet_count + ' high-performers converging</div>';
+                        if (d.market_link) html += '<div style="margin-top: 0.4rem;"><a href="' + d.market_link + '" target="_blank" rel="noopener noreferrer" style="color: var(--accent); font-size: 0.8rem;">View market →</a></div>';
+                    }
+                    html += '</div>';
+                }
+                html += '</div>';
+                el.innerHTML = html;
+            } catch (e) {
+                el.innerHTML = '<div style="color: var(--danger);">Failed to load alerts</div>';
+            }
+        }
+
+        async function scanInsider(force) {
+            const el = document.getElementById('insiderResults');
+            if (!el) return;
+            el.innerHTML = '<div class="loading" style="color: var(--text-secondary);"><i class="fas fa-spinner fa-spin"></i> Scanning...</div>';
+            try {
+                const r = await fetch('/api/insider/scan?' + (force ? 'force=1&' : '') + '_=' + Date.now());
+                const d = await r.json();
+                if (!d.ok) {
+                    el.innerHTML = '<div style="color: var(--danger);">' + (d.error || 'Scan failed') + '</div>';
+                    return;
+                }
+                const signals = d.signals || [];
+                if (signals.length === 0) {
+                    el.innerHTML = '<div style="color: var(--text-secondary);">No insider/whale signals found. Try lowering min size in Settings.</div>';
+                    return;
+                }
+                const cachedHint = d.cached ? '<div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.5rem;">(cached)</div>' : '';
+                let html = '<div style="display: flex; flex-direction: column; gap: 0.75rem;">' + cachedHint;
+                for (const s of signals) {
+                    const conf = (s.confidence || 'LOW').toLowerCase();
+                    const confCl = conf === 'high' ? 'var(--success)' : conf === 'medium' ? 'var(--warning)' : 'var(--text-secondary)';
+                    html += '<div style="border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; background: var(--card-bg);">';
+                    html += '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">';
+                    html += '<span style="font-family: monospace; font-size: 0.8rem;">' + (s.address ? s.address.slice(0,10)+'...'+s.address.slice(-6) : '?') + '</span>';
+                    html += '<span style="color: ' + confCl + '; font-weight: 600;">' + (s.confidence || 'LOW') + '</span>';
+                    html += '</div>';
+                    html += '<div style="font-size: 0.85rem; margin-top: 0.4rem; color: var(--text-secondary);">' + (s.question || '') + '</div>';
+                    html += '<div style="margin-top: 0.4rem; font-size: 0.8rem;">$' + (s.trade_size || 0).toLocaleString() + ' trade · ' + (s.closed_count || 0) + ' closed · PnL $' + (s.pnl || 0).toFixed(2) + ' ' + (s.side || '') + '</div>';
+                    if (s.link) html += '<a href="' + s.link + '" target="_blank" rel="noopener noreferrer" style="font-size: 0.8rem; margin-top: 0.3rem; display: inline-block;">View profile →</a>';
+                    html += '</div>';
+                }
+                html += '</div>';
+                el.innerHTML = html;
+            } catch (e) {
+                el.innerHTML = '<div style="color: var(--danger);">Request failed: ' + (e.message || 'Unknown error') + '</div>';
+            }
+        }
+
+        async function scanConvergence(force) {
+            const el = document.getElementById('convergenceResults');
+            if (!el) return;
+            el.innerHTML = '<div class="loading" style="color: var(--text-secondary);"><i class="fas fa-spinner fa-spin"></i> Checking...</div>';
+            try {
+                const r = await fetch('/api/convergence/check?' + (force ? 'force=1&' : '') + '_=' + Date.now());
+                const d = await r.json();
+                if (!d.ok) {
+                    el.innerHTML = '<div style="color: var(--danger);">' + (d.error || 'Check failed') + '</div>';
+                    return;
+                }
+                const list = d.convergences || [];
+                if (list.length === 0) {
+                    el.innerHTML = '<div style="color: var(--text-secondary);">No convergences found. Need 2+ high-performers in same market.</div>';
+                    return;
+                }
+                const cachedHint = d.cached ? '<div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.5rem;">(cached)</div>' : '';
+                let html = '<div style="display: flex; flex-direction: column; gap: 0.75rem;">' + cachedHint;
+                for (const c of list) {
+                    html += '<div style="border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; background: var(--card-bg);">';
+                    html += '<div style="font-weight: 600;">' + (c.question || 'Unknown') + '</div>';
+                    html += '<div style="font-size: 0.8rem; margin-top: 0.4rem; color: var(--text-secondary);">' + (c.wallet_count || 0) + ' wallets';
+                    if (c.market_age_hours != null) html += ' · ' + (c.market_age_hours || 0).toFixed(1) + 'h old';
+                    if (c.has_early_entry) html += ' · <span style="color: var(--success);">Early entry</span>';
+                    html += '</div>';
+                    if (c.link) html += '<a href="' + c.link + '" target="_blank" rel="noopener noreferrer" style="font-size: 0.8rem; margin-top: 0.3rem; display: inline-block;">View market →</a>';
+                    html += '</div>';
+                }
+                html += '</div>';
+                el.innerHTML = html;
+            } catch (e) {
+                el.innerHTML = '<div style="color: var(--danger);">Request failed: ' + (e.message || 'Unknown error') + '</div>';
+            }
+        }
+
+        async function scanContrarian(force) {
+            const el = document.getElementById('contrarianResults');
+            if (!el) return;
+            el.innerHTML = '<div class="loading" style="color: var(--text-secondary);"><i class="fas fa-spinner fa-spin"></i> Scanning...</div>';
+            try {
+                const r = await fetch('/api/contrarian/scan?' + (force ? 'force=1&' : '') + '_=' + Date.now());
+                const d = await r.json();
+                if (!d.ok) {
+                    el.innerHTML = '<div style="color: var(--danger);">' + (d.error || 'Scan failed') + '</div>';
+                    return;
+                }
+                const list = d.signals || [];
+                if (list.length === 0) {
+                    el.innerHTML = '<div style="color: var(--text-secondary);">No contrarian opportunities found.</div>';
+                    return;
+                }
+                const cachedHint = d.cached ? '<div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.5rem;">(cached)</div>' : '';
+                let html = '<div style="display: flex; flex-direction: column; gap: 0.75rem;">' + cachedHint;
+                for (const s of list) {
+                    html += '<div style="border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; background: var(--card-bg);">';
+                    html += '<div style="font-weight: 600;">' + (s.question || 'Unknown') + '</div>';
+                    html += '<div style="font-size: 0.8rem; margin-top: 0.4rem;">Majority: ' + (s.majority_side || '?') + ' · Minority: ' + (s.minority_side || '?') + ' @ ' + (s.minority_price || 0).toFixed(2) + ' · Payout ' + (s.payout || 0).toFixed(1) + '%</div>';
+                    if (s.link) html += '<a href="' + s.link + '" target="_blank" rel="noopener noreferrer" style="font-size: 0.8rem; margin-top: 0.3rem; display: inline-block;">View market →</a>';
+                    html += '</div>';
+                }
+                html += '</div>';
+                el.innerHTML = html;
+            } catch (e) {
+                el.innerHTML = '<div style="color: var(--danger);">Request failed: ' + (e.message || 'Unknown error') + '</div>';
+            }
+        }
+
+        function exportData(format) {
+            showToast('Exporting ' + format.toUpperCase(), 'success');
+        }
+
+        function showModal(type) {
+            const modal = document.getElementById('modal');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalBody = document.getElementById('modalBody');
+            const modalFooter = document.getElementById('modalFooter');
+            
+            // Reset content
+            modalBody.innerHTML = '';
+            modalFooter.innerHTML = '';
+            
+            if (type === 'addWallet') {
+                modalTitle.textContent = 'Add Wallet';
+                modalBody.innerHTML = `
+                    <input type="text" id="newWalletAddress" placeholder="Wallet Address" class="form-input" style="width: 100%; margin-bottom: 1rem;">
+                    <input type="text" id="newWalletNickname" placeholder="Nickname" class="form-input" style="width: 100%;">
+                `;
+                modalFooter.innerHTML = `<button class="btn btn-primary" onclick="addWallet()">Add</button>`;
+            } else if (type === 'bulkImport') {
+                modalTitle.textContent = 'Bulk Import Wallets';
+                modalBody.innerHTML = `
+                    <textarea id="bulkImportText" placeholder="One address per line. Formats:&#10;0x123...&#10;0x123..., Nickname&#10;0x123... Nickname&#10;Nickname, 0x123..." class="form-input" style="width: 100%; height: 150px;"></textarea>
+                `;
+                modalFooter.innerHTML = `<button class="btn btn-primary" onclick="bulkImport()">Import</button>`;
+            } else if (type === 'filterWallets') {
+                modalTitle.textContent = 'Filter Wallets';
+                modalBody.innerHTML = `
+                    <div style="display: grid; gap: 1rem;">
+                        <div>
+                            <label>Min Trades</label>
+                            <input type="number" id="filterMinTrades" value="0" class="form-input" style="width: 100%;">
+                        </div>
+                        <div>
+                            <label>Min Win Rate (%)</label>
+                            <input type="number" id="filterMinWinRate" value="0" class="form-input" style="width: 100%;">
+                        </div>
+                        <div>
+                            <label>Max Loss Rate (%)</label>
+                            <input type="number" id="filterMaxLossRate" value="100" class="form-input" style="width: 100%;">
+                        </div>
+                        <div>
+                            <label>Min Score</label>
+                            <input type="number" id="filterMinScore" value="0" class="form-input" style="width: 100%;">
+                        </div>
+                        <div>
+                            <label><input type="checkbox" id="filterSmartMoney"> Smart Money Only</label>
+                        </div>
+                        <div>
+                            <label><input type="checkbox" id="filterExcludeBots"> Exclude Bots</label>
+                        </div>
+                    </div>
+                `;
+                modalFooter.innerHTML = `<button class="btn btn-primary" onclick="applyFilters()">Apply Filters</button>`;
+            } else if (type === 'classifyWallets') {
+                modalTitle.textContent = 'Classify Wallets';
+                const src = (wallets && wallets.length) ? wallets : (walletsData || []);
+                const addrs = src.map(w => (w && w.address) || (typeof w === 'string' ? w : null)).filter(Boolean);
+                const addrCount = addrs.length;
+                modalBody.innerHTML = `<p>Classify wallets based on trading patterns. Scores, tiers, and bot/farmer flags will be updated.</p><p style="color: var(--text-secondary); font-size: 0.9rem;">${addrCount} wallet(s) listed — <strong>never-scored first</strong>, then <strong>oldest score first</strong>. Wallets scored within the configured hours are <strong>skipped</strong> (see Settings → Bulk classify).</p>`;
+                modalFooter.innerHTML = `<button class="btn btn-primary" onclick="runClassification()"><i class="fas fa-brain"></i> Run Classification</button>`;
+            } else if (type === 'vetAllWallets') {
+                modalTitle.textContent = 'Vet All Wallets';
+                const src = (wallets && wallets.length) ? wallets : (walletsData || []);
+                const addrs = src.map(w => (w && w.address) || (typeof w === 'string' ? w : null)).filter(Boolean);
+                const addrCount = addrs.length;
+                modalBody.innerHTML = `<p><strong>Vet All</strong> uses your skip window (Settings → Bulk vet): wallets vetted within the last N hours are skipped so you are not re-vetting the same addresses several times a day. Queue order: <strong>never-vetted first</strong>, then <strong>oldest vet first</strong>.</p><p style="color: var(--text-secondary); font-size: 0.9rem;">Passed wallets are promoted to Vetted; others stay on Watch. Vet never removes wallets. Use the row <strong>Vet</strong> button to force one wallet anytime.</p><p style="color: var(--text-secondary); font-size: 0.9rem;"><strong>${addrCount}</strong> wallet(s) in list — actual run count depends on skip. One wallet per request (up to ~2 min each).</p>`;
+                modalFooter.innerHTML = `<button class="btn btn-primary" onclick="runBulkVet()"><i class="fas fa-shield-alt"></i> Vet All</button>`;
+            } else if (type === 'settings') {
+                modalTitle.textContent = 'Settings';
+                modalBody.innerHTML = `<p>Settings content here.</p>`;
+                modalFooter.innerHTML = `<button class="btn btn-primary" onclick="closeModal()">Save</button>`;
+            } else if (type === 'addExchange') {
+                modalTitle.textContent = 'Add Exchange';
+                modalBody.innerHTML = `
+                    <input type="text" id="newExchange" placeholder="Exchange Name" class="form-input" style="width: 100%;">
+                `;
+                modalFooter.innerHTML = `<button class="btn btn-primary" onclick="addExchange()">Add</button>`;
+            } else if (type === 'testAlert') {
+                modalTitle.textContent = 'Test Alert';
+                modalBody.innerHTML = `
+                    <select id="testAlertType" class="form-input" style="width: 100%;">
+                        <option value="telegram">Telegram</option>
+                        <option value="discord">Discord</option>
+                    </select>
+                `;
+                modalFooter.innerHTML = `<button class="btn btn-primary" onclick="sendTestAlert()">Send Test</button>`;
+            }
+            
+            modal.style.display = 'flex';
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('modal');
+            modal.style.display = 'none';
+        }
+
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            const msgEl = document.getElementById('toastMessage');
+            if (toast && msgEl) {
+                msgEl.textContent = message;
+                toast.className = 'toast ' + type + ' show';
+                setTimeout(() => toast.classList.remove('show'), 3000);
+            }
+        }
+
+        function addWallet() {
+            const addrEl = document.getElementById('newWalletAddress');
+            const nickEl = document.getElementById('newWalletNickname');
+            const address = (addrEl && addrEl.value || '').trim();
+            const nickname = (nickEl && nickEl.value || '').trim();
+            if (!address) {
+                showToast('Address required', 'error');
+                return;
+            }
+            fetch('/api/wallet/add', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({address, nickname})
+            }).then(r => r.json()).then(d => {
+                if (d && d.ok) {
+                    showToast('Wallet added', 'success');
+                    closeModal();
+                    location.reload();
+                } else {
+                    showToast((d && d.error) || 'Failed to add wallet', 'error');
+                }
+            }).catch(() => showToast('Request failed', 'error'));
+        }
+
+        function bulkImport() {
+            const textEl = document.getElementById('bulkImportText');
+            const walletsText = (textEl && textEl.value || '').trim();
+            if (!walletsText) {
+                showToast('Enter wallet addresses', 'error');
+                return;
+            }
+            fetch('/api/wallets/bulk-import', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({wallets: walletsText, auto_vet: false})
+            }).then(r => r.json()).then(d => {
+                if (d && d.ok) {
+                    const imported = d.imported_count ?? 0;
+                    const errCount = d.error_count ?? 0;
+                    if (imported > 0) {
+                        showToast(`Imported ${imported} wallet(s)`, 'success');
+                        closeModal();
+                        location.reload();
+                    } else if (errCount > 0) {
+                        showToast(d.errors && d.errors[0] || 'No valid addresses found', 'error');
+                    } else {
+                        showToast('No valid addresses found', 'warning');
+                    }
+                } else {
+                    showToast((d && d.error) || 'Import failed', 'error');
+                }
+            }).catch(err => {
+                console.error('bulkImport error:', err);
+                showToast('Import request failed', 'error');
+            });
+        }
+
+        // Event Listeners
+        document.getElementById('searchInput')?.addEventListener('input', applyFiltersLocal);
+        document.getElementById('sortSelect')?.addEventListener('change', e => {
+            const [field, dir] = e.target.value.split('-');
+            currentSort = {field, direction: dir};
+            applyFiltersLocal();
+        });
+        document.getElementById('filterSelect')?.addEventListener('change', e => {
+            currentFilter = e.target.value;
+            applyFiltersLocal();
+        });
+        document.getElementById('modal')?.addEventListener('click', e => {
+            if (e.target.id === 'modal') closeModal();
         });
     </script>
 </body>

@@ -1,10 +1,13 @@
 """Jupiter Trigger API client for limit orders."""
 
+import logging
 import requests
 from typing import Dict, List, Optional
 
 
 JUPITER_TRIGGER_API = "https://api.jup.ag/trigger/v1"
+
+logger = logging.getLogger(__name__)
 
 
 class JupiterTriggerAPI:
@@ -30,7 +33,7 @@ class JupiterTriggerAPI:
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            print(f"Error posting to {url}: {e}")
+            logger.warning("Error posting to %s: %s", url, e)
             return None
 
     def _get(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
@@ -41,7 +44,7 @@ class JupiterTriggerAPI:
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            print(f"Error fetching {url}: {e}")
+            logger.warning("Error fetching %s: %s", url, e)
             return None
 
     def create_order(

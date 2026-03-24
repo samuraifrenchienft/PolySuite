@@ -4,16 +4,21 @@ Uses https://data-api.polymarket.com/trades with filterType=CASH and filterAmoun
 to get platform-wide large trades. No API key required.
 """
 
+import logging
 import requests
 from typing import List, Dict
 
 DATA_API = "https://data-api.polymarket.com"
 
+logger = logging.getLogger(__name__)
+
 
 class PolymarketWhaleClient:
     """Free client for large Polymarket trades via Data API."""
 
-    def get_latest_whale_trades(self, min_usd: int = 5000, limit: int = 50) -> List[Dict]:
+    def get_latest_whale_trades(
+        self, min_usd: int = 5000, limit: int = 50
+    ) -> List[Dict]:
         """Get latest large trades (free, no API key).
 
         Args:
@@ -50,15 +55,21 @@ class PolymarketWhaleClient:
                     continue
                 size = float(t.get("size", 0) or 0)
                 price = float(t.get("price", 0) or 0)
-                usd = size * price if price else size
-                out.append({
-                    "address": addr,
-                    "wallet": addr,
-                    "size": usd,
-                    "usdSize": usd,
-                    **t,
-                })
+                # Only calculate USD value if we have a valid price
+                # Skip trades with missing/invalid price data
+                if price <= 0:
+                    continue
+                usd = size * price
+                out.append(
+                    {
+                        "address": addr,
+                        "wallet": addr,
+                        "size": usd,
+                        "usdSize": usd,
+                        **t,
+                    }
+                )
             return out
         except Exception as e:
-            print(f"[-] Polymarket whale trades failed: {e}")
+            logger.warning("Polymarket whale trades failed: %s", e)
         return []

@@ -1,10 +1,12 @@
 """Jupiter Portfolio API client for PolySuite."""
 
+import logging
 import requests
 from typing import Dict, List, Optional
 
 from src.config import Config
 
+logger = logging.getLogger(__name__)
 
 JUPITER_ULTRA_API = "https://api.jup.ag/ultra/v1"
 
@@ -40,7 +42,7 @@ class JupiterPortfolioAPI:
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            print(f"Error fetching Jupiter holdings: {e}")
+            logger.warning("Error fetching Jupiter holdings: %s", e)
             return None
 
     def get_native_sol(self, address: str) -> Optional[float]:
@@ -60,7 +62,7 @@ class JupiterPortfolioAPI:
             data = resp.json()
             return float(data.get("lamports", 0)) / 1e9
         except Exception as e:
-            print(f"Error fetching native SOL: {e}")
+            logger.warning("Error fetching native SOL: %s", e)
             return None
 
     def get_token_list(self, address: str) -> List[Dict]:

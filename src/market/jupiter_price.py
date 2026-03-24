@@ -1,5 +1,6 @@
 """Jupiter Price API v3 client for PolySuite."""
 
+import logging
 import requests
 from typing import Dict, List, Optional
 
@@ -42,7 +43,7 @@ class JupiterPriceAPI:
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            print(f"Error fetching Jupiter price: {e}")
+            logger.warning("Error fetching Jupiter price: %s", e)
             return None
 
     def get_single_price(self, mint_address: str) -> Optional[float]:

@@ -1,8 +1,11 @@
 """Market discovery module for detecting new markets."""
 
+import logging
 import time
 from typing import List, Dict, Set, Optional, Callable
 from src.market.api import APIClientFactory
+
+logger = logging.getLogger(__name__)
 
 
 class MarketDiscovery:
@@ -75,7 +78,9 @@ class MarketDiscovery:
                 new_markets = self.check_for_new_markets()
 
                 for market in new_markets:
-                    print(f"🆕 New market: {market.get('question', 'Unknown')[:60]}")
+                    logger.info(
+                        "New market: %s", market.get("question", "Unknown")[:60]
+                    )
                     if callback:
                         callback(market)
                     yield market
@@ -85,7 +90,7 @@ class MarketDiscovery:
             except KeyboardInterrupt:
                 break
             except Exception as e:
-                print(f"Error in market discovery: {e}")
+                logger.warning("Error in market discovery: %s", e)
                 time.sleep(5)
 
     def get_markets_by_category(self, category: str) -> List[Dict]:

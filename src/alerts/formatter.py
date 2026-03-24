@@ -343,7 +343,7 @@ class AlertFormatter:
 
     @staticmethod
     def format_trend(token: dict, analysis: str = "") -> str:
-        """Format pump.fun trend alert."""
+        """Format trend alert (crypto/token)."""
         name = token.get("name", "Unknown")
         symbol = token.get("symbol", "?")
         mint = token.get("mint", "")[:20]

@@ -8,6 +8,8 @@ from typing import Callable, Dict, Optional
 from src.copy.storage import get_copy_target_addresses, list_copy_targets
 from src.market.rtds_client import RTDSClient
 from src.market.polymarket_clob import PolymarketCLOBTrading
+from py_clob_client.clob_types import OrderArgs, PartialCreateOrderOptions
+from py_clob_client.order_builder.constants import BUY, SELL
 
 logger = logging.getLogger(__name__)
 
@@ -61,16 +63,25 @@ class CopyEngine:
         cutoff = time.time() - (window_min * 60)
         count = sum(1 for ts in self._trade_timestamps if ts >= cutoff)
         if count >= freeze_after:
-            duration_min = int(self.config.get("copy_freeze_duration_minutes", 60) or 60)
+            duration_min = int(
+                self.config.get("copy_freeze_duration_minutes", 60) or 60
+            )
             self._freeze_until = time.time() + (duration_min * 60)
-            logger.info("[CopyEngine] Freeze triggered: %d trades in %d min, pausing %d min", count, window_min, duration_min)
+            logger.info(
+                "[CopyEngine] Freeze triggered: %d trades in %d min, pausing %d min",
+                count,
+                window_min,
+                duration_min,
+            )
             return False
         return True
 
     def _get_effective_multiplier(self) -> float:
         """Return multiplier (possibly reduced after many trades)."""
         base = float(self.config.get("copy_size_multiplier", 1.0))
-        reduce_after = int(self.config.get("copy_reduce_multiplier_after_trades", 0) or 0)
+        reduce_after = int(
+            self.config.get("copy_reduce_multiplier_after_trades", 0) or 0
+        )
         if reduce_after <= 0:
             return base
         window_min = int(self.config.get("copy_reduction_window_minutes", 60) or 60)
@@ -102,21 +113,30 @@ class CopyEngine:
         return True
 
     def _execute_order(self, trade: dict, user_id: str) -> Optional[str]:
-        """Execute copy order for user. Returns order ID or None."""
-        creds = self._get_user_creds(user_id)
-        if not creds:
-            logger.info("[CopyEngine] No Polymarket creds for user %s, skipping", user_id)
-            return None
+        """Execute an order via Polymarket CLOB with maker-only strategy."""
         if self.config.get("copy_dry_run", True):
-            logger.info("[CopyEngine] Dry run: would copy trade %s for user %s", trade.get("asset_id"), user_id)
+            logger.info(
+                "[CopyEngine] Dry run: would copy trade %s for user %s",
+                trade.get("asset_id"),
+                user_id,
+            )
             return None
         try:
+            creds = self._get_user_creds(user_id)
+            if not creds:
+                logger.warning("[CopyEngine] No credentials for user %s", user_id)
+                return None
+
             clob = PolymarketCLOBTrading(
                 api_key=creds["api_key"],
                 api_secret=creds["api_secret"],
                 api_passphrase=creds["api_passphrase"],
             )
-            token_id = trade.get("asset_id") or trade.get("raw", {}).get("asset_id") or trade.get("raw", {}).get("assetId")
+            token_id = (
+                trade.get("asset_id")
+                or trade.get("raw", {}).get("asset_id")
+                or trade.get("raw", {}).get("assetId")
+            )
             if not token_id:
                 logger.warning("[CopyEngine] No asset_id in trade")
                 return None
@@ -127,7 +147,66 @@ class CopyEngine:
             if size <= 0:
                 return None
             side = (trade.get("side") or "BUY").upper()
-            order_id = clob.create_and_post_order(token_id=token_id, price=price, size=size, side=side)
+
+            # Use POST_ONLY (maker-only) order to earn fee rebates
+            # According to March 2026 changelog: maker rebate -0.07%, taker fee 0.12%
+            opts = PartialCreateOrderOptions(
+                tick_size="0.01", neg_risk=False, post_only=True
+            )
+            args = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=size,
+                side=BUY if side == "BUY" else SELL,
+            )
+
+            resp = clob._client.create_and_post_order(args, options=opts)
+            if isinstance(resp, dict):
+                order_id = resp.get("orderID") or resp.get("order_id")
+            else:
+                order_id = str(resp) if resp is not None else None
+
+            if order_id:
+                self._trade_timestamps.append(time.time())
+                logger.info("[CopyEngine] Maker-only order placed: %s", order_id)
+                return order_id
+            else:
+                logger.warning("[CopyEngine] Order placement failed: %s", resp)
+                return None
+        except Exception as e:
+            logger.exception("[CopyEngine] execute error: %s", e)
+            return None
+        if self.config.get("copy_dry_run", True):
+            logger.info(
+                "[CopyEngine] Dry run: would copy trade %s for user %s",
+                trade.get("asset_id"),
+                user_id,
+            )
+            return None
+        try:
+            clob = PolymarketCLOBTrading(
+                api_key=creds["api_key"],
+                api_secret=creds["api_secret"],
+                api_passphrase=creds["api_passphrase"],
+            )
+            token_id = (
+                trade.get("asset_id")
+                or trade.get("raw", {}).get("asset_id")
+                or trade.get("raw", {}).get("assetId")
+            )
+            if not token_id:
+                logger.warning("[CopyEngine] No asset_id in trade")
+                return None
+            price = float(trade.get("price", 0) or 0)
+            size = float(trade.get("size", 0) or 0)
+            mult = self._get_effective_multiplier()
+            size = size * mult
+            if size <= 0:
+                return None
+            side = (trade.get("side") or "BUY").upper()
+            order_id = clob.create_and_post_order(
+                token_id=token_id, price=price, size=size, side=side
+            )
             if order_id:
                 self._trade_timestamps.append(time.time())
                 logger.info("[CopyEngine] Order placed: %s", order_id)
@@ -150,7 +229,9 @@ class CopyEngine:
         if not user_id:
             logger.debug("[CopyEngine] No copy_default_user_id, dry-run only")
             if self.config.get("copy_dry_run", True):
-                logger.info("[CopyEngine] Would copy trade from %s (no user_id set)", proxy[:12])
+                logger.info(
+                    "[CopyEngine] Would copy trade from %s (no user_id set)", proxy[:12]
+                )
             return
         self._execute_order(trade, user_id)
 

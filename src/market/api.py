@@ -1,10 +1,14 @@
 """Polymarket API client for PolySuite."""
 
+import json
+import logging
 import requests
 import time
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from functools import lru_cache
+
+logger = logging.getLogger(__name__)
 
 
 # API Base URLs
@@ -19,6 +23,37 @@ RETRY_BACKOFF = 1.0  # seconds, doubles each retry
 
 
 from src.market.polymarket_clob import PolymarketCLOB
+
+
+def extract_market_category(market: Optional[Dict]) -> Optional[str]:
+    """Resolve a display category from Gamma-shaped market JSON.
+
+    Polymarket often puts labels on ``category``, but CLOB-only fetches or partial
+    payloads may omit it while still having ``events[].category`` or ``tags``.
+    Without this, classifiers bucket most trades as \"other\".
+    """
+    if not market or not isinstance(market, dict):
+        return None
+    raw = market.get("category")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip().lower()
+    events = market.get("events") or []
+    if isinstance(events, list):
+        for ev in events:
+            if isinstance(ev, dict):
+                ec = ev.get("category")
+                if ec is not None and str(ec).strip():
+                    return str(ec).strip().lower()
+    tags = market.get("tags")
+    if isinstance(tags, list):
+        for t in tags:
+            if isinstance(t, dict):
+                slug = (t.get("slug") or t.get("label") or "").strip()
+                if slug:
+                    return slug.lower().replace(" ", "-")
+            elif isinstance(t, str) and t.strip():
+                return t.strip().lower()
+    return None
 
 
 class RateLimiter:
@@ -100,8 +135,8 @@ class PolymarketAPI:
                     if attempt < MAX_RETRIES - 1:
                         time.sleep(min(retry_after, 30))
                         continue
-                    print(
-                        f"[API] Rate limited (429) after {MAX_RETRIES} attempts: {url}"
+                    logger.warning(
+                        "Rate limited (429) after %d attempts: %s", MAX_RETRIES, url
                     )
                     return None
                 if resp.status_code == 422:
@@ -111,15 +146,15 @@ class PolymarketAPI:
                     if attempt < MAX_RETRIES - 1:
                         time.sleep(RETRY_BACKOFF * (2**attempt))
                         continue
-                    print(
-                        f"[API] Server error ({resp.status_code}) after retries: {url}"
+                    logger.warning(
+                        "Server error (%s) after retries: %s", resp.status_code, url
                     )
                     return None
                 resp.raise_for_status()
                 try:
                     data = resp.json()
                 except requests.exceptions.JSONDecodeError as e:
-                    print(f"Error decoding JSON from Polymarket API: {e}")
+                    logger.warning("JSON decode error from Polymarket API: %s", e)
                     return None
                 if use_cache:
                     self.cache.set(cache_key, data)
@@ -129,7 +164,7 @@ class PolymarketAPI:
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_BACKOFF * (2**attempt))
                     continue
-                print(f"Error fetching {url}: {e}")
+                logger.warning("Error fetching %s: %s", url, e)
                 return None
         return None
 
@@ -221,7 +256,7 @@ class PolymarketAPI:
             if result and isinstance(result, list):
                 return result
         except Exception as e:
-            print(f"Error fetching Polymarket leaderboard: {e}")
+            logger.warning("Error fetching Polymarket leaderboard: %s", e)
         return []
 
     # ============ MARKET METHODS ============
@@ -264,6 +299,29 @@ class PolymarketAPI:
             and all(c in "0123456789abcdef" for c in s[2:].lower())
         )
 
+    def _gamma_market_by_condition_id(self, condition_id: str) -> Optional[Dict]:
+        """Gamma returns 422 for GET /markets/{conditionId}; use list filter instead."""
+        if not condition_id:
+            return None
+        url = f"{GAMMA_API}/markets"
+        rows = self._get_list(
+            url, {"condition_id": condition_id.strip(), "limit": 1}, use_cache=True
+        )
+        if rows and isinstance(rows[0], dict):
+            return rows[0]
+        return None
+
+    def _enrich_market_category(self, market: Optional[Dict]) -> Optional[Dict]:
+        """Set ``category`` when only nested tags/events have it."""
+        if not market or not isinstance(market, dict):
+            return market
+        if (market.get("category") or "").strip():
+            return market
+        cat = extract_market_category(market)
+        if cat:
+            market["category"] = cat
+        return market
+
     def get_market(self, market_id: str) -> Optional[Dict]:
         """Get a specific market by ID. Gamma API uses slug; condition IDs need CLOB fallback."""
         if not market_id:
@@ -278,7 +336,40 @@ class PolymarketAPI:
                 if m:
                     # Normalize CLOB response to Gamma-like dict for callers
                     q = m.get("question") or m.get("market_slug") or "Unknown"
-                    return {
+                    closed = bool(m.get("closed", False) or m.get("active") is False)
+                    tokens = m.get("tokens") or []
+                    winning_outcome = None
+                    for t in tokens:
+                        if isinstance(t, dict) and t.get("winner"):
+                            winning_outcome = (t.get("outcome") or "").strip()
+                            break
+                    # Fallback: closed market with token price ~1 means winner
+                    if not winning_outcome and closed and tokens:
+                        for t in tokens:
+                            if isinstance(t, dict):
+                                p = float(t.get("price", 0) or 0)
+                                if p >= 0.95:
+                                    winning_outcome = (t.get("outcome") or "").strip()
+                                    break
+                    # outcomePrices fallback (JSON string or list)
+                    if not winning_outcome and closed:
+                        raw = m.get("outcome_prices") or m.get("outcomePrices") or "[]"
+                        if isinstance(raw, str):
+                            try:
+                                prices = json.loads(raw)
+                            except Exception:
+                                prices = []
+                        else:
+                            prices = list(raw) if raw else []
+                        if len(prices) >= 2:
+                            p0, p1 = float(prices[0] or 0), float(prices[1] or 0)
+                            if p0 >= 0.95 and p1 <= 0.05:
+                                winning_outcome = "yes"
+                            elif p1 >= 0.95 and p0 <= 0.05:
+                                winning_outcome = "no"
+                    # Resolved = closed and we know the winner (CLOB; Gamma 422 for condition_id)
+                    resolved = bool(closed and winning_outcome)
+                    out = {
                         "id": m.get("id") or market_id,
                         "conditionId": market_id,
                         "question": q,
@@ -287,19 +378,51 @@ class PolymarketAPI:
                         "outcomePrices": m.get("outcome_prices")
                         or m.get("outcomePrices")
                         or "[]",
+                        "closed": closed,
+                        "resolved": resolved,
+                        "outcome": winning_outcome or None,
+                        "endDate": m.get("end_date_iso") or m.get("endDate") or m.get("end_date"),
+                        "tokens": tokens,
                     }
+                    # Gamma GET /markets/{conditionId} returns 422; list ?condition_id= works.
+                    gamma = self._gamma_market_by_condition_id(market_id)
+                    if not gamma:
+                        try:
+                            g2 = self._get(f"{GAMMA_API}/markets/{market_id}", use_cache=True)
+                            gamma = g2 if isinstance(g2, dict) else None
+                        except Exception:
+                            gamma = None
+                    if gamma and isinstance(gamma, dict):
+                        if gamma.get("category"):
+                            out["category"] = gamma.get("category")
+                        if gamma.get("events") is not None:
+                            out["events"] = gamma.get("events")
+                        if gamma.get("tags") is not None:
+                            out["tags"] = gamma.get("tags")
+                        if "resolved" in gamma and gamma.get("resolved") is not None:
+                            out["resolved"] = gamma.get("resolved")
+                        if "closed" in gamma and gamma.get("closed") is not None:
+                            out["closed"] = gamma.get("closed")
+                        if gamma.get("outcome"):
+                            out["outcome"] = gamma.get("outcome")
+                    merged = {**out, **(gamma or {})}
+                    cat = extract_market_category(merged)
+                    if cat:
+                        out["category"] = cat
+                    else:
+                        self._enrich_market_category(out)
+                    return out
             except Exception as e:
-                print(f"[API] get_market (condition_id) CLOB: {e}")
+                logger.debug("get_market (condition_id) CLOB: %s", e)
             return None
 
         # Slug or numeric ID: Gamma path /markets/slug/{slug} or /markets/{id}
         url = f"{GAMMA_API}/markets/{market_id}"
         result = self._get(url, use_cache=True)
-        if result:
-            return result
-        # Try slug path format (Gamma docs: /markets/slug/{slug})
-        url = f"{GAMMA_API}/markets/slug/{market_id}"
-        return self._get(url, use_cache=True)
+        if not result:
+            url = f"{GAMMA_API}/markets/slug/{market_id}"
+            result = self._get(url, use_cache=True)
+        return self._enrich_market_category(result) if result else None
 
     def get_markets(
         self,
@@ -353,38 +476,16 @@ class PolymarketAPI:
     def get_crypto_short_term_markets(self, limit: int = 100) -> List[Dict]:
         """Get crypto 5M/15M/hourly markets. Falls back to top crypto when strict filter yields 0."""
         timeframe_kw = [
-            "5 min",
-            "15 min",
-            "5m",
-            "15m",
-            "hourly",
-            "up or down",
-            "intraday",
-            "rolling",
-            "candle",
-            "close",
-            "open",
-            "utc",
-            "11:50",
-            "11:55",
-            "minute",
+            "5 min", "15 min", "5m", "15m", "5-min", "15-min", "5 minute", "15 minute",
+            "hourly", "up or down", "intraday", "rolling", "candle", "close", "open",
+            "utc", "11:50", "11:55", "minute", "higher", "lower", "above", "below",
         ]
-
         crypto_kw = [
-            "bitcoin",
-            "btc",
-            "ethereum",
-            "eth",
-            "solana",
-            "crypto",
-            "megaeth",
-            "dogecoin",
-            "xrp",
-            " Cardano",
-            "ADA",
-            "avalanche",
-            "dot ",
-            "matic",
+            "bitcoin", "btc", "ethereum", "eth", "solana", " sol ", "crypto",
+            "megaeth", "dogecoin", "doge", "xrp", "cardano", "ada", "avalanche",
+            "avax", "polkadot", " dot ", "matic", "link", "chainlink", "ton", "toncoin",
+            "injective", "inj", "sui", "aptos", "apt", "sei", "base", "arb", "arbitrum",
+            "op ", "optimism", "bonk", "wif", "pepe", "shib", "floki",
         ]
 
         def _extract(events: List, strict: bool = True) -> List[Dict]:
@@ -399,9 +500,10 @@ class PolymarketAPI:
                     if mid:
                         seen.add(mid)
                     q = (m.get("question", "") or "").lower()
-                    # STRICT: require BOTH timeframe AND crypto keywords
-                    has_timeframe = any(kw in q for kw in timeframe_kw)
-                    has_crypto = any(ck in q for ck in crypto_kw)
+                    group = (m.get("groupItemTitle") or "").lower()
+                    text = q + " " + group
+                    has_timeframe = any(kw in text for kw in timeframe_kw)
+                    has_crypto = any(ck in text for ck in crypto_kw)
                     if strict and (not has_timeframe or not has_crypto):
                         continue
                     if not strict and not has_crypto:
@@ -424,20 +526,12 @@ class PolymarketAPI:
                 return result
 
         # Markets endpoint - MUST have crypto keyword too
-        crypto_kw = [
-            "bitcoin",
-            "btc",
-            "ethereum",
-            "eth ",
-            "solana",
-            "crypto",
-            "megaeth",
-        ]
         result = []
         for m in self.get_markets(limit=500, active=True) or []:
             q = (m.get("question", "") or "").lower()
-            # Must have both timeframe AND crypto keyword
-            if any(kw in q for kw in timeframe_kw) and any(ck in q for ck in crypto_kw):
+            group = (m.get("groupItemTitle") or "").lower()
+            text = q + " " + group
+            if any(kw in text for kw in timeframe_kw) and any(ck in text for ck in crypto_kw):
                 result.append(m)
                 if len(result) >= limit:
                     return result
@@ -449,12 +543,13 @@ class PolymarketAPI:
         fallback = _extract(events, strict=False)
         if fallback:
             return fallback
-        # Last resort: markets with crypto keywords (avoid "sol" in "soliciting")
+        # Last resort: markets with crypto keywords (use " sol " to avoid "soliciting")
         result = []
-        crypto_kw = ["bitcoin", "btc ", "ethereum", "solana", " crypto", "megaeth"]
         for m in self.get_markets(limit=500, active=True) or []:
             q = (m.get("question", "") or "").lower()
-            if any(k in q for k in crypto_kw):
+            group = (m.get("groupItemTitle") or "").lower()
+            text = q + " " + group
+            if any(k in text for k in crypto_kw):
                 result.append(m)
                 if len(result) >= limit:
                     break
@@ -544,7 +639,7 @@ class PolymarketAPI:
             if data and "spread" in data:
                 return float(data["spread"])
         except Exception as e:
-            print(f"[API] get_market_spread error: {e}")
+            logger.debug("get_market_spread error: %s", e)
         return None
 
 

@@ -8,6 +8,8 @@ import requests
 import time
 from typing import Dict, Optional
 
+logger = logging.getLogger(__name__)
+
 
 class MemeCoinScanner:
     """Scan meme coin contracts for safety analysis."""
@@ -127,7 +129,7 @@ class MemeCoinScanner:
                 info["holders"] = data.get("holderCount")
                 info["total_supply"] = data.get("totalSupply")
         except Exception as e:
-            print(f"[MemeScanner] token-insights error: {e}")
+            logger.debug("MemeScanner token-insights error: %s", e)
 
         return info
 
@@ -157,7 +159,7 @@ class MemeCoinScanner:
                 }
         except Exception as e:
             logging.getLogger(__name__).exception("MemeScanner honeypot check error")
-            return {"error": "Honeypot check failed", "is_honeypot": None}
+            return {"error": "Internal error", "is_honeypot": None}
         return {"is_honeypot": None}
 
     def _assess_safety(

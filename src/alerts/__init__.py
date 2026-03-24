@@ -1,11 +1,13 @@
 """Enhanced alert dispatcher for PolySuite with clear buy signals."""
 
 import json
+import logging
 import time
 from typing import List, Dict, Optional, Set
 import requests
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
 
 COLORS = {
     "CRITICAL": 0xEF4444,  # Red - strong buy
@@ -69,7 +71,7 @@ class AlertDispatcher:
 
     def send_webhook(self, payload: Dict) -> bool:
         if not self.webhook_url:
-            print("No webhook URL configured")
+            logger.debug("No webhook URL configured")
             return False
         try:
             resp = requests.post(
@@ -79,11 +81,13 @@ class AlertDispatcher:
                 timeout=30,
             )
             if resp.status_code not in (204, 200):
-                print(f"Webhook failed: {resp.status_code} - {resp.text[:200]}")
+                logger.warning(
+                    "Webhook failed: %s - %s", resp.status_code, resp.text[:200]
+                )
                 return False
             return True
         except requests.RequestException as e:
-            print(f"Failed to send webhook: {e}")
+            logger.warning("Failed to send webhook: %s", e)
             return False
 
     def _determine_urgency(self, convergence: Dict) -> str:
@@ -371,3 +375,52 @@ class AlertDispatcher:
     def send_smart_money_alert(self, wallets: List[Dict]) -> bool:
         payload = self.format_smart_money_alert(wallets)
         return self.send_webhook(payload)
+
+    def format_insider_alert(self, signal: Dict) -> Dict:
+        """Format insider signal for Discord embed."""
+        addr = signal.get("address", "Unknown")
+        addr_short = addr[:10] + "..." if len(addr) > 10 else addr
+        trade_size = signal.get("trade_size", 0)
+        closed_count = signal.get("closed_count", 0)
+        confidence = signal.get("confidence", "MEDIUM")
+        win = signal.get("winning_trade") or {}
+        question = (win.get("question") or "Unknown")[:150]
+        pnl = win.get("pnl", 0)
+        side = (win.get("side") or signal.get("side") or "?").upper()
+        market_id = win.get("market_id", "")
+
+        color = COLORS["CRITICAL"] if confidence == "HIGH" else (COLORS["HIGH"] if confidence == "MEDIUM" else COLORS["NORMAL"])
+        embed = {
+            "title": "🐋 Insider / Whale Signal",
+            "description": f"Fresh wallet + large trade + winning outcome",
+            "color": color,
+            "fields": [
+                {"name": "Address", "value": f"`{addr_short}`", "inline": True},
+                {"name": "Trade Size", "value": f"${trade_size:,.0f}", "inline": True},
+                {"name": "Closed Trades", "value": str(closed_count), "inline": True},
+                {"name": "Winning Trade", "value": question, "inline": False},
+                {"name": "PnL", "value": f"${pnl:,.2f}", "inline": True},
+                {"name": "Side", "value": side, "inline": True},
+                {"name": "Confidence", "value": confidence, "inline": True},
+            ],
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        if market_id:
+            embed["url"] = f"https://polymarket.com/market/{market_id}"
+        return {"embeds": [embed]}
+
+    def send_insider_alert(self, signal: Dict, check_cooldown: bool = True) -> bool:
+        """Send insider signal alert to Discord."""
+        addr = signal.get("address", "")
+        win = signal.get("winning_trade") or {}
+        market_id = win.get("market_id", "") or "unknown"
+        cooldown_key = f"insider_{addr}_{market_id}"
+
+        if check_cooldown and self.is_on_cooldown(cooldown_key):
+            return False
+
+        payload = self.format_insider_alert(signal)
+        success = self.send_webhook(payload)
+        if success:
+            self.set_cooldown(cooldown_key)
+        return success

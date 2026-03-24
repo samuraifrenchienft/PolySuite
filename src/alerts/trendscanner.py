@@ -1,19 +1,17 @@
 """AI-powered trend scanner for meme coins and trends.
 
-Monitors:
-- pump.fun new launches
-- DexScreener trending (when available)
+Monitors DexScreener trending tokens.
 """
 
 import logging
-import os
 import requests
 from typing import List, Dict
-from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 class TrendScanner:
-    """AI scanner for trending tokens and new launches."""
+    """AI scanner for trending tokens."""
 
     def __init__(self, ai_filter=None):
         self.ai = ai_filter
@@ -22,37 +20,8 @@ class TrendScanner:
             {
                 "User-Agent": "Mozilla/5.0",
                 "Accept": "application/json",
-                "Origin": "https://pump.fun",
             }
         )
-
-    def get_pumpfun_new(self, limit: int = 10) -> List[Dict]:
-        """Get new tokens from pump.fun."""
-        try:
-            resp = self.session.get(
-                "https://frontend-api-v3.pump.fun/coins",
-                params={"limit": limit},
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            print(f"[TrendScanner] pump.fun error: {e}")
-        return []
-
-    def get_pumpfun_graduated(self, limit: int = 10) -> List[Dict]:
-        """Get graduated tokens from pump.fun."""
-        try:
-            resp = self.session.get(
-                "https://frontend-api-v3.pump.fun/coins/graduated",
-                params={"limit": limit},
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            print(f"[TrendScanner] pump.fun graduated error: {e}")
-        return []
 
     def get_dexscreener_trending(self, limit: int = 15) -> List[Dict]:
         """Get trending Solana tokens from DexScreener (community takeovers + token boosts)."""
@@ -80,7 +49,7 @@ class TrendScanner:
                             "chainId": item.get("chainId", ""),
                         })
         except Exception as e:
-            print(f"[TrendScanner] DexScreener takeovers error: {e}")
+            logger.debug("TrendScanner DexScreener takeovers error: %s", e)
 
         # Token boosts - promoted/trending
         try:
@@ -103,7 +72,7 @@ class TrendScanner:
                             "chainId": item.get("chainId", ""),
                         })
         except Exception as e:
-            print(f"[TrendScanner] DexScreener boosts error: {e}")
+            logger.debug("TrendScanner DexScreener boosts error: %s", e)
 
         return tokens[:limit]
 
@@ -136,54 +105,14 @@ REASON: [1 sentence]"""
             logging.getLogger(__name__).exception("TrendScanner analyze_token error")
             return {"alert": False, "reason": "Analysis failed"}
 
-    def scan_new_tokens(self, limit: int = 20) -> List[Dict]:
-        """Scan new pump.fun tokens for alerts."""
-        alerts = []
-
-        tokens = self.get_pumpfun_new(limit)
-        print(f"[TrendScanner] Found {len(tokens)} new tokens")
-
-        for token in tokens[:10]:  # Check top 10
-            analysis = self.analyze_token(token)
-            if analysis.get("alert"):
-                alerts.append(
-                    {
-                        "type": "new_token",
-                        "source": "pump.fun",
-                        "token": token,
-                        "analysis": analysis,
-                    }
-                )
-
-        return alerts
-
-    def scan_graduated(self, limit: int = 10) -> List[Dict]:
-        """Scan graduated tokens (higher quality)."""
-        alerts = []
-
-        tokens = self.get_pumpfun_graduated(limit)
-        print(f"[TrendScanner] Found {len(tokens)} graduated tokens")
-
-        for token in tokens[:5]:
-            analysis = self.analyze_token(token)
-            if analysis.get("alert"):
-                alerts.append(
-                    {
-                        "type": "graduated",
-                        "source": "pump.fun",
-                        "token": token,
-                        "analysis": analysis,
-                    }
-                )
-
-        return alerts
-
     def scan_dexscreener_trending(self, limit: int = 10) -> List[Dict]:
         """Scan DexScreener trending tokens for alerts."""
         alerts = []
         tokens = self.get_dexscreener_trending(limit=limit)
         if tokens:
-            print(f"[TrendScanner] Found {len(tokens)} DexScreener trending tokens")
+            logger.info(
+                "TrendScanner: Found %s DexScreener trending tokens", len(tokens)
+            )
         for token in tokens[:5]:
             if token.get("chainId") == "solana":
                 analysis = self.analyze_token(token)
@@ -198,11 +127,7 @@ REASON: [1 sentence]"""
 
     def scan_all(self) -> List[Dict]:
         """Scan all sources."""
-        alerts = []
-        alerts.extend(self.scan_new_tokens())
-        alerts.extend(self.scan_graduated())
-        alerts.extend(self.scan_dexscreener_trending())
-        return alerts
+        return self.scan_dexscreener_trending()
 
 
 # Singleton - wire AI filter for token analysis

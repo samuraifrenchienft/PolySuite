@@ -1,6 +1,10 @@
 """Client for scraping data from PredictFolio."""
+
+import logging
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 
 class PredictFolioClient:
@@ -17,7 +21,7 @@ class PredictFolioClient:
             response = requests.get(url, timeout=30)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching leaderboard: {e}")
+            logger.warning("PredictFolio error fetching leaderboard: %s", e)
             return []
 
         soup = BeautifulSoup(response.content, "html.parser")

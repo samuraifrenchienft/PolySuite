@@ -6,14 +6,18 @@ Combines:
 - Jupiter Prediction (all categories; crypto splits into general + short-term niche)
 """
 
-import requests
 import json
-import time
-import re
+import logging
 import os
+import re
+import time
 from typing import List, Dict, Optional
+
+import requests
 from dataclasses import dataclass
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -62,22 +66,25 @@ class MarketAggregator:
     _provider_last_check = {}  # {provider: timestamp}
     _provider_cooldown = 300  # 5 min cooldown after too many errors
 
-    # Category keywords - matches Polymarket API categories
-    CATEGORIES = {
+    # Category keywords - load from category_keywords.json when available, else fallback
+    def _get_categories(self):
+        try:
+            import json
+            from pathlib import Path
+            path = Path(__file__).resolve().parent.parent / "alerts" / "category_keywords.json"
+            with open(path, "r") as f:
+                data = json.load(f)
+            return {k: v if isinstance(v, list) else [] for k, v in data.items()}
+        except Exception:
+            pass
+        return self._default_categories()
+
+    def _default_categories(self):
+        return {
         "crypto": [
-            "bitcoin",
-            "btc",
-            "ethereum",
-            "eth",
-            "dogecoin",
-            "xrp",
-            "cardano",
-            "chainlink",
-            "ada",
-            "crypto",
-            "cryptocurrency",
-            "defi",
-            "token",
+            "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "dogecoin", "xrp",
+            "cardano", "chainlink", "ada", "crypto", "cryptocurrency", "defi", "token",
+            "avax", "avalanche", "sui", "aptos", "ton", "bonk", "wif", "megaeth",
         ],
         "sports": [
             "nfl",
@@ -310,7 +317,11 @@ class MarketAggregator:
     def _classify(self, question: str) -> str:
         """Classify market category using word boundaries."""
         q = " " + question.lower() + " "  # Add spaces for boundary matching
-        for cat, keywords in self.CATEGORIES.items():
+        categories = getattr(self, "_categories_cache", None)
+        if categories is None:
+            self._categories_cache = self._get_categories()
+            categories = self._categories_cache
+        for cat, keywords in categories.items():
             for kw in keywords:
                 # Match whole word only
                 pattern = r"\b" + re.escape(kw) + r"\b"
@@ -377,7 +388,7 @@ class MarketAggregator:
             return alerts
 
         except Exception as e:
-            print(f"[Polymarket] Error: {e}")
+            logger.warning("Polymarket fetch error: %s", e)
             return []
 
     # ========== KALSHI ==========
@@ -432,7 +443,7 @@ class MarketAggregator:
                     except Exception:
                         continue
         except Exception as e:
-            print(f"[Kalshi] event-based fetch error: {e}")
+            logger.warning("Kalshi event-based fetch error: %s", e)
 
         # Fallback to global endpoint if event path returns nothing.
         if not markets:
@@ -458,7 +469,7 @@ class MarketAggregator:
                         if markets:
                             break
                 except Exception as e:
-                    print(f"[Kalshi] {url}: {e}")
+                    logger.debug("Kalshi %s: %s", url, e)
                     continue
         else:
             # Enrich with combo/parlay contracts from global feed so combo strategy can run.
@@ -486,7 +497,7 @@ class MarketAggregator:
                 pass
 
         if not markets:
-            print("[Kalshi] No markets from any endpoint")
+            logger.warning("Kalshi: No markets from any endpoint")
             return []
 
         try:
@@ -630,7 +641,7 @@ class MarketAggregator:
             return alerts
 
         except Exception as e:
-            print(f"[Kalshi] Error: {e}")
+            logger.warning("Kalshi error: %s", e)
             return []
 
     # ========== JUPITER ==========
@@ -654,8 +665,8 @@ class MarketAggregator:
                 )
                 if resp.status_code != 200:
                     if resp.status_code == 403:
-                        print(
-                            "[Jupiter] 403 - API may be geo-restricted (US/SK blocked)"
+                        logger.warning(
+                            "Jupiter 403 — API may be geo-restricted (US/SK blocked)"
                         )
                     continue
 
@@ -703,7 +714,7 @@ class MarketAggregator:
                             )
                         )
             except Exception as e:
-                print(f"[Jupiter] Error: {e}")
+                logger.debug("Jupiter error: %s", e)
                 continue
 
         if not alerts:
@@ -752,9 +763,9 @@ class MarketAggregator:
                                 )
                             )
             except Exception as e:
-                print(f"[Jupiter] Fallback: {e}")
+                logger.debug("Jupiter fallback: %s", e)
             if not alerts:
-                print("[Jupiter] No markets (may be geo-restricted)")
+                logger.info("Jupiter: No markets (may be geo-restricted)")
 
         self._set_cached("jupiter", alerts)
         return alerts
