@@ -899,36 +899,55 @@ class Dashboard:
 
             # Reuse market cache across wallets AND across classify/vet requests (session-level)
             shared_market_cache: dict = self._get_shared_market_cache()
-            import threading
             from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
-            cache_lock = threading.Lock()
             results = []
             clean_addresses = [a.strip().lower() for a in addresses[:25] if (a or "").strip()]
 
-            def _classify_one(addr):
+            # Step 1: fetch all trades in parallel (no market calls yet)
+            all_trades: dict = {}
+            def _fetch_trades(addr):
                 try:
-                    trades = polymarket_api.get_wallet_trades(addr, limit=trade_limit)
-                    if not trades:
-                        return addr, None, None, None
+                    return addr, polymarket_api.get_wallet_trades(addr, limit=trade_limit)
+                except Exception:
+                    return addr, []
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                for addr, trades in pool.map(_fetch_trades, clean_addresses):
+                    all_trades[addr] = trades or []
+
+            # Step 2: collect ALL unique market IDs across every wallet, pre-fetch once
+            all_mids = {
+                t.get("conditionId") or t.get("market")
+                for trades in all_trades.values()
+                for t in trades
+                if t.get("conditionId") or t.get("market")
+            } - set(shared_market_cache.keys())
+
+            if all_mids:
+                def _fetch_market(mid):
+                    try:
+                        return mid, polymarket_api.get_market(mid)
+                    except Exception:
+                        return mid, None
+                with ThreadPoolExecutor(max_workers=10) as pool:
+                    for mid, market in pool.map(_fetch_market, all_mids):
+                        if market:
+                            shared_market_cache[mid] = market
+
+            # Step 3: classify each wallet sequentially using pre-populated cache (no more API calls)
+            classified = {}
+            for addr in clean_addresses:
+                trades = all_trades.get(addr, [])
+                if not trades:
+                    classified[addr] = (None, None, None)
+                    continue
+                try:
                     existing = self.storage.get_wallet(addr)
-                    # Each thread gets its own per-wallet cache slice; shared cache populated after
-                    with cache_lock:
-                        local_cache = dict(shared_market_cache)
-                    score = classifier.classify_wallet(addr, trades, existing_wallet=existing, market_cache=local_cache)
-                    with cache_lock:
-                        shared_market_cache.update(local_cache)
+                    score = classifier.classify_wallet(addr, trades, existing_wallet=existing, market_cache=shared_market_cache)
                     reason = classifier.get_classification_reason(score)
-                    return addr, score, reason, existing
+                    classified[addr] = (score, reason, existing)
                 except Exception as e:
                     logger.warning("[Classify] %s: %s", addr[:16], e)
-                    return addr, None, None, None
-
-            with ThreadPoolExecutor(max_workers=5) as pool:
-                futures = {pool.submit(_classify_one, addr): addr for addr in clean_addresses}
-                classified = {}
-                for fut in _as_completed(futures):
-                    addr, score, reason, existing = fut.result()
-                    classified[addr] = (score, reason, existing)
+                    classified[addr] = (None, None, None)
 
             for addr in clean_addresses:
                 score, reason, existing = classified.get(addr, (None, None, None))
