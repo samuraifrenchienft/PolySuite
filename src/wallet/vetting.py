@@ -86,6 +86,7 @@ class WalletVetting:
         min_bet: float = 10,
         platform: str = "polymarket",
         market_cache: Optional[Dict] = None,
+        leaderboard_category: Optional[str] = None,
     ) -> Optional[Dict]:
         """Fully vet a wallet and filter out bots and P&L cheaters.
 
@@ -287,14 +288,24 @@ class WalletVetting:
         closed_positions = []
         if platform == "polymarket":
             try:
-                closed_positions = self.api.get_closed_positions(address, limit=100) or []
+                # Paginate to get all closed positions (not just first 100)
+                offset = 0
+                page_size = 100
+                max_positions = 500  # cap to avoid excessive calls
+                while len(closed_positions) < max_positions:
+                    page = self.api.get_closed_positions(address, limit=page_size, offset=offset) or []
+                    if not page:
+                        break
+                    closed_positions.extend(page)
+                    if len(page) < page_size:
+                        break  # last page
+                    offset += page_size
                 for pos in closed_positions:
                     pnl = pos.get("realizedPnl") or pos.get("realized_pnl")
                     if pnl is not None:
                         p = float(pnl)
                         total_pnl += p
                         if p > 0:
-                            # ~2% fee on positive realized PnL (proxy; actual fee model varies)
                             fee_from_closed += p * 0.02
             except Exception as e:
                 logger.debug("Vetting get_closed_positions error: %s", e)
@@ -514,6 +525,13 @@ class WalletVetting:
                     f"Top category: {cat} ({cw}W/{ct}T, {win_rate_cat:.0f}% WR, "
                     f"{cat_pct:.0f}% focus, ROI {specialty_roi_pct}%)"
                 )
+
+        # Fallback: use leaderboard category if trade analysis found nothing
+        if specialty_category is None and leaderboard_category:
+            lc = leaderboard_category.strip().lower()
+            if lc and lc != "overall":
+                specialty_category = lc
+                specialty_note = f"Leaderboard specialist: {lc}"
 
         analysis["is_specialty"] = specialty_category is not None
         analysis["specialty_note"] = specialty_note

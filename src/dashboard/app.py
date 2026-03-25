@@ -55,6 +55,11 @@ class Dashboard:
         self.api_factory = api_factory
         self._api_factory_lazy = None
         self.collector = None
+        # Session-level market cache shared across classify + vet calls (thread-safe, 2h TTL)
+        import threading as _threading
+        self._session_market_cache: dict = {}
+        self._session_cache_lock = _threading.Lock()
+        self._session_cache_ts: dict = {}  # mid -> float (time.time when fetched)
         if api_factory:
             from src.collector import MarketDataCollector
             interval = int(self.config.get("scan_interval_sec", 180) or 180)
@@ -892,8 +897,8 @@ class Dashboard:
             trade_limit = int(data.get("trade_limit", 350) or 350)
             trade_limit = max(50, min(trade_limit, 500))
 
-            # Reuse Gamma/CLOB market payloads across wallets in this request (fewer HTTP calls).
-            shared_market_cache: dict = {}
+            # Reuse market cache across wallets AND across classify/vet requests (session-level)
+            shared_market_cache: dict = self._get_shared_market_cache()
             results = []
             for addr in addresses[:25]:
                 addr = (addr or "").strip().lower()
@@ -1114,7 +1119,9 @@ class Dashboard:
                 from src.utils import is_valid_address
 
                 api = self._get_api_factory()
+                # Single vetter instance + shared session cache for the whole bulk run
                 vetter = WalletVetting(api, config=self.config)
+                shared_market_cache = self._get_shared_market_cache()
                 passed_count = 0
                 failed_count = 0
                 errors = []
@@ -1125,7 +1132,11 @@ class Dashboard:
                         failed_count += 1
                         continue
                     try:
-                        result = vetter.vet_wallet(addr, min_bet=10, platform="polymarket")
+                        existing_w = self.storage.get_wallet(addr)
+                        lb_cat = getattr(existing_w, "specialty_category", None) if existing_w else None
+                        result = vetter.vet_wallet(addr, min_bet=10, platform="polymarket",
+                                                   market_cache=shared_market_cache,
+                                                   leaderboard_category=lb_cat)
                         if not result:
                             failed_count += 1
                             errors.append(f"{addr[:12]}... no trades")
@@ -1811,6 +1822,18 @@ class Dashboard:
                 self.app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
         else:
             self.app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+
+    def _get_shared_market_cache(self) -> dict:
+        """Return session-level market cache, pruning entries older than 2 hours."""
+        import time as _time
+        TTL = 7200  # 2 hours
+        now = _time.time()
+        with self._session_cache_lock:
+            stale = [mid for mid, ts in self._session_cache_ts.items() if now - ts > TTL]
+            for mid in stale:
+                self._session_market_cache.pop(mid, None)
+                self._session_cache_ts.pop(mid, None)
+            return self._session_market_cache
 
     def _stop_collector(self):
         """Stop collector on shutdown (registered with atexit)."""

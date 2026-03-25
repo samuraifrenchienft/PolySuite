@@ -194,6 +194,10 @@ def run_wallet_discovery_step(
                 continue
             nick = t.get("username") or t.get("user") or t.get("name") or f"Trader{i}"
             w = Wallet(address=addr, nickname=str(nick)[:32])
+            # Tag specialty category from leaderboard source (skip OVERALL — not specific enough)
+            src_cat = (t.get("category") or categories[0] or "").upper()
+            if src_cat and src_cat != "OVERALL":
+                w.specialty_category = src_cat.lower()
             if storage.add_wallet(w):
                 added += 1
                 logger.info(
