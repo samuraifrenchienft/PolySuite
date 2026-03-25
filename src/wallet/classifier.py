@@ -356,12 +356,21 @@ class WalletClassifier:
             market_cache = external_market_cache
         else:
             market_cache = {}
-        for mid in market_ids:
-            if mid not in market_cache:
+
+        # Parallel market fetches — same fix as vetting.py N+1 bottleneck
+        to_fetch = [mid for mid in market_ids if mid not in market_cache]
+        if to_fetch:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            def _fetch(mid):
                 try:
-                    market_cache[mid] = self.api.get_market(mid)
+                    return mid, self.api.get_market(mid)
                 except Exception:
-                    market_cache[mid] = None
+                    return mid, None
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                futures = {pool.submit(_fetch, mid): mid for mid in to_fetch}
+                for fut in as_completed(futures):
+                    mid, result = fut.result()
+                    market_cache[mid] = result
 
         for mid, analyses in mid_to_trades.items():
             market = market_cache.get(mid)
