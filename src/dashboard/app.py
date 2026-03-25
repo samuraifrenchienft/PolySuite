@@ -1813,7 +1813,7 @@ class Dashboard:
                 from waitress import serve
                 host = os.getenv("DASHBOARD_HOST", "127.0.0.1")
                 port = int(os.getenv("DASHBOARD_PORT", "5000"))
-                logger.info("Starting Waitress server at http://%s:%d", host, port)
+                print(f"PolySuite running → http://{host}:{port}")
                 serve(self.app, host=host, port=port, threads=4)
             except ImportError:
                 logger.warning(

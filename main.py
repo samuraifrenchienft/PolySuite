@@ -760,7 +760,7 @@ def setup_argument_parser():
 
 def _configure_logging():
     """Stderr logging for library code (dashboard, API client, etc.)."""
-    level_name = (os.getenv("LOG_LEVEL") or "INFO").upper()
+    level_name = (os.getenv("LOG_LEVEL") or "WARNING").upper()
     level = getattr(logging, level_name, logging.INFO)
     if not logging.root.handlers:
         logging.basicConfig(
