@@ -899,34 +899,43 @@ class Dashboard:
 
             # Reuse market cache across wallets AND across classify/vet requests (session-level)
             shared_market_cache: dict = self._get_shared_market_cache()
+            import threading
+            from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+            cache_lock = threading.Lock()
             results = []
-            for addr in addresses[:25]:
-                addr = (addr or "").strip().lower()
-                if not addr:
+            clean_addresses = [a.strip().lower() for a in addresses[:25] if (a or "").strip()]
+
+            def _classify_one(addr):
+                try:
+                    trades = polymarket_api.get_wallet_trades(addr, limit=trade_limit)
+                    if not trades:
+                        return addr, None, None, None
+                    existing = self.storage.get_wallet(addr)
+                    # Each thread gets its own per-wallet cache slice; shared cache populated after
+                    with cache_lock:
+                        local_cache = dict(shared_market_cache)
+                    score = classifier.classify_wallet(addr, trades, existing_wallet=existing, market_cache=local_cache)
+                    with cache_lock:
+                        shared_market_cache.update(local_cache)
+                    reason = classifier.get_classification_reason(score)
+                    return addr, score, reason, existing
+                except Exception as e:
+                    logger.warning("[Classify] %s: %s", addr[:16], e)
+                    return addr, None, None, None
+
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futures = {pool.submit(_classify_one, addr): addr for addr in clean_addresses}
+                classified = {}
+                for fut in _as_completed(futures):
+                    addr, score, reason, existing = fut.result()
+                    classified[addr] = (score, reason, existing)
+
+            for addr in clean_addresses:
+                score, reason, existing = classified.get(addr, (None, None, None))
+                if score is None:
+                    results.append({"address": addr, "score": 0, "classification": "no_trades", "reason": "No trades found for this wallet"})
                     continue
                 try:
-                    trades = polymarket_api.get_wallet_trades(
-                        addr, limit=trade_limit
-                    )
-                    if not trades:
-                        results.append(
-                            {
-                                "address": addr,
-                                "score": 0,
-                                "classification": "no_trades",
-                                "reason": "No trades found for this wallet",
-                            }
-                        )
-                        continue
-
-                    existing = self.storage.get_wallet(addr)
-                    score = classifier.classify_wallet(
-                        addr,
-                        trades,
-                        existing_wallet=existing,
-                        market_cache=shared_market_cache,
-                    )
-                    reason = classifier.get_classification_reason(score)
 
                     results.append(
                         {
