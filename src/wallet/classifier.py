@@ -545,7 +545,7 @@ class WalletClassifier:
         flags: List[tuple] = []  # (weight, description)
 
         # Hard gate: extreme frequency + uniform sizes (instant trip)
-        if score.trades_per_day > 200 and score.trade_size_std_dev < 0.05:
+        if score.trades_per_day > 100 and score.trade_size_std_dev < 0.05:
             score.is_bot = True
             score.bot_flags.append(
                 f"High frequency uniform sizing: {score.trades_per_day:.0f}/day"
@@ -553,9 +553,10 @@ class WalletClassifier:
             return
 
         # --- Signal 1: Trades per day (raw frequency) ---
-        if score.trades_per_day > 100:
+        # Polymarket bots run 15-80/day; 100+ is extreme, 50+ is suspicious
+        if score.trades_per_day > 50:
             flags.append((HIGH, f"Extreme trade frequency: {score.trades_per_day:.0f}/day"))
-        elif score.trades_per_day > 50:
+        elif score.trades_per_day > 25:
             flags.append((MEDIUM, f"Very high trade frequency: {score.trades_per_day:.0f}/day"))
 
         # --- Signal 2: Inter-arrival time CoV (metronomic = bot) ---
@@ -567,9 +568,10 @@ class WalletClassifier:
                 mean_gap = statistics.mean(gaps)
                 std_gap = statistics.stdev(gaps) if len(gaps) > 1 else 0.0
                 gap_cov = std_gap / mean_gap if mean_gap > 0 else 0.0
-                if gap_cov < 0.5 and mean_gap < 600:
+                # CoV < 0.20 AND fast = metronomic; CoV < 0.35 alone = suspicious
+                if gap_cov < 0.20 and mean_gap < 300:
                     flags.append((HIGH, f"Metronomic fast timing: gap CoV={gap_cov:.2f}, mean={mean_gap:.0f}s"))
-                elif gap_cov < 0.7:
+                elif gap_cov < 0.35:
                     flags.append((MEDIUM, f"Regular timing pattern: gap CoV={gap_cov:.2f}"))
 
         # --- Signal 3: Gini coefficient of trade sizes ---
@@ -580,9 +582,10 @@ class WalletClassifier:
             if sum_s > 0:
                 gini_num = sum((2 * (i + 1) - n - 1) * s for i, s in enumerate(sizes))
                 gini = gini_num / (n * sum_s)
-                if gini < 0.20:
+                # Raised thresholds: Kelly/%-sizing bots produce Gini 0.25-0.40
+                if gini < 0.25:
                     flags.append((HIGH, f"Fixed-size betting: Gini={gini:.3f} (no sizing variation)"))
-                elif gini < 0.30:
+                elif gini < 0.40:
                     flags.append((MEDIUM, f"Near-uniform sizing: Gini={gini:.3f}"))
                 elif gini > 0.85:
                     flags.append((MEDIUM, f"Extreme size skew: Gini={gini:.3f} (dump/farming pattern)"))
@@ -597,20 +600,25 @@ class WalletClassifier:
             entropy = -sum(p * math.log2(p) for p in probs)
             if entropy > 3.1:
                 flags.append((MEDIUM, f"24/7 trading: hourly entropy={entropy:.2f} bits (no sleep gap)"))
-            elif entropy < 1.2:
+            elif entropy < 1.8:
+                # Raised from 1.2 to 1.8 — catches 4-6h cron bots (1.6-2.0 bits)
                 flags.append((MEDIUM, f"Cron-like schedule: hourly entropy={entropy:.2f} bits"))
 
-        # --- Signal 5: Round-number price ratio (formula-priced = bot) ---
-        prices = [t.price for t in trades if 0 < t.price < 1]
-        if len(prices) >= 10:
-            round_count = sum(1 for p in prices if abs(round(p / 0.05) * 0.05 - p) < 0.001)
-            round_ratio = round_count / len(prices)
-            if round_ratio < 0.10:
-                flags.append((HIGH, f"Formula-derived prices: {round_ratio:.0%} round (AMM/arb pattern)"))
-            elif round_ratio < 0.25:
-                flags.append((MEDIUM, f"Low round-number price ratio: {round_ratio:.0%}"))
+        # --- Signal 5: Shares-per-trade CoV (replaces broken round-price signal) ---
+        # Bots use Kelly/fixed-% sizing → consistent share counts (low CoV)
+        # Formula: shares = usd_value / price for each trade
+        share_counts = [t.usd_value / t.price for t in trades if t.usd_value > 0 and 0 < t.price < 1]
+        if len(share_counts) >= 10:
+            mean_shares = statistics.mean(share_counts)
+            std_shares = statistics.stdev(share_counts) if len(share_counts) > 1 else 0.0
+            shares_cov = std_shares / mean_shares if mean_shares > 0 else 0.0
+            if shares_cov < 0.10:
+                flags.append((HIGH, f"Algorithmic share sizing: shares CoV={shares_cov:.3f}"))
+            elif shares_cov < 0.25:
+                flags.append((MEDIUM, f"Consistent share sizing: shares CoV={shares_cov:.3f}"))
 
         # --- Signal 6: Identical price concentration (existing strong signal) ---
+        prices = [t.price for t in trades if 0 < t.price < 1]
         if len(prices) >= 10:
             from collections import Counter
             price_counts = Counter(round(p, 2) for p in prices)
@@ -620,7 +628,31 @@ class WalletClassifier:
             elif top_price_pct >= 0.40:
                 flags.append((MEDIUM, f"Price concentration: {top_price_pct:.0%} at same price"))
 
-        # --- Signal 7: Win-rate CoV across markets (suspiciously uniform profitability) ---
+        # --- Signal 7: GapBasedSleepiness (top-ranked signal in Ethereum bot research) ---
+        # Humans sleep — their max gap in any 2-day window is typically 4-18 hours
+        # Bots never sleep — max gap < 15 min in every 2-day window
+        if len(times) >= 10:
+            two_days = 2 * 24 * 3600
+            chunks: List[List] = [[times[0]]]
+            for t in times[1:]:
+                if (t - chunks[-1][0]).total_seconds() >= two_days:
+                    chunks.append([t])
+                else:
+                    chunks[-1].append(t)
+            max_gaps_s = []
+            for chunk in chunks:
+                if len(chunk) > 1:
+                    chunk_gaps = [(chunk[i+1] - chunk[i]).total_seconds() for i in range(len(chunk)-1)]
+                    max_gaps_s.append(max(chunk_gaps))
+                else:
+                    max_gaps_s.append(two_days)  # single trade in window → assume max gap
+            sleepiness = statistics.mean(max_gaps_s) if max_gaps_s else two_days
+            if sleepiness < 900:
+                flags.append((HIGH, f"Never sleeps: max gap per 2-day window={sleepiness/60:.0f}min"))
+            elif sleepiness < 3600:
+                flags.append((MEDIUM, f"Minimal rest gaps: sleepiness={sleepiness/3600:.1f}h avg max gap"))
+
+        # --- Signal 8: Win-rate CoV across markets (suspiciously uniform profitability) ---
         market_results: dict = {}
         for t in trades:
             if not t.market_id:
@@ -631,12 +663,13 @@ class WalletClassifier:
                 market_results[t.market_id]["total"] += 1
                 if t.is_win:
                     market_results[t.market_id]["wins"] += 1
+        # Require 5+ trades per market and 8+ qualifying markets for statistical validity
         qualified_wrs = [
             v["wins"] / v["total"]
             for v in market_results.values()
-            if v["total"] >= 3
+            if v["total"] >= 5
         ]
-        if len(qualified_wrs) >= 5:
+        if len(qualified_wrs) >= 8:
             mean_wr = statistics.mean(qualified_wrs)
             std_wr = statistics.stdev(qualified_wrs) if len(qualified_wrs) > 1 else 0.0
             wr_cov = std_wr / mean_wr if mean_wr > 0 else 0.0
