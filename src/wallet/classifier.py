@@ -532,12 +532,11 @@ class WalletClassifier:
                 score.days_active = max(1, delta.days)
 
     def _detect_bots(self, score: WalletScore, trades: List[TradeAnalysis]):
-        """Multi-signal bot detection. Requires ≥2 independent signals to avoid false positives.
+        """Multi-signal bot detection based on research signals.
 
-        Signals (HIGH weight) count double; triggered when:
-          - ≥2 HIGH signals, OR
-          - ≥3 MEDIUM signals, OR
-          - ≥1 HIGH + ≥2 MEDIUM signals
+        Triggered when:
+          - ≥1 HIGH signal, OR
+          - ≥2 MEDIUM signals
         """
         if len(trades) < 10:
             return
@@ -545,15 +544,21 @@ class WalletClassifier:
         HIGH, MEDIUM = "high", "medium"
         flags: List[tuple] = []  # (weight, description)
 
-        # Hard gate: extreme frequency + uniform sizes (kept as instant trip)
-        if score.trades_per_day > 500 and score.trade_size_std_dev < 0.01:
+        # Hard gate: extreme frequency + uniform sizes (instant trip)
+        if score.trades_per_day > 200 and score.trade_size_std_dev < 0.05:
             score.is_bot = True
             score.bot_flags.append(
-                f"Very high frequency: {score.trades_per_day:.0f}/day with identical sizes"
+                f"High frequency uniform sizing: {score.trades_per_day:.0f}/day"
             )
             return
 
-        # --- Signal 1: Inter-arrival time CoV (metronomic = bot) ---
+        # --- Signal 1: Trades per day (raw frequency) ---
+        if score.trades_per_day > 100:
+            flags.append((HIGH, f"Extreme trade frequency: {score.trades_per_day:.0f}/day"))
+        elif score.trades_per_day > 50:
+            flags.append((MEDIUM, f"Very high trade frequency: {score.trades_per_day:.0f}/day"))
+
+        # --- Signal 2: Inter-arrival time CoV (metronomic = bot) ---
         times = sorted(t.timestamp for t in trades if t.timestamp)
         if len(times) >= 10:
             gaps = [(times[i] - times[i - 1]).total_seconds() for i in range(1, len(times))]
@@ -562,12 +567,12 @@ class WalletClassifier:
                 mean_gap = statistics.mean(gaps)
                 std_gap = statistics.stdev(gaps) if len(gaps) > 1 else 0.0
                 gap_cov = std_gap / mean_gap if mean_gap > 0 else 0.0
-                if gap_cov < 0.5 and mean_gap < 300:  # metronomic + fast
+                if gap_cov < 0.5 and mean_gap < 600:
                     flags.append((HIGH, f"Metronomic fast timing: gap CoV={gap_cov:.2f}, mean={mean_gap:.0f}s"))
-                elif gap_cov < 0.3:  # metronomic regardless of speed
-                    flags.append((HIGH, f"Metronomic timing: gap CoV={gap_cov:.2f}"))
+                elif gap_cov < 0.7:
+                    flags.append((MEDIUM, f"Regular timing pattern: gap CoV={gap_cov:.2f}"))
 
-        # --- Signal 2: Gini coefficient of trade sizes ---
+        # --- Signal 3: Gini coefficient of trade sizes ---
         sizes = sorted(t.usd_value for t in trades if t.usd_value > 0)
         if len(sizes) >= 10:
             n = len(sizes)
@@ -575,12 +580,14 @@ class WalletClassifier:
             if sum_s > 0:
                 gini_num = sum((2 * (i + 1) - n - 1) * s for i, s in enumerate(sizes))
                 gini = gini_num / (n * sum_s)
-                if gini < 0.15:
+                if gini < 0.20:
                     flags.append((HIGH, f"Fixed-size betting: Gini={gini:.3f} (no sizing variation)"))
+                elif gini < 0.30:
+                    flags.append((MEDIUM, f"Near-uniform sizing: Gini={gini:.3f}"))
                 elif gini > 0.85:
                     flags.append((MEDIUM, f"Extreme size skew: Gini={gini:.3f} (dump/farming pattern)"))
 
-        # --- Signal 3: Hourly entropy (cron-bot or 24/7-bot) ---
+        # --- Signal 4: Hourly entropy (cron-bot or 24/7-bot) ---
         if len(times) >= 10:
             hour_counts = [0] * 24
             for t in times:
@@ -588,20 +595,32 @@ class WalletClassifier:
             total_h = sum(hour_counts)
             probs = [c / total_h for c in hour_counts if c > 0]
             entropy = -sum(p * math.log2(p) for p in probs)
-            if entropy > 3.3:
+            if entropy > 3.1:
                 flags.append((MEDIUM, f"24/7 trading: hourly entropy={entropy:.2f} bits (no sleep gap)"))
-            elif entropy < 1.0:
+            elif entropy < 1.2:
                 flags.append((MEDIUM, f"Cron-like schedule: hourly entropy={entropy:.2f} bits"))
 
-        # --- Signal 4: Round-number price ratio (formula-priced = bot) ---
+        # --- Signal 5: Round-number price ratio (formula-priced = bot) ---
         prices = [t.price for t in trades if 0 < t.price < 1]
         if len(prices) >= 10:
             round_count = sum(1 for p in prices if abs(round(p / 0.05) * 0.05 - p) < 0.001)
             round_ratio = round_count / len(prices)
-            if round_ratio < 0.15:
-                flags.append((MEDIUM, f"Formula-derived prices: {round_ratio:.0%} round (AMM/arb pattern)"))
+            if round_ratio < 0.10:
+                flags.append((HIGH, f"Formula-derived prices: {round_ratio:.0%} round (AMM/arb pattern)"))
+            elif round_ratio < 0.25:
+                flags.append((MEDIUM, f"Low round-number price ratio: {round_ratio:.0%}"))
 
-        # --- Signal 5: Win-rate CoV across markets (suspiciously uniform profitability) ---
+        # --- Signal 6: Identical price concentration (existing strong signal) ---
+        if len(prices) >= 10:
+            from collections import Counter
+            price_counts = Counter(round(p, 2) for p in prices)
+            top_price_pct = price_counts.most_common(1)[0][1] / len(prices)
+            if top_price_pct >= 0.60:
+                flags.append((HIGH, f"Identical price: {top_price_pct:.0%} of trades at same price"))
+            elif top_price_pct >= 0.40:
+                flags.append((MEDIUM, f"Price concentration: {top_price_pct:.0%} at same price"))
+
+        # --- Signal 7: Win-rate CoV across markets (suspiciously uniform profitability) ---
         market_results: dict = {}
         for t in trades:
             if not t.market_id:
@@ -621,13 +640,15 @@ class WalletClassifier:
             mean_wr = statistics.mean(qualified_wrs)
             std_wr = statistics.stdev(qualified_wrs) if len(qualified_wrs) > 1 else 0.0
             wr_cov = std_wr / mean_wr if mean_wr > 0 else 0.0
-            if wr_cov < 0.15:
+            if wr_cov < 0.10:
+                flags.append((HIGH, f"Perfectly uniform profitability: win-rate CoV={wr_cov:.3f}"))
+            elif wr_cov < 0.25:
                 flags.append((MEDIUM, f"Uniform profitability: win-rate CoV={wr_cov:.3f} across {len(qualified_wrs)} markets"))
 
-        # --- Tally: require corroboration from multiple independent signals ---
+        # --- Tally: 1 HIGH or 2 MEDIUM triggers bot flag ---
         high_count = sum(1 for w, _ in flags if w == HIGH)
         med_count = sum(1 for w, _ in flags if w == MEDIUM)
-        triggered = high_count >= 2 or med_count >= 3 or (high_count >= 1 and med_count >= 2)
+        triggered = high_count >= 1 or med_count >= 2
 
         if triggered:
             score.is_bot = True
