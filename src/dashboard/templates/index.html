@@ -2310,7 +2310,7 @@
                 <div class="table-row">
                     <div>
                         <div class="wallet-nickname">${escapeHtml(nick)}</div>
-                        <div class="wallet-address">${addr ? escapeHtml(addr.substring(0, 10) + '...' + addr.substring(38)) : '-'}</div>
+                        <div class="wallet-address" title="${addr || ''}" onclick="navigator.clipboard.writeText('${addrSafe}').then(()=>showToast('Address copied','success'))" style="cursor:pointer;" >${addr ? escapeHtml(addr.substring(0, 10) + '...' + addr.substring(38)) : '-'}</div>
                     </div>
                     <div>
                         ${tierBadge}
