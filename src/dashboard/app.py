@@ -448,6 +448,27 @@ class Dashboard:
             except Exception as e:
                 return jsonify({"error": str(e)}), 400
 
+        @self.app.route("/api/wallet/pin", methods=["POST"])
+        def api_pin_wallet():
+            """Toggle pin status for a wallet — pinned wallets are never removed by cleanup."""
+            data = request.get_json() or {}
+            address = (data.get("address") or "").strip().lower()
+            if not address:
+                return jsonify({"error": "address required"}), 400
+            try:
+                import sqlite3
+                from src.config.paths import DB_PATH
+                with sqlite3.connect(DB_PATH) as conn:
+                    row = conn.execute("SELECT is_pinned FROM wallets WHERE address=?", (address,)).fetchone()
+                    if row is None:
+                        return jsonify({"error": "wallet not found"}), 404
+                    new_val = 0 if row[0] else 1
+                    conn.execute("UPDATE wallets SET is_pinned=? WHERE address=?", (new_val, address))
+                    conn.commit()
+                return jsonify({"ok": True, "is_pinned": bool(new_val)})
+            except Exception as e:
+                return jsonify({"error": str(e)}), 400
+
         @self.app.route("/api/wallet/vet", methods=["POST"])
         def api_vet_wallet():
             """Vet a wallet: run WalletVetting and persist results."""

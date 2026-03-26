@@ -2063,6 +2063,21 @@
             }).catch(() => showToast('Copy toggle failed', 'error'));
         }
 
+        async function togglePin(address, btnEl) {
+            try {
+                const r = await fetch('/api/wallet/pin', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({address})});
+                const d = await r.json();
+                if (d.ok) {
+                    showToast(d.is_pinned ? '📌 Wallet pinned — cleanup will never remove it' : 'Wallet unpinned', 'success');
+                    if (btnEl) {
+                        btnEl.classList.toggle('btn-warning', d.is_pinned);
+                        btnEl.title = d.is_pinned ? 'Pinned — click to unpin' : 'Pin: protect from cleanup';
+                    }
+                    loadWallets();
+                } else { showToast(d.error || 'Pin failed', 'error'); }
+            } catch(e) { showToast('Pin request failed', 'error'); }
+        }
+
         function vetWallet(address, btnEl) {
             const btn = btnEl || document.querySelector(`.btn-vet[data-addr="${address}"]`);
             const icon = btn ? btn.querySelector('i') : null;
@@ -2156,6 +2171,7 @@
                     classification: w.classification || '',
                     classificationReason: w.classification_reason || '',
                     isBot: !!w.is_bot,
+                    isPinned: !!w.is_pinned,
                     isFarmer: !!w.is_farmer,
                     isHighLossRate: !!w.is_high_loss_rate,
                     currentWinStreak: parseInt(w.current_win_streak) || 0,
@@ -2342,6 +2358,9 @@
                     <div>
                         <button class="btn btn-sm btn-vet" data-addr="${addrSafe}" title="Vet: run analysis and promote to Vetted if passed" onclick="event.stopPropagation(); vetWallet('${addrSafe}', this)">
                             <i class="fas fa-shield-alt"></i>
+                        </button>
+                        <button class="btn btn-sm ${w.isPinned ? 'btn-warning' : ''}" data-addr="${addrSafe}" title="${w.isPinned ? 'Pinned — click to unpin' : 'Pin: protect from cleanup'}" onclick="event.stopPropagation(); togglePin('${addrSafe}', this)">
+                            <i class="fas fa-thumbtack"></i>
                         </button>
                     </div>
                 </div>

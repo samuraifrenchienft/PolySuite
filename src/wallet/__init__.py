@@ -43,6 +43,7 @@ class Wallet:
     specialty_category: Optional[str] = None
     is_win_streak_badge: bool = False
     specialty_roi_pct: Optional[float] = None
+    is_pinned: bool = False
 
     # WalletClassifier fields
     classification: Optional[str] = None
