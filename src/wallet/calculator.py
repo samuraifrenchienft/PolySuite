@@ -3,8 +3,9 @@
 from typing import Dict, List, Tuple, Optional
 from src.market.api import APIClientFactory
 
-
 from datetime import datetime, timedelta
+
+from src.wallet.resolution_stats import compute_polymarket_resolution_rollup
 
 
 class WalletCalculator:
@@ -34,43 +35,34 @@ class WalletCalculator:
 
         return recent_trades
 
-    def calculate_wallet_stats(self, address: str) -> Tuple[int, int, float, int]:
-        """Calculate trading statistics for a wallet.
+    def calculate_wallet_stats(
+        self, address: str, max_markets: int = 120
+    ) -> Tuple[int, int, float, int, int]:
+        """Calculate trading statistics using **resolved** markets (same logic as vetting).
 
         Args:
             address: Wallet address
+            max_markets: Cap unique conditionIds to fetch (rate limit / latency)
 
         Returns:
-            Tuple of (total_trades, wins, win_rate, total_volume)
+            Tuple of (total_trades, resolved_wins, win_rate_on_resolved, total_volume_usd,
+            resolved_decisions). ``win_rate_on_resolved`` is 0 if no resolved decisions.
         """
         trades = self.api.get_wallet_trades(address, limit=500)
 
         if not trades:
-            return 0, 0, 0.0, 0
+            return 0, 0, 0.0, 0, 0
 
-        total_trades = len(trades)
-        wins = 0
-        total_volume = 0
+        rollup = compute_polymarket_resolution_rollup(
+            self.api, address, trades, max_markets=max_markets
+        )
+        total_trades = rollup.total_trades
+        wins = rollup.resolved_wins
+        vol = int(round(rollup.total_volume))
+        rd = rollup.resolved_decisions
+        win_rate = (wins / rd * 100) if rd > 0 else 0.0
 
-        # Calculate win rate based on trade profitability heuristic
-        # A trade is "potentially winning" if they bought at favorable prices
-        # This is approximate - actual wins require market resolution data
-        for trade in trades:
-            side = trade.get("side", "").upper()
-            price = float(trade.get("price", 0))
-            size = float(trade.get("size", 0))
-            total_volume += size
-
-            # Buy Yes at < 0.5 = potentially winning (bought cheap)
-            if side == "BUY" and price < 0.5:
-                wins += 1
-            # Sell Yes at > 0.5 = potentially winning (sold expensive)
-            elif side == "SELL" and price > 0.5:
-                wins += 1
-
-        win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
-
-        return total_trades, wins, win_rate, total_volume
+        return total_trades, wins, win_rate, vol, rd
 
     def get_wallet_markets(self, address: str) -> List[Dict]:
         """Get all markets a wallet has traded in.
@@ -98,7 +90,17 @@ class WalletCalculator:
                 }
 
             markets[market_id]["trades"].append(trade)
-            markets[market_id]["total_volume"] += float(trade.get("size", 0))
+            p = float(trade.get("price", 0) or 0)
+            sz = float(trade.get("size", 0) or 0)
+            usd = float(
+                trade.get("usdcSize")
+                or trade.get("usdAmount")
+                or trade.get("usdc_amount")
+                or 0
+            )
+            if usd <= 0 and sz and p:
+                usd = abs(sz * p)
+            markets[market_id]["total_volume"] += usd
             markets[market_id]["side"] = trade.get("side")
 
         return list(markets.values())

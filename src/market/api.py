@@ -25,34 +25,153 @@ RETRY_BACKOFF = 1.0  # seconds, doubles each retry
 from src.market.polymarket_clob import PolymarketCLOB
 
 
+_KEYWORD_CATEGORY_MAP = {
+    # Sports
+    "nba": "sports-nba", "nfl": "sports-nfl", "mlb": "sports-mlb",
+    "nhl": "sports-nhl", "soccer": "sports-soccer", "mls": "sports-soccer",
+    "epl": "sports-soccer", "ucl": "sports-soccer", "premier league": "sports-soccer",
+    "la liga": "sports-soccer", "serie a": "sports-soccer", "bundesliga": "sports-soccer",
+    "champions league": "sports-soccer", "world cup": "sports-soccer",
+    "ufc": "sports-ufc", "mma": "sports-ufc",
+    "f1": "sports-formula1", "formula 1": "sports-formula1", "formula one": "sports-formula1",
+    "ncaa": "sports-ncaa", "cfb": "sports-ncaa", "cbb": "sports-ncaa",
+    "march madness": "sports-ncaa", "college football": "sports-ncaa",
+    "college basketball": "sports-ncaa",
+    "golf": "sports-golf", "pga": "sports-golf", "masters tournament": "sports-golf",
+    "tennis": "sports-tennis", "wimbledon": "sports-tennis", "us open tennis": "sports-tennis",
+    "wta": "sports-tennis", "atp": "sports-tennis", "roland garros": "sports-tennis",
+    "australian open": "sports-tennis", "french open": "sports-tennis",
+    "miami open": "sports-tennis", "indian wells": "sports-tennis",
+    "nascar": "sports", "boxing": "sports", "wnba": "sports",
+    "fifa": "sports-soccer", "fif-": "sports-soccer", "copa": "sports-soccer",
+    "serie-a": "sports-soccer", "la-liga": "sports-soccer",
+    "super bowl": "sports-nfl", "world series": "sports-mlb",
+    "stanley cup": "sports-nhl", "nba finals": "sports-nba",
+    "spread:": "sports", "moneyline": "sports", " o/u ": "sports", " pts ": "sports",
+    # Crypto
+    "bitcoin": "crypto", "btc": "crypto", "ethereum": "crypto", "eth ": "crypto",
+    "crypto": "crypto", "solana": "crypto", "sol ": "crypto", "dogecoin": "crypto",
+    "doge": "crypto", "xrp": "crypto", "cardano": "crypto", "polkadot": "crypto",
+    "avalanche": "crypto", "polygon": "crypto", "matic": "crypto", "chainlink": "crypto",
+    "defi": "crypto", "nft": "crypto", "stablecoin": "crypto", "altcoin": "crypto",
+    "memecoin": "crypto", "token": "crypto", "blockchain": "crypto",
+    # Politics
+    "trump": "politics", "biden": "politics", "congress": "politics",
+    "election": "politics", "senate": "politics", "president": "politics",
+    "democrat": "politics", "republican": "politics", "governor": "politics",
+    "ballot": "politics", "vote": "politics", "political": "politics",
+    "gop": "politics", "dnc": "politics", "rnc": "politics",
+    "midterm": "politics", "primary": "politics", "inaugur": "politics",
+    "impeach": "politics", "legislation": "politics", "white house": "politics",
+    "supreme court": "politics", "cabinet": "politics", "poll": "politics",
+    # Entertainment
+    "oscar": "entertainment", "emmy": "entertainment", "grammy": "entertainment",
+    "box office": "entertainment", "movie": "entertainment", "film ": "entertainment",
+    "tv show": "entertainment", "netflix": "entertainment", "disney": "entertainment",
+    "spotify": "entertainment", "album": "entertainment", "billboard": "entertainment",
+    "celebrity": "entertainment", "hollywood": "entertainment", "streaming": "entertainment",
+    "youtube": "entertainment", "tiktok": "entertainment", "reality tv": "entertainment",
+    "award show": "entertainment", "music": "entertainment", "rapper": "entertainment",
+    "pop star": "entertainment", "actor": "entertainment", "actress": "entertainment",
+    # Science / Tech
+    "nasa": "science", "spacex": "science", "climate": "science",
+    "vaccine": "science", "pandemic": "science", "asteroid": "science",
+    "mars": "science", "moon landing": "science", "space": "science",
+    "scientific": "science", "research": "science", "ai ": "science",
+    "artificial intelligence": "science", "openai": "science", "gpt": "science",
+    "quantum": "science", "fusion": "science", "gene": "science",
+    # Weather
+    "hurricane": "weather", "tornado": "weather", "earthquake": "weather",
+    "temperature": "weather", "weather": "weather", "snowfall": "weather",
+    "rainfall": "weather", "flood": "weather", "wildfire": "weather",
+    "drought": "weather", "storm": "weather", "heat wave": "weather",
+    # Economics / Finance
+    "fed rate": "economics", "interest rate": "economics", "inflation": "economics",
+    "gdp": "economics", "recession": "economics", "stock market": "economics",
+    "s&p 500": "economics", "s&p500": "economics", "dow jones": "economics",
+    "nasdaq": "economics", "unemployment": "economics", "federal reserve": "economics",
+    "treasury": "economics", "trade war": "economics", "tariff": "economics",
+    "cpi": "economics", "fomc": "economics", "jobs report": "economics",
+    "oil price": "economics", "gas price": "economics", "housing market": "economics",
+}
+
+
+def _category_from_keywords(text: str) -> Optional[str]:
+    """Match text against keyword patterns, return category or None."""
+    if not text:
+        return None
+    t = text.lower()
+    for keyword, cat in _KEYWORD_CATEGORY_MAP.items():
+        if keyword in t:
+            return cat
+    return None
+
+
 def extract_market_category(market: Optional[Dict]) -> Optional[str]:
     """Resolve a display category from Gamma-shaped market JSON.
 
     Polymarket often puts labels on ``category``, but CLOB-only fetches or partial
     payloads may omit it while still having ``events[].category`` or ``tags``.
     Without this, classifiers bucket most trades as \"other\".
+
+    Fallback chain: category field -> events[].category -> tags -> slug keywords
+    -> question/title keywords -> description keywords.
     """
     if not market or not isinstance(market, dict):
         return None
+
+    # Priority: slug > question > tags > description > raw category field.
+    # Polymarket's "category" field is unreliable — e.g. NBA games tagged "politics".
+    # Slugs are machine-generated and always contain the real sport/topic prefix.
+
+    # 1. Slug-based keyword matching (most reliable — "nba-okc-bos-2026-03-25")
+    slug = market.get("slug") or market.get("eventSlug") or ""
+    cat = _category_from_keywords(slug)
+    if cat:
+        return cat
+
+    # 2. Question/title keyword matching
+    question = market.get("question") or market.get("title") or ""
+    cat = _category_from_keywords(question)
+    if cat:
+        return cat
+
+    # 3. Tags (CLOB returns tags like ["crypto", "bitcoin"] or [{"slug": "..."}])
+    tags = market.get("tags")
+    if isinstance(tags, list):
+        for t in tags:
+            tag_text = None
+            if isinstance(t, dict):
+                tag_text = (t.get("slug") or t.get("label") or "").strip()
+            elif isinstance(t, str):
+                tag_text = t.strip()
+            if tag_text:
+                mapped = _category_from_keywords(tag_text)
+                if mapped:
+                    return mapped
+                return tag_text.lower().replace(" ", "-")
+
+    # 4. Description keyword matching
+    desc = market.get("description") or ""
+    cat = _category_from_keywords(desc)
+    if cat:
+        return cat
+
+    # 5. Raw category field (least reliable — only use as final fallback)
+    _USELESS_CATEGORIES = {"us-current-affairs", "current-affairs", "n/a", "other", "general", ""}
     raw = market.get("category")
-    if raw is not None and str(raw).strip():
+    if raw is not None and str(raw).strip().lower() not in _USELESS_CATEGORIES:
         return str(raw).strip().lower()
+
+    # 6. events[].category (same issue as raw category, last resort)
     events = market.get("events") or []
     if isinstance(events, list):
         for ev in events:
             if isinstance(ev, dict):
                 ec = ev.get("category")
-                if ec is not None and str(ec).strip():
+                if ec is not None and str(ec).strip().lower() not in _USELESS_CATEGORIES:
                     return str(ec).strip().lower()
-    tags = market.get("tags")
-    if isinstance(tags, list):
-        for t in tags:
-            if isinstance(t, dict):
-                slug = (t.get("slug") or t.get("label") or "").strip()
-                if slug:
-                    return slug.lower().replace(" ", "-")
-            elif isinstance(t, str) and t.strip():
-                return t.strip().lower()
+
     return None
 
 

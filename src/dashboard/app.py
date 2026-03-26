@@ -914,13 +914,28 @@ class Dashboard:
                 for addr, trades in pool.map(_fetch_trades, clean_addresses):
                     all_trades[addr] = trades or []
 
-            # Step 2: collect ALL unique market IDs across every wallet, pre-fetch once
-            all_mids = {
-                t.get("conditionId") or t.get("market")
-                for trades in all_trades.values()
-                for t in trades
-                if t.get("conditionId") or t.get("market")
-            } - set(shared_market_cache.keys())
+            # Step 2: per-wallet top-80 + random-60 market selection (mirrors classifier._resolve_trade_outcomes cap)
+            import hashlib as _hashlib, random as _random
+            MAX_MARKETS_PER_WALLET = 140
+            all_mids: set = set()
+            for addr, trades in all_trades.items():
+                mid_counts: dict = {}
+                for t in trades:
+                    mid = t.get("conditionId") or t.get("market")
+                    if mid:
+                        mid_counts[mid] = mid_counts.get(mid, 0) + 1
+                sorted_mids = sorted(mid_counts, key=lambda m: mid_counts[m], reverse=True)
+                top_n = min(80, MAX_MARKETS_PER_WALLET)
+                selected = list(sorted_mids[:top_n])
+                rest = sorted_mids[top_n:]
+                remain = MAX_MARKETS_PER_WALLET - len(selected)
+                if rest and remain > 0:
+                    k = min(remain, len(rest))
+                    seed = int(_hashlib.md5(addr.encode()).hexdigest()[:8], 16)
+                    rng = _random.Random(seed)
+                    selected.extend(rng.sample(rest, k))
+                all_mids.update(selected)
+            all_mids -= set(shared_market_cache.keys())
 
             if all_mids:
                 def _fetch_market(mid):

@@ -19,16 +19,52 @@ from src.config import Config
 logger = logging.getLogger(__name__)
 
 _SLUG_CATEGORY_MAP = {
+    # Sports
     "nba": "sports-nba", "nfl": "sports-nfl", "mlb": "sports-mlb",
     "nhl": "sports-nhl", "soccer": "sports-soccer", "mls": "sports-soccer",
     "epl": "sports-soccer", "ucl": "sports-soccer", "ufc": "sports-ufc",
     "mma": "sports-ufc", "f1": "sports-formula1", "formula": "sports-formula1",
     "ncaa": "sports-ncaa", "cfb": "sports-ncaa", "cbb": "sports-ncaa",
-    "golf": "sports-golf", "tennis": "sports-tennis",
+    "golf": "sports-golf", "pga": "sports-golf",
+    "tennis": "sports-tennis", "wimbledon": "sports-tennis",
+    "nascar": "sports", "boxing": "sports", "wnba": "sports",
+    "super-bowl": "sports-nfl", "world-series": "sports-mlb",
+    "stanley-cup": "sports-nhl", "march-madness": "sports-ncaa",
+    # Politics
     "trump": "politics", "biden": "politics", "congress": "politics",
     "election": "politics", "senate": "politics", "president": "politics",
+    "democrat": "politics", "republican": "politics", "governor": "politics",
+    "gop": "politics", "ballot": "politics", "vote": "politics",
+    "inaugur": "politics", "impeach": "politics", "white-house": "politics",
+    "supreme-court": "politics", "political": "politics",
+    # Crypto
     "btc": "crypto", "eth": "crypto", "bitcoin": "crypto", "ethereum": "crypto",
     "crypto": "crypto", "solana": "crypto", "sol-": "crypto",
+    "doge": "crypto", "dogecoin": "crypto", "xrp": "crypto",
+    "cardano": "crypto", "defi": "crypto", "nft": "crypto",
+    "memecoin": "crypto", "token": "crypto", "blockchain": "crypto",
+    # Entertainment
+    "oscar": "entertainment", "emmy": "entertainment", "grammy": "entertainment",
+    "box-office": "entertainment", "movie": "entertainment", "film": "entertainment",
+    "netflix": "entertainment", "disney": "entertainment", "spotify": "entertainment",
+    "billboard": "entertainment", "celebrity": "entertainment",
+    "hollywood": "entertainment", "streaming": "entertainment",
+    "youtube": "entertainment", "tiktok": "entertainment", "music": "entertainment",
+    # Science / Tech
+    "nasa": "science", "spacex": "science", "climate": "science",
+    "vaccine": "science", "pandemic": "science", "asteroid": "science",
+    "ai-": "science", "openai": "science", "gpt": "science",
+    "quantum": "science", "fusion": "science", "space": "science",
+    # Weather
+    "hurricane": "weather", "tornado": "weather", "earthquake": "weather",
+    "weather": "weather", "storm": "weather", "wildfire": "weather",
+    "flood": "weather", "drought": "weather",
+    # Economics
+    "fed-rate": "economics", "interest-rate": "economics", "inflation": "economics",
+    "gdp": "economics", "recession": "economics", "stock-market": "economics",
+    "s-p-500": "economics", "nasdaq": "economics", "unemployment": "economics",
+    "federal-reserve": "economics", "tariff": "economics", "cpi": "economics",
+    "fomc": "economics", "oil-price": "economics", "housing": "economics",
 }
 
 def _category_from_slug(slug: str) -> str:
@@ -46,16 +82,76 @@ def _category_from_title(title: str) -> str:
     if not title:
         return ""
     t = title.lower()
-    if any(k in t for k in ("spread:", "o/u", "moneyline", "pts", "nba", "nfl", "mlb", "nhl")):
-        if "nba" in t: return "sports-nba"
-        if "nfl" in t: return "sports-nfl"
-        if "mlb" in t: return "sports-mlb"
-        if "nhl" in t: return "sports-nhl"
+    # Sports (check specific leagues first)
+    if "nba" in t or "nba finals" in t:
+        return "sports-nba"
+    if "nfl" in t or "super bowl" in t:
+        return "sports-nfl"
+    if "mlb" in t or "world series" in t:
+        return "sports-mlb"
+    if "nhl" in t or "stanley cup" in t:
+        return "sports-nhl"
+    if any(k in t for k in ("soccer", "premier league", "la liga", "ucl",
+                             "champions league", "world cup", "mls", "epl",
+                             "serie a", "bundesliga")):
+        return "sports-soccer"
+    if any(k in t for k in ("ufc", "mma")):
+        return "sports-ufc"
+    if any(k in t for k in ("f1 ", "formula 1", "formula one")):
+        return "sports-formula1"
+    if any(k in t for k in ("ncaa", "march madness", "college football",
+                             "college basketball")):
+        return "sports-ncaa"
+    if any(k in t for k in ("pga", "golf", "masters tournament")):
+        return "sports-golf"
+    if any(k in t for k in ("tennis", "wimbledon")):
+        return "sports-tennis"
+    if any(k in t for k in ("spread:", "o/u", "moneyline", " pts ",
+                             "nascar", "boxing", "wnba")):
         return "sports"
-    if any(k in t for k in ("bitcoin", "btc", "ethereum", "eth", "crypto", "solana")):
+    # Crypto
+    if any(k in t for k in ("bitcoin", "btc", "ethereum", "eth ", "crypto",
+                             "solana", "dogecoin", "doge", "xrp", "cardano",
+                             "defi", "nft", "memecoin", "token", "blockchain",
+                             "altcoin", "stablecoin")):
         return "crypto"
-    if any(k in t for k in ("trump", "election", "senate", "president", "congress")):
+    # Politics
+    if any(k in t for k in ("trump", "election", "senate", "president",
+                             "congress", "democrat", "republican", "governor",
+                             "ballot", "vote", "political", "gop",
+                             "inaugur", "impeach", "white house",
+                             "supreme court", "cabinet", "legislation")):
         return "politics"
+    # Entertainment
+    if any(k in t for k in ("oscar", "emmy", "grammy", "box office", "movie",
+                             "netflix", "disney", "spotify", "billboard",
+                             "celebrity", "hollywood", "streaming", "youtube",
+                             "tiktok", "album", "reality tv", "music",
+                             "rapper", "pop star", "actor", "actress",
+                             "award show")):
+        return "entertainment"
+    # Science / Tech
+    if any(k in t for k in ("nasa", "spacex", "climate", "vaccine",
+                             "pandemic", "asteroid", "scientific", "research",
+                             "artificial intelligence", "openai", "gpt",
+                             "quantum", "fusion", "gene")):
+        return "science"
+    if " ai " in t or t.startswith("ai "):
+        return "science"
+    # Weather
+    if any(k in t for k in ("hurricane", "tornado", "earthquake",
+                             "temperature", "weather", "snowfall", "rainfall",
+                             "flood", "wildfire", "drought", "storm",
+                             "heat wave")):
+        return "weather"
+    # Economics
+    if any(k in t for k in ("fed rate", "interest rate", "inflation", "gdp",
+                             "recession", "stock market", "s&p 500",
+                             "dow jones", "nasdaq", "unemployment",
+                             "federal reserve", "treasury", "tariff", "cpi",
+                             "fomc", "jobs report", "oil price", "gas price",
+                             "housing market", "trade war")):
+        return "economics"
     return ""
 
 

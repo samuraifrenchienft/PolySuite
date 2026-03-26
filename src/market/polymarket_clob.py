@@ -42,7 +42,7 @@ class PolymarketCLOB:
                 return market
             return None
         except Exception as e:
-            logger.warning("CLOB get_market error: %s", e)
+            logger.debug("CLOB get_market error: %s", e)
             return None
 
     def get_markets(self, limit: int = 100) -> List[Dict]:
