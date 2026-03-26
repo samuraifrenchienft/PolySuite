@@ -2790,14 +2790,14 @@
             }
             const btn = document.querySelector('#modalFooter .btn-primary');
             const modalBody = document.getElementById('modalBody');
-            const CHUNK = 1;
+            const CHUNK = 25;
             const FETCH_MS = 120000;
             if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Classifying...'; }
             let analyzed = 0, lastError = null;
             try {
                 for (let i = 0; i < addrs.length; i += CHUNK) {
                     const chunk = addrs.slice(i, i + CHUNK);
-                    const currentNum = i + 1;
+                    const currentNum = Math.min(i + CHUNK, addrs.length);
                     const addr = chunk[0] || '';
                     _renderClassifyProgress(modalBody, currentNum, addrs.length, addr, analyzed, 'working');
                     await new Promise(function (resolve) { requestAnimationFrame(function () { requestAnimationFrame(resolve); }); });
