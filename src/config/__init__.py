@@ -48,7 +48,7 @@ DEFAULT_CONFIG = {
     "wallet_discovery_max_new": 15,  # Max new wallets per discovery run
     "wallet_discovery_max_wallets": 250,  # Cap total tracked wallets (manual + auto)
     "wallet_discovery_min_volume": 50000,  # Skip traders below this vol when leaderboard provides it; 0 = no filter
-    "wallet_discovery_min_pnl": 0,        # Skip traders below this PnL at intake; 0 = no filter
+    "wallet_discovery_min_pnl": 1000,      # Skip traders below this PnL at intake; 0 = no filter
     "wallet_discovery_rotate_depth": 500, # How deep into leaderboard before resetting offset to 0
     "wallet_discovery_fetch_limit": 150,  # How many wallets to fetch per run (advances offset by this amount)
     "wallet_discovery_categories": ["OVERALL", "CRYPTO", "POLITICS", "SPORTS"],  # Cycle through these categories each run
@@ -56,8 +56,8 @@ DEFAULT_CONFIG = {
     # 0 = refresh every wallet each collector cycle; set e.g. 40 to round-robin and reduce API load
     "wallet_stats_max_per_cycle": 0,
     "wallet_cleanup_enabled": True,  # Auto-remove useless wallets (0 trades, 0 wins, low win rate)
-    "wallet_cleanup_interval_sec": 3600,  # Run cleanup every hour
-    "wallet_cleanup_min_win_rate": 45,  # Remove if win_rate below this (when trades >= 1)
+    "wallet_cleanup_interval_sec": 1800,  # Run cleanup every 30 min
+    "wallet_cleanup_min_win_rate": 52,  # Remove if win_rate below this
     "wallet_cleanup_min_trades": 5,  # Require this many trades before win-rate / 0-wins removal (0 = no minimum)
     "wallet_cleanup_grace_days": 7,  # Don't remove wallets added in last N days
     "wallet_cleanup_remove_farmer": True,  # Remove wallets the classifier marks as farmers
