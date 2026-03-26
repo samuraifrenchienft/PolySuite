@@ -250,6 +250,8 @@ def run_wallet_cleanup_step(storage, config, last_ts_ref: List[float]) -> int:
         cutoff = datetime.utcnow() - timedelta(days=grace_days)
         for w in wallets:
             try:
+                if getattr(w, "is_pinned", False):
+                    continue
                 created_at = getattr(w, "created_at", None)
                 if created_at:
                     try:
