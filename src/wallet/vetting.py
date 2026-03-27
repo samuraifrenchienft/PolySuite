@@ -266,7 +266,7 @@ class WalletVetting:
                 except Exception:
                     return None
             with ThreadPoolExecutor(max_workers=min(10, len(missing_ids))) as pool:
-                fetched = pool.map(_fetch_market, missing_ids)
+                fetched = list(pool.map(_fetch_market, missing_ids, timeout=30))
             for mid, data in zip(missing_ids, fetched):
                 market_cache[mid] = data
 
