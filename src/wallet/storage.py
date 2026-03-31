@@ -283,6 +283,10 @@ class WalletStorage:
                     "specialty_roi_pct",
                     "ALTER TABLE wallets ADD COLUMN specialty_roi_pct REAL",
                 ),
+                (
+                    "is_pinned",
+                    "ALTER TABLE wallets ADD COLUMN is_pinned BOOLEAN DEFAULT FALSE",
+                ),
             ]:
                 try:
                     conn.execute(sql)
