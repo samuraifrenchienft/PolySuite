@@ -19,12 +19,14 @@ class ContrarianDetector:
         min_volume: float = 10000,
         min_imbalance: float = 0.6,
         payout_range: Tuple[float, float] = (0.20, 0.40),
+        min_score: float = 1.6,
         limit: int = 5,
     ):
         self.polymarket_api = polymarket_api
         self.min_volume = min_volume
         self.min_imbalance = min_imbalance  # e.g. 0.6 = 60% on one side
         self.payout_range = payout_range  # minority price 0.20-0.40 = 5x-2.5x
+        self.min_score = min_score
         self.limit = limit
 
     def scan(self) -> List[Dict]:
@@ -87,6 +89,8 @@ class ContrarianDetector:
                     continue
 
                 score = imbalance * payout
+                if score < self.min_score:
+                    continue
                 signals.append({
                     "market": m,
                     "market_id": mid,
@@ -102,9 +106,6 @@ class ContrarianDetector:
                     "score": score,
                     "total_volume": total,
                 })
-                if len(signals) >= self.limit:
-                    break
-
             signals.sort(key=lambda x: x["score"], reverse=True)
             return signals[: self.limit]
 

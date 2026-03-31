@@ -60,6 +60,8 @@ class InsiderSignalDetector:
         fresh_max_trades: int = 10,
         liquidity_threshold: float = 0.02,
         niche_volume_max: float = 50000,
+        leaderboard_fallback_enabled: bool = False,
+        high_requires_size_anomaly: bool = True,
     ):
         self.hashdive = (
             hashdive_client  # Optional paid; Polymarket Data API used when not set
@@ -71,6 +73,8 @@ class InsiderSignalDetector:
         self.fresh_max_trades = fresh_max_trades
         self.liquidity_threshold = liquidity_threshold
         self.niche_volume_max = niche_volume_max
+        self.leaderboard_fallback_enabled = leaderboard_fallback_enabled
+        self.high_requires_size_anomaly = high_requires_size_anomaly
 
     def scan_for_signals(self, limit: int = 10) -> List[Dict]:
         """Scan for insider signals. Returns list of signal dicts."""
@@ -101,8 +105,8 @@ class InsiderSignalDetector:
         except Exception as e:
             logger.warning("InsiderSignal whale trades scan failed: %s", e)
 
-        # Source 2: Leaderboard (fallback when no large-trade signals)
-        if not signals and self.polymarket:
+        # Source 2: Leaderboard fallback (disabled by default to reduce false insider matches)
+        if self.leaderboard_fallback_enabled and not signals and self.polymarket:
             try:
                 import requests
 
@@ -119,7 +123,7 @@ class InsiderSignalDetector:
                         if not addr or addr.lower() in seen_wallets:
                             continue
                         seen_wallets.add(addr.lower())
-                        sig = self._check_wallet_signal(addr, {"size": 0})
+                        sig = self._check_wallet_signal(addr, {"size": 0, "_source": "leaderboard"})
                         if sig:
                             signals.append(sig)
                             if len(signals) >= limit:
@@ -204,17 +208,20 @@ class InsiderSignalDetector:
             if closed_count >= self.fresh_max_trades:
                 return None  # Not fresh
 
-            # Check for winning trade
-            has_win = False
-            last_win = None
-            winning_position = None
-            for p in closed[:5]:
+            # Check for winning trade; prefer same market as the triggering trade when available.
+            preferred_market = (
+                trade.get("conditionId")
+                or trade.get("market")
+                or trade.get("market_id")
+                or trade.get("condition_id")
+            )
+            winning_candidates = []
+            for p in closed[:10]:
                 pnl = p.get("realizedPnl") or p.get("pnl") or p.get("realized_pnl")
                 try:
                     pnl_val = float(pnl) if pnl is not None else 0
                     if pnl_val > 0:
-                        has_win = True
-                        last_win = {
+                        candidate = {
                             "question": (
                                 p.get("question")
                                 or p.get("marketQuestion")
@@ -232,11 +239,20 @@ class InsiderSignalDetector:
                             or p.get("market")
                             or p.get("condition_id"),
                         }
-                        break
+                        winning_candidates.append(candidate)
                 except (ValueError, TypeError):
                     pass
 
-            if not has_win or not last_win:
+            last_win = None
+            if preferred_market:
+                for c in winning_candidates:
+                    if c.get("market_id") == preferred_market:
+                        last_win = c
+                        break
+            if last_win is None and winning_candidates:
+                last_win = winning_candidates[0]
+
+            if not last_win:
                 return None
 
             # Trade size from HashDive trade or estimate from closed
@@ -266,19 +282,29 @@ class InsiderSignalDetector:
                     self._check_size_and_niche(last_win["market_id"], trade_size)
                 )
 
-            # Auto-HIGH for huge trades (> $100K) - regardless of order book
-            if trade_size >= 100000:
-                size_anomaly = True
-
             # Composite risk: fresh + size_anomaly + niche_market
             fresh = closed_count < self.fresh_max_trades
             signal_count = sum([fresh, size_anomaly, niche_market])
-            if signal_count >= 3 or trade_size >= 100000:
+            if signal_count >= 3:
                 confidence = "HIGH"
             elif signal_count >= 2:
                 confidence = "MEDIUM"
             else:
                 confidence = "LOW"
+            # Very large trades can be HIGH, but only with meaningful liquidity impact.
+            if (
+                trade_size >= 100000
+                and (size_anomaly or (liquidity_impact is not None and liquidity_impact >= self.liquidity_threshold))
+            ):
+                confidence = "HIGH"
+            # Avoid inflated HIGH when anomaly evidence is missing.
+            if (
+                confidence == "HIGH"
+                and self.high_requires_size_anomaly
+                and not size_anomaly
+                and (liquidity_impact is None or liquidity_impact < self.liquidity_threshold)
+            ):
+                confidence = "MEDIUM"
 
             return {
                 "address": address,

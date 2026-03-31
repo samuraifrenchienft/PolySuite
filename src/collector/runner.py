@@ -374,6 +374,43 @@ class MarketDataCollector:
         except Exception as e:
             logger.debug("[Collector] persist scan_result: %s", e)
 
+    def _persist_alert_event(
+        self,
+        alert_type: str,
+        data: dict,
+        sent_discord: bool,
+        sent_telegram: bool,
+    ):
+        """Persist sent-alert event for future quality/outcome analytics."""
+        try:
+            if self._scan_results_storage is None:
+                from src.analytics.scan_results_storage import ScanResultsStorage
+                self._scan_results_storage = ScanResultsStorage()
+            market_id = None
+            wallet_address = None
+            confidence = None
+            if alert_type == "insider":
+                wt = data.get("winning_trade") or {}
+                market_id = wt.get("market_id")
+                wallet_address = data.get("address")
+                confidence = data.get("confidence")
+            elif alert_type == "convergence":
+                market_id = data.get("market_id")
+            elif alert_type == "contrarian":
+                market_id = data.get("market_id")
+            self._scan_results_storage.save_alert_event(
+                alert_type=alert_type,
+                alert_ts=time.time(),
+                market_id=market_id,
+                wallet_address=wallet_address,
+                confidence=confidence,
+                sent_discord=sent_discord,
+                sent_telegram=sent_telegram,
+                payload=data,
+            )
+        except Exception as e:
+            logger.debug("[Collector] persist alert_event: %s", e)
+
     def _log_alert(self, alert_type: str, data: dict):
         """Append to recent alerts for dashboard display."""
         entry = {"type": alert_type, "ts": time.time(), "data": {}}
@@ -572,13 +609,18 @@ class MarketDataCollector:
                 if alerts_on:
                     disp = self._get_dispatcher()
                     tg = self._get_telegram()
-                    sent = False
-                    if disp and disp.send_insider_alert(s):
-                        sent = True
-                    if tg and tg.is_configured() and tg.send_insider_alert(s):
-                        sent = True
-                    if sent:
+                    sent_discord = bool(disp and disp.send_insider_alert(s))
+                    sent_telegram = bool(
+                        tg and tg.is_configured() and tg.send_insider_alert(s)
+                    )
+                    if sent_discord or sent_telegram:
                         self._log_alert("insider", s)
+                        self._persist_alert_event(
+                            "insider",
+                            s,
+                            sent_discord=sent_discord,
+                            sent_telegram=sent_telegram,
+                        )
                 out.append({
                     "address": s.get("address", ""),
                     "trade_size": round(s.get("trade_size", 0), 0),
@@ -614,13 +656,32 @@ class MarketDataCollector:
                     m = c.get("market_info") or {}
                     disp = self._get_dispatcher()
                     tg = self._get_telegram()
-                    sent = False
-                    if disp and disp.send_convergence_alert(m, c.get("wallets", []), threshold):
-                        sent = True
-                    if tg and tg.is_configured() and tg.send_convergence_alert(m, c.get("wallets", []), threshold):
-                        sent = True
-                    if sent:
+                    sent_discord = bool(
+                        disp
+                        and disp.send_convergence_alert(
+                            m,
+                            c.get("wallets", []),
+                            threshold,
+                            convergence=c,
+                        )
+                    )
+                    sent_telegram = bool(
+                        tg
+                        and tg.is_configured()
+                        and tg.send_convergence_alert(
+                            m,
+                            c.get("wallets", []),
+                            threshold,
+                        )
+                    )
+                    if sent_discord or sent_telegram:
                         self._log_alert("convergence", c)
+                        self._persist_alert_event(
+                            "convergence",
+                            c,
+                            sent_discord=sent_discord,
+                            sent_telegram=sent_telegram,
+                        )
                 m = c.get("market_info") or {}
                 out.append({
                     "market_id": c.get("market_id"),

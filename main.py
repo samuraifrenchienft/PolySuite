@@ -17,7 +17,6 @@ from src.wallet.storage import WalletStorage
 from src.wallet.calculator import WalletCalculator
 from src.config import Config, max_tracked_wallets
 from src.market.api import APIClientFactory
-from src.market.discovery import MarketDiscovery
 from src.alerts import AlertDispatcher
 from src.alerts.convergence import ConvergenceDetector
 from src.alerts.telegram import TelegramDispatcher
@@ -265,7 +264,6 @@ def monitor(
         min_market_volume=float(config.get("convergence_min_volume", 5000) or 5000),
     )
 
-    discovery = MarketDiscovery(api_factory, config.tracked_categories)
     leaderboard_importer = LeaderboardImporter(api_factory)
     smart_money_detector = SmartMoneyDetector(api_factory)
     position_detector = PositionAlerter()
@@ -342,6 +340,7 @@ def monitor(
                         market=market,
                         wallets=wallets,
                         threshold=config.win_rate_threshold,
+                        convergence=conv,
                     )
                     msg += " [Discord [+]]" if success else " [Discord [-]]"
 
@@ -355,19 +354,6 @@ def monitor(
 
                 print(msg)
                 alerted_markets.add(conv["market_id"])
-
-            # Check for new markets
-            new_markets = discovery.check_for_new_markets()
-            for market in new_markets:
-                msg = f"\n🆕 New market: {market.get('question', 'Unknown')[:50]}"
-
-                if has_discord:
-                    dispatcher.send_new_market_alert(market)
-
-                if has_telegram:
-                    telegram.send_new_market_alert(market)
-
-                print(msg)
 
             # Check for large positions
             for wallet in high_performers:

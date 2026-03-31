@@ -107,6 +107,21 @@ class AlertDispatcher:
         self, wallets: List[Dict], positions: List[Dict]
     ) -> str:
         """Determine consensus direction from wallet positions."""
+        # Prefer explicit YES/NO sides from convergence wallet rows when present.
+        yes_from_wallets = 0
+        no_from_wallets = 0
+        for w in wallets or []:
+            side = str(w.get("side", "")).upper()
+            if side in ("YES", "Y", "BUY YES"):
+                yes_from_wallets += 1
+            elif side in ("NO", "N", "BUY NO"):
+                no_from_wallets += 1
+        if yes_from_wallets or no_from_wallets:
+            if yes_from_wallets > no_from_wallets:
+                return "YES"
+            if no_from_wallets > yes_from_wallets:
+                return "NO"
+
         yes_votes = 0
         no_votes = 0
 

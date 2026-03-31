@@ -54,7 +54,10 @@ class ConvergenceDetector:
 
     def get_high_performers(self) -> List[Wallet]:
         """Get all tracked wallets above win rate threshold."""
-        return self.wallet_storage.get_high_performers(self.threshold)
+        return self.wallet_storage.get_high_performers(
+            self.threshold,
+            min_trades=self.min_trades,
+        )
 
     def _get_market_age(self, market_id: str, market_cache: Dict = None) -> Optional[float]:
         """Get market age in hours from creation time."""

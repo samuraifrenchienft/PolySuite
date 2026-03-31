@@ -32,6 +32,10 @@ DEFAULT_CONFIG = {
     "whale_check_interval": 300,
     "whale_min_size": 50000,
     "insider_min_size": 10000,
+    "insider_leaderboard_fallback_enabled": False,  # Use leaderboard-only insider fallback when whale source is empty
+    "insider_liquidity_threshold": 0.05,  # Higher threshold reduces false size-anomaly positives
+    "insider_niche_volume_max": 30000,  # Lower cap avoids tagging too many markets as "niche"
+    "insider_high_requires_size_anomaly": True,  # HIGH confidence must include size anomaly / meaningful impact
     "ai_filter_low_value_alerts": False,
     "trade_volume_threshold": 1000,
     # Alert noise reduction
@@ -39,6 +43,9 @@ DEFAULT_CONFIG = {
     "alert_skip_low_confidence": True,
     "alert_min_confidence": "MEDIUM",
     "convergence_min_volume": 5000,
+    "convergence_time_window_hours": 6,
+    "convergence_max_market_age_hours": 24,
+    "convergence_early_entry_minutes": 10,
     "position_size_threshold": 1000,
     "leaderboard_import_interval": 3600,  # 1 hour
     "scan_interval_sec": 180,  # Background collector: 3 min between scans (fresh data)
@@ -110,6 +117,13 @@ DEFAULT_CONFIG = {
     "vet_skip_hours": 48,
     # Dashboard UI: poll /api/dashboard/data this often (seconds). 0 = manual refresh only.
     "dashboard_poll_interval_sec": 90,
+    # Contrarian ranking / gating
+    "contrarian_payout_min": 0.20,
+    "contrarian_payout_max": 0.40,
+    "contrarian_min_score": 1.6,
+    # Strategy digest plumbing (analytics-only scaffold)
+    "alert_digest_enabled": False,
+    "alert_digest_interval_hours": 24,
 }
 
 # Keys reset from DEFAULT_CONFIG when config.json is older than CONFIG_SCHEMA_VERSION.

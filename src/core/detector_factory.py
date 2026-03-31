@@ -41,6 +41,9 @@ class DetectorFactory:
             threshold=float(self._get("win_rate_threshold", 55) or 55),
             min_trades=int(self._get("min_trades_for_high_performer", 10) or 10),
             api_factory=self.api_factory,
+            time_window_hours=int(self._get("convergence_time_window_hours", 6) or 6),
+            max_market_age_hours=int(self._get("convergence_max_market_age_hours", 24) or 24),
+            early_entry_minutes=int(self._get("convergence_early_entry_minutes", 10) or 10),
             min_market_volume=float(self._get("convergence_min_volume", 5000) or 5000),
         )
 
@@ -60,6 +63,10 @@ class DetectorFactory:
             api_factory=self.api_factory,
             min_trade_usd=min_size,
             fresh_max_trades=10,
+            liquidity_threshold=float(self._get("insider_liquidity_threshold", 0.05) or 0.05),
+            niche_volume_max=float(self._get("insider_niche_volume_max", 30000) or 30000),
+            leaderboard_fallback_enabled=bool(self._get("insider_leaderboard_fallback_enabled", False)),
+            high_requires_size_anomaly=bool(self._get("insider_high_requires_size_anomaly", True)),
         )
 
     def get_contrarian_detector(self):
@@ -74,6 +81,10 @@ class DetectorFactory:
             polymarket_api=polymarket,
             min_volume=float(self._get("contrarian_min_volume", 10000) or 10000),
             min_imbalance=float(self._get("contrarian_min_imbalance", 0.6) or 0.6),
-            payout_range=(0.20, 0.40),
+            payout_range=(
+                float(self._get("contrarian_payout_min", 0.20) or 0.20),
+                float(self._get("contrarian_payout_max", 0.40) or 0.40),
+            ),
+            min_score=float(self._get("contrarian_min_score", 1.6) or 1.6),
             limit=10,
         )

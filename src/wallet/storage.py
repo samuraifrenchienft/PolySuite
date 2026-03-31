@@ -577,18 +577,21 @@ class WalletStorage:
             return False
 
     def get_high_performers(
-        self, threshold: float = 55.0, max_bot_score: int = 70
+        self,
+        threshold: float = 55.0,
+        max_bot_score: int = 70,
+        min_trades: int = 10,
     ) -> List[Wallet]:
-        """Get wallets above win rate threshold, min 10 trades, bot_score < max_bot_score."""
+        """Get wallets above win rate threshold with configurable min trades and bot cap."""
         with self._get_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM wallets
-                WHERE win_rate >= ? AND total_trades >= 10
+                WHERE win_rate >= ? AND total_trades >= ?
                   AND (bot_score IS NULL OR bot_score < ?)
                 ORDER BY win_rate DESC
             """,
-                (threshold, max_bot_score),
+                (threshold, int(min_trades or 0), max_bot_score),
             ).fetchall()
             return [
                 Wallet(
