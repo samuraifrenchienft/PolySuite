@@ -1877,20 +1877,54 @@ class Dashboard:
         if use_production is None:
             use_production = os.getenv("DASHBOARD_DEBUG", "").lower() not in ("1", "true", "t", "yes")
 
+        host = os.getenv("DASHBOARD_HOST", "127.0.0.1")
+        port = int(os.getenv("DASHBOARD_PORT", "5000"))
+
         if use_production:
             try:
                 from waitress import serve
-                host = os.getenv("DASHBOARD_HOST", "127.0.0.1")
-                port = int(os.getenv("DASHBOARD_PORT", "5000"))
+
                 print(f"PolySuite running -> http://{host}:{port}")
+                self._schedule_dashboard_browser(host, port)
                 serve(self.app, host=host, port=port, threads=4)
             except ImportError:
                 logger.warning(
                     "Waitress not installed, falling back to Flask dev server (pip install waitress)"
                 )
-                self.app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+                print(f"PolySuite (Flask) -> http://{host}:{port}")
+                self._schedule_dashboard_browser(host, port)
+                self.app.run(host=host, port=port, debug=True, use_reloader=False)
         else:
-            self.app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+            print(f"PolySuite (Flask dev) -> http://{host}:{port}")
+            self._schedule_dashboard_browser(host, port)
+            self.app.run(host=host, port=port, debug=True, use_reloader=False)
+
+    def _schedule_dashboard_browser(self, host: str, port: int) -> None:
+        """Open the default browser shortly after the server starts.
+
+        Disable with ``DASHBOARD_OPEN_BROWSER=0`` (servers, CI, SSH).
+        When host is all-interfaces, opens ``127.0.0.1`` so the page loads locally.
+        """
+        if os.getenv("DASHBOARD_OPEN_BROWSER", "1").lower() in ("0", "false", "no"):
+            return
+
+        def _open() -> None:
+            time.sleep(1.25)
+            try:
+                import webbrowser
+
+                h = (host or "127.0.0.1").strip()
+                if h in ("0.0.0.0", "::", "[::]"):
+                    h = "127.0.0.1"
+                url = f"http://{h}:{port}/"
+                webbrowser.open(url)
+                logger.info("Opened dashboard in default browser: %s", url)
+            except Exception as e:
+                logger.debug("Could not open dashboard in browser: %s", e)
+
+        threading.Thread(
+            target=_open, daemon=True, name="dashboard-open-browser"
+        ).start()
 
     def _get_shared_market_cache(self) -> dict:
         """Return session-level market cache, pruning entries older than 2 hours."""

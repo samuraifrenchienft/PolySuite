@@ -593,6 +593,17 @@ def handle_bot_command(
     if not token or not token.strip():
         print("Telegram bot token not configured. Skipping.")
         return
+    import os
+
+    dh = os.getenv("DASHBOARD_HOST", "127.0.0.1")
+    if dh in ("0.0.0.0", "::"):
+        dh = "127.0.0.1"
+    dp = os.getenv("DASHBOARD_PORT", "5000")
+    print(
+        f"Note: Telegram bot does not start the web dashboard. "
+        f"For the UI, run in another terminal: python main.py run\n"
+        f"  (or `python main.py dashboard`) then open http://{dh}:{dp}/"
+    )
     bot = TelegramBot(token, storage)
     bot.run()
 
