@@ -973,22 +973,39 @@ class Dashboard:
             classified = {}
             for addr in clean_addresses:
                 trades = all_trades.get(addr, [])
+                existing = self.storage.get_wallet(addr)
                 if not trades:
-                    classified[addr] = (None, None, None)
+                    classified[addr] = (None, "No trades found for this wallet", existing)
                     continue
                 try:
-                    existing = self.storage.get_wallet(addr)
                     score = classifier.classify_wallet(addr, trades, existing_wallet=existing, market_cache=shared_market_cache)
                     reason = classifier.get_classification_reason(score)
                     classified[addr] = (score, reason, existing)
                 except Exception as e:
                     logger.warning("[Classify] %s: %s", addr[:16], e)
-                    classified[addr] = (None, None, None)
+                    classified[addr] = (None, "Classification error", existing)
 
             for addr in clean_addresses:
                 score, reason, existing = classified.get(addr, (None, None, None))
                 if score is None:
-                    results.append({"address": addr, "score": 0, "classification": "no_trades", "reason": "No trades found for this wallet"})
+                    no_trade_reason = reason or "No trades found for this wallet"
+                    results.append({
+                        "address": addr,
+                        "score": 0,
+                        "classification": "no_trades",
+                        "reason": no_trade_reason,
+                    })
+                    # Persist no-trades label so wallet doesn't remain perpetually unlabeled.
+                    if existing:
+                        try:
+                            existing.classification = "no_trades"
+                            existing.classification_reason = no_trade_reason
+                            existing.last_scored_at = datetime.now().isoformat()
+                            self.storage.update_wallet(existing)
+                        except Exception as e:
+                            logger.warning(
+                                "Error updating no_trades label for %s: %s", addr, e
+                            )
                     continue
                 try:
 
@@ -1712,6 +1729,9 @@ class Dashboard:
             "scan_interval_sec": self.config.get("scan_interval_sec", 180),
             "cache_ttl_sec": self.config.get("cache_ttl_sec", 0),
             "wallet_stats_max_per_cycle": self.config.get("wallet_stats_max_per_cycle", 0),
+            "collector_classify_enabled": self.config.get("collector_classify_enabled", True),
+            "collector_classify_interval_sec": self.config.get("collector_classify_interval_sec", 1800),
+            "collector_classify_max_per_cycle": self.config.get("collector_classify_max_per_cycle", 25),
             "wallet_discovery_enabled": self.config.get("wallet_discovery_enabled", True),
             "wallet_discovery_interval_sec": self.config.get("wallet_discovery_interval_sec", 1800),
             "wallet_discovery_max_new": self.config.get("wallet_discovery_max_new", 15),

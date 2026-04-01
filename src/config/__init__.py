@@ -119,6 +119,10 @@ DEFAULT_CONFIG = {
     "vet_unresolved_min_days_past": 3,  # Only count if endDate is this many days past (avoids false positives)
     # Background collector: skip stats refresh if last_updated is newer than this (hours). 0 = refresh all.
     "collector_stats_skip_hours": 24,
+    # Background collector classification pass: keeps labels fresh without manual "Classify".
+    "collector_classify_enabled": True,
+    "collector_classify_interval_sec": 1800,  # 30 min
+    "collector_classify_max_per_cycle": 25,  # 0 = classify all eligible each cycle
     # Dashboard bulk Classify: skip if last_scored_at within this many hours. 0 = classify all.
     "classify_bulk_skip_hours": 24,
     # Bulk Vet All: skip if last_vetted_at within this many hours (e.g. 48–72 when vetting 4×/day). 0 = vet all.

@@ -1103,7 +1103,7 @@
                     <option value="highWinRate">&gt;55% Win Rate</option>
                 </select>
                 <button class="btn" id="hideBotBtn" onclick="toggleHideBots()" title="Toggle bot/farmer visibility" style="min-width:auto;padding:0.4rem 0.75rem;">
-                    <i class="fas fa-robot"></i> <span id="hideBotLabel">Hide Bots</span>
+                    <i class="fas fa-robot"></i> <span id="hideBotLabel">Bots Hidden</span>
                 </button>
                 <button class="btn btn-success" onclick="showModal('addWallet')">
                     <i class="fas fa-plus"></i> Add Wallet
@@ -1765,6 +1765,25 @@
                         </div>
                         <input type="number" class="settings-input" value="{{ settings.scan_interval_sec }}" onchange="updateSetting('scan_interval_sec', this.value)">
                     </div>
+                    <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                        <span>Background auto-classify labels</span>
+                        <div class="toggle-switch {{ 'active' if settings.collector_classify_enabled else '' }}" onclick="toggleSetting('collector_classify_enabled')"></div>
+                        <small style="display:block; color: var(--text-secondary); margin-top: 0.25rem;">Keeps classification/tier/specialty fresh between manual runs.</small>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Auto-classify interval (sec)
+                            <small>How often collector runs background classification.</small>
+                        </div>
+                        <input type="number" class="settings-input" min="60" step="60" value="{{ settings.collector_classify_interval_sec|default(1800) }}" onchange="updateSetting('collector_classify_interval_sec', parseInt(this.value, 10) || 1800)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Auto-classify max wallets per cycle
+                            <small>Never-scored first, then stalest score. 0 = process all eligible wallets.</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" step="1" value="{{ settings.collector_classify_max_per_cycle|default(25) }}" onchange="updateSetting('collector_classify_max_per_cycle', parseInt(this.value, 10) || 0)">
+                    </div>
                     <div class="settings-item">
                         <div class="settings-label">
                             Cache TTL (sec)
@@ -2169,6 +2188,24 @@
             return !!(c && String(c).trim());
         }
 
+        function boolFromAny(v) {
+            if (v === true || v === 1) return true;
+            if (v === false || v === 0 || v == null) return false;
+            const s = String(v).trim().toLowerCase();
+            if (!s) return false;
+            if (s === '1' || s === 'true' || s === 'yes' || s === 'y' || s === 'on') return true;
+            if (s === '0' || s === 'false' || s === 'no' || s === 'n' || s === 'off' || s === 'none' || s === 'null') return false;
+            return false;
+        }
+
+        function isBotLikeWallet(w) {
+            if (!w) return false;
+            if (boolFromAny(w.is_bot) || boolFromAny(w.is_farmer)) return true;
+            const cls = String(w.classification || '').toLowerCase();
+            // Defensive: some rows may have classification set before flags persist.
+            return cls.includes('bot') || cls.includes('farmer');
+        }
+
         /** Pretty label for API category slugs: sports, politics, crypto, etc. */
         function formatSpecialtyCategory(cat) {
             if (cat == null || cat === '') return '';
@@ -2191,19 +2228,20 @@
                     wins: parseInt(w.wins) || 0,
                     trade_volume: w.trade_volume ?? w.tradeVolume ?? 0,
                     total_score: w.total_score ?? w.totalScore ?? 0,
-                    isSmartMoney: !!(w.is_smart_money === true || w.is_smart_money === 1 || w.is_smart_money === '1'),
+                    isSmartMoney: boolFromAny(w.is_smart_money),
                     isSpecialty: walletHasSpecialty(w),
                     specialty_category: (w.specialty_category && String(w.specialty_category).trim()) || null,
                     specialty_win_rate: w.specialty_win_rate != null ? parseFloat(w.specialty_win_rate) : null,
-                    isWinStreakBadge: !!w.is_win_streak_badge,
+                    isWinStreakBadge: boolFromAny(w.is_win_streak_badge),
                     tier: w.tier || 'watch',
                     totalScore: w.total_score ?? w.totalScore ?? 0,
                     classification: w.classification || '',
                     classificationReason: w.classification_reason || '',
-                    isBot: !!w.is_bot,
-                    isPinned: !!w.is_pinned,
-                    isFarmer: !!w.is_farmer,
-                    isHighLossRate: !!w.is_high_loss_rate,
+                    isBot: boolFromAny(w.is_bot),
+                    isPinned: boolFromAny(w.is_pinned),
+                    isFarmer: boolFromAny(w.is_farmer),
+                    isHighLossRate: boolFromAny(w.is_high_loss_rate),
+                    isBotLike: isBotLikeWallet(w),
                     currentWinStreak: parseInt(w.current_win_streak) || 0,
                     maxWinStreak: parseInt(w.max_win_streak) || 0,
                     copyEnabled: copyTargets.has((w.address || '').toLowerCase())
@@ -2293,7 +2331,7 @@
             const btn = document.getElementById('hideBotBtn');
             const lbl = document.getElementById('hideBotLabel');
             if (btn) btn.classList.toggle('btn-primary', hideBots);
-            if (lbl) lbl.textContent = hideBots ? 'Hide Bots' : 'Show Bots';
+            if (lbl) lbl.textContent = hideBots ? 'Bots Hidden' : 'Bots Visible';
             applyFiltersLocal();
         }
 
@@ -2301,7 +2339,7 @@
             const btn = document.getElementById('hideBotBtn');
             const lbl = document.getElementById('hideBotLabel');
             if (btn) btn.classList.toggle('btn-primary', hideBots);
-            if (lbl) lbl.textContent = hideBots ? 'Hide Bots' : 'Show Bots';
+            if (lbl) lbl.textContent = hideBots ? 'Bots Hidden' : 'Bots Visible';
         }
 
         function applyFiltersLocal() {
@@ -2313,7 +2351,7 @@
                     (w.nickname || '').toLowerCase().includes(search)
                 );
             }
-            if (hideBots) filtered = filtered.filter(w => !w.isBot && !w.isFarmer);
+            if (hideBots) filtered = filtered.filter(w => !w.isBotLike);
             if (currentFilter === 'smartMoney') filtered = filtered.filter(w => w.isSmartMoney);
             else if (currentFilter === 'specialty') filtered = filtered.filter(w => w.isSpecialty);
             else if (currentFilter === 'winStreak') filtered = filtered.filter(w => w.isWinStreakBadge);

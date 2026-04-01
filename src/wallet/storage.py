@@ -338,6 +338,9 @@ class WalletStorage:
 
     def add_wallet(self, wallet: Wallet) -> bool:
         """Add a wallet to tracking. Returns True if added, False if exists."""
+        addr = (wallet.address or "").strip().lower()
+        if not addr:
+            return False
         with self._get_connection() as conn:
             try:
                 conn.execute(
@@ -346,7 +349,7 @@ class WalletStorage:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
-                        wallet.address,
+                        addr,
                         wallet.nickname,
                         wallet.total_trades,
                         wallet.wins,
@@ -374,8 +377,11 @@ class WalletStorage:
 
     def remove_wallet(self, address: str) -> bool:
         """Remove a wallet from tracking. Returns True if removed."""
+        addr = (address or "").strip().lower()
         with self._get_connection() as conn:
-            cursor = conn.execute("DELETE FROM wallets WHERE address = ?", (address,))
+            cursor = conn.execute(
+                "DELETE FROM wallets WHERE lower(address) = lower(?)", (addr,)
+            )
             conn.commit()
             ok = cursor.rowcount > 0
         if ok:
@@ -398,9 +404,10 @@ class WalletStorage:
 
     def get_wallet(self, address: str) -> Optional[Wallet]:
         """Get a wallet by address."""
+        addr = (address or "").strip().lower()
         with self._get_connection() as conn:
             row = conn.execute(
-                "SELECT * FROM wallets WHERE address = ?", (address,)
+                "SELECT * FROM wallets WHERE lower(address) = lower(?)", (addr,)
             ).fetchone()
             if row:
                 return Wallet.from_dict(dict(row))
@@ -476,7 +483,7 @@ class WalletStorage:
                 """
                 UPDATE wallets
                 SET total_trades = ?, wins = ?, win_rate = ?, last_updated = ?, trade_volume = ?
-                WHERE address = ?
+                WHERE lower(address) = lower(?)
             """,
                 (total_trades, wins, win_rate, last_updated, trade_volume, address),
             )
@@ -537,7 +544,7 @@ class WalletStorage:
         values.append(address)
         with self._get_connection() as conn:
             cursor = conn.execute(
-                f"UPDATE wallets SET {', '.join(updates)} WHERE address = ?",
+                f"UPDATE wallets SET {', '.join(updates)} WHERE lower(address) = lower(?)",
                 values,
             )
             conn.commit()
@@ -565,7 +572,7 @@ class WalletStorage:
 
         values.append(wallet.address)
 
-        query = f"UPDATE wallets SET {', '.join(fields)} WHERE address = ?"
+        query = f"UPDATE wallets SET {', '.join(fields)} WHERE lower(address) = lower(?)"
 
         try:
             with self._get_connection() as conn:
@@ -641,7 +648,7 @@ class WalletStorage:
                 """
                 UPDATE wallets
                 SET is_smart_money = TRUE
-                WHERE address = ?
+                WHERE lower(address) = lower(?)
             """,
                 (address,),
             )
@@ -762,7 +769,7 @@ class WalletStorage:
 
         with self._get_connection() as conn:
             conn.execute(
-                """UPDATE wallets SET tier = ?, tier_changed_at = ?, tier_change_reason = ? WHERE address = ?""",
+                """UPDATE wallets SET tier = ?, tier_changed_at = ?, tier_change_reason = ? WHERE lower(address) = lower(?)""",
                 (new_tier, datetime.utcnow().isoformat(), reason, address),
             )
 

@@ -43,6 +43,29 @@ def _wallet_stats_staleness_key(w):
     return (1, ts, addr)
 
 
+def _wallet_last_scored_ts(w) -> Optional[float]:
+    """Parse wallet.last_scored_at (ISO) to unix time; None if missing/invalid."""
+    lu = getattr(w, "last_scored_at", None)
+    if not lu:
+        return None
+    try:
+        s = str(lu).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s).timestamp()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _wallet_score_staleness_key(w):
+    """Sort: never scored first, then oldest last_scored_at first."""
+    ts = _wallet_last_scored_ts(w)
+    addr = (getattr(w, "address", "") or "").lower()
+    if ts is None:
+        return (0, 0.0, addr)
+    return (1, ts, addr)
+
+
 def _dedupe_trader_rows(traders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Stable de-dupe by normalized 0x address (Data API + Gamma may overlap)."""
     seen: set = set()
@@ -198,6 +221,8 @@ def run_wallet_discovery_step(
             src_cat = (t.get("category") or categories[0] or "").upper()
             if src_cat and src_cat != "OVERALL":
                 w.specialty_category = src_cat.lower()
+                # Keep boolean flag in sync with category to avoid stale mismatches.
+                w.is_specialty = True
             if storage.add_wallet(w):
                 added += 1
                 logger.info(
@@ -320,6 +345,140 @@ def run_wallet_cleanup_step(storage, config, last_ts_ref: List[float]) -> int:
     return removed
 
 
+def run_wallet_classify_step(
+    storage,
+    config,
+    api_factory,
+    last_ts_ref: List[float],
+) -> int:
+    """Background classification to keep labels fresh without manual dashboard clicks.
+
+    Prioritizes never-scored wallets first, then oldest score timestamp.
+    Applies the same skip-hour behavior as dashboard bulk classification.
+    """
+    if not last_ts_ref:
+        last_ts_ref.append(0.0)
+    if not config.get("collector_classify_enabled", True):
+        return 0
+    interval = int(config.get("collector_classify_interval_sec", 1800) or 1800)
+    now = time.time()
+    if now - last_ts_ref[0] < interval:
+        return 0
+    last_ts_ref[0] = now
+
+    try:
+        from src.wallet.classifier import WalletClassifier, WalletClassification
+
+        wallets = storage.list_wallets()
+        if not wallets:
+            return 0
+
+        skip_h = float(config.get("classify_bulk_skip_hours", 24) or 0)
+        cutoff = time.time() - skip_h * 3600
+        eligible: List = []
+        for w in wallets:
+            ts = _wallet_last_scored_ts(w)
+            if skip_h <= 0:
+                eligible.append(w)
+            elif ts is None:
+                eligible.append(w)
+            elif ts < cutoff:
+                eligible.append(w)
+
+        if not eligible:
+            logger.debug(
+                "[Collector] classify: all %d wallet(s) within skip window (%.0fh)",
+                len(wallets),
+                skip_h,
+            )
+            return 0
+
+        eligible.sort(key=_wallet_score_staleness_key)
+        max_per = int(config.get("collector_classify_max_per_cycle", 25) or 25)
+        if max_per > 0 and len(eligible) > max_per:
+            to_process = eligible[:max_per]
+        else:
+            to_process = eligible
+
+        polymarket = api_factory.get_polymarket_api()
+        classifier = WalletClassifier(api_client=polymarket)
+        shared_market_cache: Dict[str, Dict[str, Any]] = {}
+        scored = 0
+        for w in to_process:
+            try:
+                trades = polymarket.get_wallet_trades(w.address, limit=300) or []
+                score = classifier.classify_wallet(
+                    w.address,
+                    trades,
+                    existing_wallet=w,
+                    market_cache=shared_market_cache,
+                )
+                reason = classifier.get_classification_reason(score)
+
+                if (getattr(w, "nickname", "") or "").strip() == "":
+                    w.nickname = (w.address or "wallet")[:10]
+                w.classification = score.classification.value if score.classification else None
+                w.classification_reason = reason
+                w.total_score = score.total_score
+                w.total_trades = int(score.total_trades or 0)
+                w.wins = int(score.wins or 0)
+                w.win_rate = float(score.win_rate or 0)
+                w.trade_volume = int(round(float(score.total_volume or 0)))
+                if getattr(score, "total_pnl", None) is not None:
+                    w.total_pnl = float(score.total_pnl)
+                w.is_bot = score.is_bot
+                w.is_farmer = score.is_farmer
+                w.is_high_loss_rate = score.is_high_loss_rate
+                w.current_win_streak = score.current_win_streak
+                w.max_win_streak = score.max_win_streak
+                w.consecutive_losses = getattr(score, "consecutive_losses", 0)
+                w.max_consecutive_losses = getattr(score, "max_consecutive_losses", 0)
+                w.tier = score.tier
+                w.score_7d = getattr(score, "score_7d", 0)
+                w.score_14d = getattr(score, "score_14d", 0)
+                w.last_scored_at = datetime.now().isoformat()
+
+                # Specialty consistency: keep boolean and category aligned.
+                w.specialty_category = getattr(score, "specialty_category", None)
+                w.is_specialty = bool(w.specialty_category)
+                w.specialty_roi_pct = getattr(score, "specialty_roi_pct", None)
+                w.specialty_win_rate = float(getattr(score, "specialty_win_rate", 0) or 0)
+                w.specialty_volume = float(getattr(score, "specialty_volume", 0) or 0)
+                w.specialty_category_2 = getattr(score, "specialty_category_2", None)
+
+                good_classes = (
+                    WalletClassification.GOOD,
+                    WalletClassification.EXCELLENT,
+                    WalletClassification.WIN_STREAK,
+                )
+                w.is_smart_money = (
+                    score.classification in good_classes
+                    and not score.is_bot
+                    and not score.is_farmer
+                )
+                w.is_win_streak_badge = (
+                    getattr(score, "max_win_streak", 0) or 0
+                ) >= config.get("win_streak_badge_threshold", 5)
+                storage.update_wallet(w)
+                scored += 1
+                time.sleep(0.2)
+            except Exception as e:
+                logger.debug("[Collector] classify %s: %s", w.address[:12], e)
+
+        if scored:
+            logger.info(
+                "[Collector] Classified %d/%d wallet(s) (%d eligible, %d tracked)",
+                scored,
+                len(to_process),
+                len(eligible),
+                len(wallets),
+            )
+        return scored
+    except Exception as e:
+        logger.warning("[Collector] classify: %s", e)
+        return 0
+
+
 # Cache entry: {"data": {...}, "ts": float, "ok": bool}
 DEFAULT_SCAN_INTERVAL = 1800  # 30 min (1-2x/hr)
 DEFAULT_CACHE_TTL = 600  # 10 min
@@ -361,6 +520,7 @@ class MarketDataCollector:
         self._discovery_offset_ref: List[int] = [0]   # rotates through leaderboard depth
         self._discovery_cat_idx_ref: List[int] = [0]  # cycles through categories
         self._last_cleanup_ts_ref: List[float] = [0.0]
+        self._last_classify_ts_ref: List[float] = [0.0]
         # Round-robin offset when wallet_stats_max_per_cycle < number of wallets
         self._wallet_stats_offset = 0
 
@@ -498,6 +658,7 @@ class MarketDataCollector:
         # don't remove wallets that simply haven't been refreshed yet (0/0/0 stale).
         self._collect_wallet_discovery()
         self._collect_wallet_stats()
+        self._collect_wallet_classify()
         self._collect_wallet_cleanup()
         self._collect_insider()
         self._collect_convergence()
@@ -515,6 +676,15 @@ class MarketDataCollector:
     def _collect_wallet_cleanup(self):
         """Remove useless wallets automatically (delegates to run_wallet_cleanup_step)."""
         run_wallet_cleanup_step(self.storage, self.config, self._last_cleanup_ts_ref)
+
+    def _collect_wallet_classify(self):
+        """Refresh wallet labels (classification/tier/specialty) in background."""
+        run_wallet_classify_step(
+            self.storage,
+            self.config,
+            self.api_factory,
+            self._last_classify_ts_ref,
+        )
 
     def _collect_wallet_stats(self):
         """Refresh wallet stats from Polymarket so dashboard metrics stay current."""
