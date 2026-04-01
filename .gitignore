@@ -59,6 +59,8 @@ WALLET_TRACKING_PLAN.md
 
 # Debug / audit logs
 debug-*.log
+dashboard.log
+dashboard_output.txt
 
 # Data
 data/
