@@ -40,6 +40,14 @@ DEFAULT_CONFIG = {
     "trade_volume_threshold": 1000,
     # Alert noise reduction
     "alert_min_pnl": 500,
+    # Min return-on-stake if outcome wins (percent), vs current implied price for the alerted side.
+    # e.g. 12 => skip YES/NO tokens priced above ~89.3¢ (thin margin). 0 = disabled.
+    "alert_min_entry_roi_pct": 12.0,
+    # Priority labels (HIGH/MEDIUM/LOW) for Discord/Telegram — only ranks signals that already passed noise gates.
+    "alert_priority_enabled": True,
+    "alert_priority_high_min_roi_pct": 25.0,
+    "alert_priority_medium_min_roi_pct": 15.0,
+    "alert_priority_insider_bump": True,
     "alert_skip_low_confidence": True,
     "alert_min_confidence": "MEDIUM",
     "convergence_min_volume": 5000,

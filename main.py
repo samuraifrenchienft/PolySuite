@@ -30,6 +30,11 @@ from src.analytics.signals import SignalGenerator
 from src.market.leaderboard import LeaderboardImporter
 from src.tasks import TaskManager
 from src.dashboard.app import Dashboard
+from src.alerts.market_margin import (
+    assign_alert_priority,
+    convergence_passes_entry_roi,
+    convergence_stake_roi_pct,
+)
 
 def add_wallet(args, storage: WalletStorage, config: Config):
     """Add a new wallet to track."""
@@ -328,8 +333,19 @@ def monitor(
                 c for c in convergences if c["market_id"] not in alerted_markets
             ]
 
+            min_entry_roi = float(config.get("alert_min_entry_roi_pct", 0) or 0)
+
             # Send alerts for new convergences
             for conv in new_convergences:
+                if min_entry_roi > 0:
+                    if not convergence_passes_entry_roi(conv, min_entry_roi):
+                        continue
+                stake_roi = convergence_stake_roi_pct(conv)
+                conv["alert_priority"] = assign_alert_priority(
+                    stake_roi_pct=stake_roi,
+                    config=config,
+                    convergence=conv,
+                )
                 market = conv.get("market_info") or {}
                 wallets = conv.get("wallets", [])
 
@@ -349,6 +365,7 @@ def monitor(
                         market=market,
                         wallets=wallets,
                         threshold=config.win_rate_threshold,
+                        convergence=conv,
                     )
                     msg += " [Telegram [+]]" if success else " [Telegram [-]]"
 

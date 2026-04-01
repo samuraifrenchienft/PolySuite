@@ -238,7 +238,14 @@ class ConvergenceDetector:
                     w["address"] for w in market_convergences[market_id]["wallets"]
                 ]
                 if wallet.address not in wallet_ids:
-                    side = pos.get("outcome") or pos.get("side") or "?"
+                    # Prefer explicit outcome fields; avoid BUY/SELL action fields as
+                    # "side" because they are not always YES/NO and can break margin gating.
+                    side = (
+                        pos.get("outcome")
+                        or pos.get("tokenOutcome")
+                        or pos.get("position")
+                        or "?"
+                    )
                     entry_price = pos.get("avgPrice") or pos.get("entry_price")
                     size = float(pos.get("size", 0) or 0)
                     entry_info = {

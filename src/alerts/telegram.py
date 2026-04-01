@@ -106,11 +106,16 @@ class TelegramDispatcher:
             return False
 
     def format_convergence_alert(
-        self, market: Dict, wallets: List[Dict], threshold: float
+        self,
+        market: Dict,
+        wallets: List[Dict],
+        threshold: float,
+        convergence: Dict = None,
     ) -> str:
         """Format convergence alert for Telegram."""
+        prio = (convergence or {}).get("alert_priority", "MEDIUM")
         lines = [
-            "🔥 *CONVERGENCE ALERT*",
+            f"🔥 *CONVERGENCE ALERT* · *{prio}*",
             "",
             f"*Traders:* {len(wallets)} high-performers",
             f"*Threshold:* {threshold}%+",
@@ -175,10 +180,14 @@ class TelegramDispatcher:
         return "\n".join(lines)
 
     def send_convergence_alert(
-        self, market: Dict, wallets: List[Dict], threshold: float
+        self,
+        market: Dict,
+        wallets: List[Dict],
+        threshold: float,
+        convergence: Dict = None,
     ) -> bool:
         """Send convergence alert with chart. HIGH-006: Use fetch+bytes when api_key set."""
-        text = self.format_convergence_alert(market, wallets, threshold)
+        text = self.format_convergence_alert(market, wallets, threshold, convergence)
 
         try:
             chart = self._get_chart()

@@ -1716,6 +1716,36 @@
                         </div>
                         <input type="number" class="settings-input" value="{{ settings.alert_min_pnl|default(500) }}" onchange="updateSetting('alert_min_pnl', this.value)">
                     </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Min entry margin (% ROI on stake if win)
+                            <small>Skip insider &amp; convergence when implied odds are too tight (heavy favorites). Uses YES/NO prices: profit-per-$-staked if win = (1−price)/price. Example: 12% requires price ≤ ~89.3¢. 0 = off.</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" step="1" value="{{ settings.alert_min_entry_roi_pct|default(12) }}" onchange="updateSetting('alert_min_entry_roi_pct', parseFloat(this.value) || 0)">
+                    </div>
+                    <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                        <span>Alert priority tiers (HIGH/MEDIUM/LOW)</span>
+                        <div class="toggle-switch {{ 'active' if settings.alert_priority_enabled else '' }}" onclick="toggleSetting('alert_priority_enabled')"></div>
+                        <small style="display: block; color: var(--text-secondary); margin-top: 0.25rem;">Ranks signals that already passed min entry margin — does not add noise.</small>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Priority: HIGH if stake ROI ≥ (%)
+                            <small>vs current odds for the alerted side (after noise floor)</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" step="1" value="{{ settings.alert_priority_high_min_roi_pct|default(25) }}" onchange="updateSetting('alert_priority_high_min_roi_pct', parseFloat(this.value) || 0)">
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-label">
+                            Priority: MEDIUM if stake ROI ≥ (%)
+                            <small>Between this and HIGH threshold → MEDIUM; below → LOW</small>
+                        </div>
+                        <input type="number" class="settings-input" min="0" step="1" value="{{ settings.alert_priority_medium_min_roi_pct|default(15) }}" onchange="updateSetting('alert_priority_medium_min_roi_pct', parseFloat(this.value) || 0)">
+                    </div>
+                    <div class="settings-item" style="border: none; padding: 0.5rem 0;">
+                        <span>Boost insider priority (HIGH conf + size anomaly)</span>
+                        <div class="toggle-switch {{ 'active' if settings.alert_priority_insider_bump else '' }}" onclick="toggleSetting('alert_priority_insider_bump')"></div>
+                    </div>
                     <div class="settings-item" style="border: none; padding: 0.5rem 0;">
                         <span>Skip LOW Confidence (Insider)</span>
                         <div class="toggle-switch {{ 'active' if settings.alert_skip_low_confidence else '' }}" onclick="toggleSetting('alert_skip_low_confidence')"></div>

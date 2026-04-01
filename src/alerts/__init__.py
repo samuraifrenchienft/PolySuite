@@ -153,6 +153,8 @@ class AlertDispatcher:
         if convergence:
             urgency = self._determine_urgency(convergence)
 
+        priority = (convergence or {}).get("alert_priority", "MEDIUM")
+
         direction = self._get_consensus_direction(wallets, positions or [])
 
         emoji = "🔴" if urgency == "CRITICAL" else ("🟠" if urgency == "HIGH" else "🔵")
@@ -162,7 +164,7 @@ class AlertDispatcher:
             else f"🔵 **CONVERGENCE**"
         )
 
-        title = f"{signal}"
+        title = f"{signal} · {priority}"
 
         description = f"**{len(wallets)}** expert traders converging\n"
         description += f"Threshold: **{threshold}%**+ win rate\n\n"
@@ -206,7 +208,7 @@ class AlertDispatcher:
             "color": COLORS.get(urgency, COLORS["NORMAL"]),
             "fields": fields,
             "timestamp": datetime.utcnow().isoformat(),
-            "footer": {"text": f"Urgency: {urgency}"},
+            "footer": {"text": f"Priority: {priority} | Urgency: {urgency}"},
         }
 
         if market_id and market_id != "unknown":
@@ -398,15 +400,19 @@ class AlertDispatcher:
         trade_size = signal.get("trade_size", 0)
         closed_count = signal.get("closed_count", 0)
         confidence = signal.get("confidence", "MEDIUM")
+        priority = signal.get("alert_priority", "MEDIUM")
         win = signal.get("winning_trade") or {}
         question = (win.get("question") or "Unknown")[:150]
         pnl = win.get("pnl", 0)
         side = (win.get("side") or signal.get("side") or "?").upper()
         market_id = win.get("market_id", "")
 
-        color = COLORS["CRITICAL"] if confidence == "HIGH" else (COLORS["HIGH"] if confidence == "MEDIUM" else COLORS["NORMAL"])
+        # Color: attention tier (after noise gates) > detector confidence
+        color = COLORS["CRITICAL"] if priority == "HIGH" else (
+            COLORS["HIGH"] if priority == "MEDIUM" else COLORS["NORMAL"]
+        )
         embed = {
-            "title": "🐋 Insider / Whale Signal",
+            "title": f"🐋 Insider / Whale · {priority}",
             "description": f"Fresh wallet + large trade + winning outcome",
             "color": color,
             "fields": [
@@ -417,6 +423,7 @@ class AlertDispatcher:
                 {"name": "PnL", "value": f"${pnl:,.2f}", "inline": True},
                 {"name": "Side", "value": side, "inline": True},
                 {"name": "Confidence", "value": confidence, "inline": True},
+                {"name": "Priority", "value": priority, "inline": True},
             ],
             "timestamp": datetime.utcnow().isoformat(),
         }

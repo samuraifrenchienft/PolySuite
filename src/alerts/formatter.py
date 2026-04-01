@@ -248,6 +248,7 @@ class AlertFormatter:
         closed_count = signal.get("closed_count", 0)
         risk = signal.get("risk", "MEDIUM")
         confidence = signal.get("confidence", risk)
+        priority = signal.get("alert_priority", "MEDIUM")
         win = signal.get("winning_trade") or {}
         question = (win.get("question") or "Unknown")[:60]
         pnl = win.get("pnl", 0)
@@ -259,7 +260,7 @@ class AlertFormatter:
         # Build actionable message
         lines = [
             "━━━━━━━━━━━━━━━━━━━━",
-            f"{emoji} **INSIDER SIGNAL**",
+            f"{emoji} **INSIDER SIGNAL** · Priority *{priority}*",
             f"_{addr}_",
             f"📊 Fresh wallet: {closed_count} trades | ${trade_size:,.0f} size",
             f"✅ Winning: {question}... (+${pnl:,.2f})",

@@ -596,7 +596,15 @@ class MarketDataCollector:
             out = []
             alerts_on = self.config.get("alerts_enabled", True) and self.config.get("insider_alerts", True)
             min_pnl = float(self.config.get("alert_min_pnl", 500) or 500)
+            min_entry_roi = float(self.config.get("alert_min_entry_roi_pct", 0) or 0)
             skip_low = self.config.get("alert_skip_low_confidence", True)
+            from src.alerts.market_margin import (
+                assign_alert_priority,
+                insider_winning_trade_stake_roi_pct,
+            )
+
+            poly = self.api_factory.get_polymarket_api()
+            insider_market_cache = {}
             for s in signals:
                 # Noise filters: skip LOW confidence and low PnL
                 wt = s.get("winning_trade") or {}
@@ -606,6 +614,30 @@ class MarketDataCollector:
                     continue
                 if pnl < min_pnl:
                     continue
+                if min_entry_roi > 0:
+                    from src.alerts.market_margin import insider_winning_trade_passes_entry_roi
+
+                    if not insider_winning_trade_passes_entry_roi(
+                        s,
+                        poly,
+                        min_entry_roi,
+                        market_cache=insider_market_cache,
+                    ):
+                        continue
+                stake_roi = (
+                    insider_winning_trade_stake_roi_pct(
+                        s,
+                        poly,
+                        market_cache=insider_market_cache,
+                    )
+                    if poly
+                    else None
+                )
+                s["alert_priority"] = assign_alert_priority(
+                    stake_roi_pct=stake_roi,
+                    config=self.config,
+                    insider_signal=s,
+                )
                 if alerts_on:
                     disp = self._get_dispatcher()
                     tg = self._get_telegram()
@@ -631,6 +663,7 @@ class MarketDataCollector:
                     "side": wt.get("side", "?"),
                     "size_anomaly": s.get("size_anomaly", False),
                     "niche_market": s.get("niche_market", False),
+                    "alert_priority": s.get("alert_priority", "MEDIUM"),
                     "link": f"https://polymarket.com/profile/{s.get('address', '')}" if s.get("address") else "",
                 })
             with self._lock:
@@ -651,7 +684,23 @@ class MarketDataCollector:
             out = []
             alerts_on = self.config.get("alerts_enabled", True) and self.config.get("convergence_alerts", True)
             threshold = float(self.config.get("win_rate_threshold", 55) or 55)
+            min_entry_roi = float(self.config.get("alert_min_entry_roi_pct", 0) or 0)
+            from src.alerts.market_margin import (
+                assign_alert_priority,
+                convergence_passes_entry_roi,
+                convergence_stake_roi_pct,
+            )
+
             for c in convergences:
+                if min_entry_roi > 0:
+                    if not convergence_passes_entry_roi(c, min_entry_roi):
+                        continue
+                stake_roi = convergence_stake_roi_pct(c)
+                c["alert_priority"] = assign_alert_priority(
+                    stake_roi_pct=stake_roi,
+                    config=self.config,
+                    convergence=c,
+                )
                 if alerts_on:
                     m = c.get("market_info") or {}
                     disp = self._get_dispatcher()
@@ -672,6 +721,7 @@ class MarketDataCollector:
                             m,
                             c.get("wallets", []),
                             threshold,
+                            convergence=c,
                         )
                     )
                     if sent_discord or sent_telegram:
@@ -689,6 +739,7 @@ class MarketDataCollector:
                     "wallet_count": c.get("wallet_count", 0),
                     "has_early_entry": c.get("has_early_entry", False),
                     "market_age_hours": c.get("market_age_hours"),
+                    "alert_priority": c.get("alert_priority", "MEDIUM"),
                     "wallets": [
                         {"address": w.get("address"), "nickname": w.get("nickname"), "win_rate": w.get("win_rate"), "side": w.get("side")}
                         for w in c.get("wallets", [])
